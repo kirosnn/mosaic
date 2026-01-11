@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { TextAttributes, type KeyEvent } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { getAllProviders, getProviderById, addCustomProvider, type CustomProvider, type AIModel } from '../utils/config';
+import { getAllProviders, getProviderById, addCustomProvider, addCustomModel, type CustomProvider, type AIModel } from '../utils/config';
 import { SelectList, type SelectOption } from './SelectList';
 import { CustomInput } from './CustomInput';
 
@@ -20,6 +20,10 @@ type SetupStep =
   | 'custom-model-description'
   | 'custom-add-another-model'
   | 'model'
+  | 'add-custom-model'
+  | 'custom-model-name-existing'
+  | 'custom-model-id-existing'
+  | 'custom-model-description-existing'
   | 'apikey'
   | 'confirm';
 
@@ -60,6 +64,14 @@ export function Setup({ onComplete }: SetupProps) {
     value: m.id
   })) || [];
 
+  if (currentProvider && !('isCustom' in currentProvider)) {
+    modelOptions.push({
+      name: 'Add Custom Model',
+      description: 'Add your own model for this provider',
+      value: '__add-custom-model__'
+    });
+  }
+
   const handleProviderSelect = (value: any) => {
     if (value === '__custom__') {
       setStep('custom-name');
@@ -70,11 +82,15 @@ export function Setup({ onComplete }: SetupProps) {
   };
 
   const handleModelSelect = (value: any) => {
-    setSelectedModel(value);
-    if (currentProvider?.requiresApiKey) {
-      setStep('apikey');
+    if (value === '__add-custom-model__') {
+      setStep('add-custom-model');
     } else {
-      setStep('confirm');
+      setSelectedModel(value);
+      if (currentProvider?.requiresApiKey) {
+        setStep('apikey');
+      } else {
+        setStep('confirm');
+      }
     }
   };
 
@@ -125,6 +141,32 @@ export function Setup({ onComplete }: SetupProps) {
     setStep('custom-add-another-model');
   };
 
+  const handleCustomModelNameExistingSubmit = (value: string) => {
+    setTempModelName(value);
+    setStep('custom-model-id-existing');
+  };
+
+  const handleCustomModelIdExistingSubmit = (value: string) => {
+    setTempModelId(value);
+    setStep('custom-model-description-existing');
+  };
+
+  const handleCustomModelDescriptionExistingSubmit = (value: string) => {
+    const newModel: AIModel = {
+      id: tempModelId,
+      name: tempModelName,
+      description: value
+    };
+
+    addCustomModel(selectedProvider, newModel);
+
+    setTempModelName('');
+    setTempModelId('');
+    setTempModelDescription('');
+
+    setStep('model');
+  };
+
   const finalizeCustomProvider = () => {
     const customProviderId = customName.toLowerCase().replace(/\s+/g, '-');
     const newProvider: CustomProvider = {
@@ -164,6 +206,14 @@ export function Setup({ onComplete }: SetupProps) {
         return 'custom-model-description';
       case 'model':
         return selectedProvider === '__custom__' ? 'custom-add-another-model' : 'provider';
+      case 'add-custom-model':
+        return 'model';
+      case 'custom-model-name-existing':
+        return 'add-custom-model';
+      case 'custom-model-id-existing':
+        return 'custom-model-name-existing';
+      case 'custom-model-description-existing':
+        return 'custom-model-id-existing';
       case 'apikey':
         return 'model';
       case 'confirm':
@@ -186,6 +236,8 @@ export function Setup({ onComplete }: SetupProps) {
         goBack();
       } else if (step === 'confirm' && key.name === 'return') {
         onComplete(selectedProvider, selectedModel, apiKey || undefined);
+      } else if (step === 'add-custom-model' && key.name === 'return') {
+        setStep('custom-model-name-existing');
       } else if (step === 'custom-apikey-required') {
         if (key.name === 'y') {
           setCustomRequiresApiKey(true);
@@ -350,6 +402,67 @@ export function Setup({ onComplete }: SetupProps) {
           <SelectList options={modelOptions} onSelect={handleModelSelect} />
           <box marginTop={1}>
             <text attributes={TextAttributes.DIM}>Escape to go back</text>
+          </box>
+        </box>
+      )}
+
+      {step === 'add-custom-model' && (
+        <box flexDirection="column" flexGrow={1} justifyContent="center">
+          <text>Add a custom model for {currentProvider?.name}</text>
+          <box marginTop={2} flexDirection="column" alignItems="flex-start">
+            <text>You can add custom models that are not in the default list.</text>
+            <text>This is useful for new models or specific configurations.</text>
+          </box>
+          <box marginTop={2}>
+            <text attributes={TextAttributes.DIM}>Press Enter to continue, Escape to go back</text>
+          </box>
+        </box>
+      )}
+
+      {step === 'custom-model-name-existing' && (
+        <box flexDirection="column" flexGrow={1}>
+          <box marginBottom={1}>
+            <text>Enter model name:</text>
+          </box>
+          <CustomInput
+            focused={true}
+            onSubmit={handleCustomModelNameExistingSubmit}
+            placeholder="GPT-4o-mini or Claude 3.5 Sonnet"
+          />
+          <box marginTop={1}>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
+          </box>
+        </box>
+      )}
+
+      {step === 'custom-model-id-existing' && (
+        <box flexDirection="column" flexGrow={1}>
+          <box marginBottom={1}>
+            <text>Enter model ID for {tempModelName}:</text>
+          </box>
+          <CustomInput
+            focused={true}
+            onSubmit={handleCustomModelIdExistingSubmit}
+            placeholder="gpt-4o-mini or claude-3-5-sonnet-20241022"
+          />
+          <box marginTop={1}>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
+          </box>
+        </box>
+      )}
+
+      {step === 'custom-model-description-existing' && (
+        <box flexDirection="column" flexGrow={1}>
+          <box marginBottom={1}>
+            <text>Enter description for {tempModelName}:</text>
+          </box>
+          <CustomInput
+            focused={true}
+            onSubmit={handleCustomModelDescriptionExistingSubmit}
+            placeholder="Fast and efficient model for general tasks"
+          />
+          <box marginTop={1}>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}

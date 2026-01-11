@@ -32,6 +32,7 @@ export interface MosaicConfig {
   model?: string;
   apiKey?: string;
   customProviders?: CustomProvider[];
+  customModels?: { [providerId: string]: AIModel[] };
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -170,7 +171,20 @@ export function getConfigDir(): string {
 export function getAllProviders(): AIProvider[] {
   const config = readConfig();
   const customProviders = config.customProviders || [];
-  return [...AI_PROVIDERS, ...customProviders];
+  const customModels = config.customModels || {};
+
+  const providersWithCustomModels = AI_PROVIDERS.map(provider => {
+    const customModelsForProvider = customModels[provider.id] || [];
+    if (customModelsForProvider.length > 0) {
+      return {
+        ...provider,
+        models: [...provider.models, ...customModelsForProvider]
+      };
+    }
+    return provider;
+  });
+
+  return [...providersWithCustomModels, ...customProviders];
 }
 
 export function getProviderById(id: string): AIProvider | undefined {
@@ -203,4 +217,29 @@ export function updateCustomProvider(id: string, updates: Partial<CustomProvider
       writeConfig(config);
     }
   }
+}
+
+export function addCustomModel(providerId: string, model: AIModel): void {
+  const config = readConfig();
+  if (!config.customModels) {
+    config.customModels = {};
+  }
+  if (!config.customModels[providerId]) {
+    config.customModels[providerId] = [];
+  }
+  config.customModels[providerId].push(model);
+  writeConfig(config);
+}
+
+export function removeCustomModel(providerId: string, modelId: string): void {
+  const config = readConfig();
+  if (config.customModels && config.customModels[providerId]) {
+    config.customModels[providerId] = config.customModels[providerId].filter(m => m.id !== modelId);
+    writeConfig(config);
+  }
+}
+
+export function getCustomModels(providerId: string): AIModel[] {
+  const config = readConfig();
+  return config.customModels?.[providerId] || [];
 }
