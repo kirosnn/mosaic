@@ -1,7 +1,7 @@
 import { TextAttributes } from "@opentui/core";
 
 export interface MarkdownSegment {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'codeblock' | 'heading' | 'listitem';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'codeblock' | 'codeblock-content' | 'heading' | 'listitem';
   content: string;
   level?: number;
 }
@@ -106,7 +106,10 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
       );
 
     case 'codeblock':
-      return <text key={key} fg="#00ff00" attributes={TextAttributes.DIM}>{segment.content}</text>;
+      return <text key={key} fg="#888888" attributes={TextAttributes.DIM}>{segment.content}</text>;
+
+    case 'codeblock-content':
+      return <text key={key} fg="#e0e0e0">{segment.content}</text>;
 
     case 'heading':
       return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
@@ -150,7 +153,7 @@ export function parseMarkdownContent(content: string): ParsedMarkdownLine[] {
     if (inCodeBlock) {
       result.push({
         isCodeBlock: true,
-        segments: [{ type: 'text', content: line }],
+        segments: [{ type: 'codeblock-content', content: line }],
         rawLine: line
       });
     } else {
