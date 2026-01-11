@@ -1,61 +1,48 @@
 import { VERSION } from './utils/version';
 
-export interface Command {
-  name: string;
-  description: string;
-  aliases?: string[];
-  usage?: string;
-  handler: (args?: string[]) => void;
+export interface ParsedArgs {
+  help: boolean;
+  verbose: boolean;
+  directory?: string;
 }
 
 export class CLI {
-  private commands: Map<string, Command> = new Map();
+  parseArgs(args: string[]): ParsedArgs {
+    const parsed: ParsedArgs = {
+      help: false,
+      verbose: false,
+    };
 
-  constructor() {
-    this.addCommand({
-      name: '--help',
-      description: 'Show help message',
-      aliases: ['-h'],
-      handler: () => {
-        this.showGlobalHelp();
+    const positionalArgs: string[] = [];
+
+    for (const arg of args) {
+      if (arg === '--help' || arg === '-h') {
+        parsed.help = true;
+      } else if (arg === '--verbose' || arg === '-v') {
+        parsed.verbose = true;
+      } else if (arg === '--directory' || arg === '-d') {
+        const nextIndex = args.indexOf(arg) + 1;
+        if (nextIndex < args.length && !args[nextIndex]!.startsWith('-')) {
+          parsed.directory = args[nextIndex];
+          args.splice(nextIndex, 1);
+        }
+      } else if (!arg.startsWith('-')) {
+        positionalArgs.push(arg);
+      } else {
+        console.log(`Unknown option: ${arg}`);
+        console.log('Use "mosaic --help" to see available options.');
+        process.exit(1);
       }
-    });
-  }
-
-  addCommand(command: Command): void {
-    this.commands.set(command.name, command);
-
-    if (command.aliases) {
-      command.aliases.forEach(alias => {
-        this.commands.set(alias, command);
-      });
-    }
-  }
-
-  getCommand(name: string): Command | undefined {
-    return this.commands.get(name);
-  }
-
-  parseArgs(args: string[]): void {
-    if (args.length === 0) {
-      console.log('No command provided.');
-      console.log('Use "mosaic --help" to see the help message.');
-      return;
     }
 
-    const commandName = args[0]!;
-    const commandArgs = args.slice(1);
-
-    const command = this.getCommand(commandName);
-    if (command) {
-      command.handler(commandArgs);
-    } else {
-      console.log(`Command "${commandName}" not found.`);
-      console.log('Use "mosaic --help" to see the help message.');
+    if (positionalArgs.length > 0) {
+      parsed.directory = positionalArgs[0];
     }
+
+    return parsed;
   }
 
-  private showGlobalHelp(): void {
+  showHelp(): void {
     console.log(`Mosaic CLI v${VERSION}`);
     console.log('An AI-powered CLI code assistant');
     console.log('');
@@ -63,19 +50,20 @@ export class CLI {
     console.log('  mosaic [options] [directory]');
     console.log('');
     console.log('Options:');
-    console.log('  --help, -h      Show this help message');
-    console.log('  --verbose, -v   Enable verbose mode (show detailed execution logs)');
+    console.log('  --help, -h              Show this help message');
+    console.log('  --verbose, -v           Enable verbose mode (show detailed execution logs)');
+    console.log('  --directory, -d <path>  Open Mosaic in the specified directory');
     console.log('');
     console.log('Arguments:');
-    console.log('  directory       Open Mosaic in the specified directory (optional)');
+    console.log('  directory               Open Mosaic in the specified directory (optional)');
     console.log('');
     console.log('Examples:');
-    console.log('  mosaic                    # Start Mosaic in current directory');
-    console.log('  mosaic ./my-project       # Start Mosaic in my-project directory');
-    console.log('  mosaic --verbose          # Start with verbose mode enabled');
-    console.log('  mosaic -v ./my-project    # Start in my-project with verbose mode');
+    console.log('  mosaic                       # Start Mosaic in current directory');
+    console.log('  mosaic ./my-project          # Start Mosaic in my-project directory');
+    console.log('  mosaic --verbose             # Start with verbose mode enabled');
+    console.log('  mosaic -v ./my-project       # Start in my-project with verbose mode');
+    console.log('  mosaic -d ./src --verbose    # Start in src directory with verbose mode');
   }
-
 }
 
 export const cli = new CLI();

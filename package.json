@@ -4,14 +4,17 @@
   "version": "0.0.5.01",
   "description": "The open source coding agent.",
   "type": "module",
-  "private": true,
+  "bin": {
+    "mosaic": "src/index.tsx"
+  },
   "scripts": {
     "dev": "bun run --watch src/index.tsx",
     "mosaic": "bun run src/index.tsx",
     "start": "bun run src/index.tsx"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"
