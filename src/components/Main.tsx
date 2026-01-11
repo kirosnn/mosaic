@@ -4,7 +4,7 @@ import { CustomInput } from "./CustomInput";
 import { VERSION } from "../utils/version";
 import { useKeyboard } from "@opentui/react";
 import { sendMessage } from "../agent";
-import { parseMarkdownLine, renderMarkdownSegment, wrapMarkdownText } from "../utils/markdown";
+import { parseMarkdownContent, renderMarkdownSegment, wrapMarkdownText } from "../utils/markdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -240,24 +240,38 @@ export function Main({ pasteRequestId = 0, shortcutsOpen = false }: MainProps) {
     role: "user" | "assistant";
     isFirst: boolean;
     segments?: import("../utils/markdown").MarkdownSegment[];
+    isCodeBlock?: boolean;
   }
 
   const allLines: RenderLine[] = [];
 
   for (const message of messages) {
-    const paragraphs = message.content.split('\n');
+    if (message.role === 'assistant') {
+      // Use parseMarkdownContent for assistant messages to properly handle code blocks
+      const parsedLines = parseMarkdownContent(message.content);
 
-    for (let i = 0; i < paragraphs.length; i++) {
-      const paragraph = paragraphs[i];
-      if (!paragraph || paragraph.trim() === '') {
-        allLines.push({
-          content: '',
-          role: message.role,
-          isFirst: i === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
-        });
-      } else {
-        if (message.role === 'assistant') {
-          const wrappedLines = wrapMarkdownText(paragraph, maxWidth);
+      for (let i = 0; i < parsedLines.length; i++) {
+        const parsedLine = parsedLines[i];
+        if (!parsedLine) continue;
+
+        if (parsedLine.isCodeBlock) {
+          // Code block lines - don't wrap, preserve as-is
+          allLines.push({
+            content: parsedLine.rawLine,
+            role: message.role,
+            isFirst: i === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0,
+            segments: parsedLine.segments,
+            isCodeBlock: true
+          });
+        } else if (!parsedLine.rawLine || parsedLine.rawLine.trim() === '') {
+          allLines.push({
+            content: '',
+            role: message.role,
+            isFirst: i === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
+          });
+        } else {
+          // Regular markdown - wrap text
+          const wrappedLines = wrapMarkdownText(parsedLine.rawLine, maxWidth);
           for (let j = 0; j < wrappedLines.length; j++) {
             allLines.push({
               content: wrappedLines[j]?.text || '',
@@ -266,6 +280,20 @@ export function Main({ pasteRequestId = 0, shortcutsOpen = false }: MainProps) {
               segments: wrappedLines[j]?.segments
             });
           }
+        }
+      }
+    } else {
+      // User messages - simple text wrapping
+      const paragraphs = message.content.split('\n');
+
+      for (let i = 0; i < paragraphs.length; i++) {
+        const paragraph = paragraphs[i];
+        if (!paragraph || paragraph.trim() === '') {
+          allLines.push({
+            content: '',
+            role: message.role,
+            isFirst: i === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
+          });
         } else {
           const wrappedLines = wrapText(paragraph, maxWidth);
           for (let j = 0; j < wrappedLines.length; j++) {
@@ -306,13 +334,21 @@ export function Main({ pasteRequestId = 0, shortcutsOpen = false }: MainProps) {
     <box flexDirection="column" width="100%" height="100%" position="relative">
       <box flexGrow={1} flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={3}>
         {visibleLines.map((line, index) => {
+          const isCodeBlock = line.isCodeBlock;
           return (
             <box
               key={startIndex + index}
               flexDirection="row"
               width="100%"
-              backgroundColor={line.role === "user" && line.content ? "#1a1a1a" : "transparent"}
+              backgroundColor={
+                line.role === "user" && line.content
+                  ? "#1a1a1a"
+                  : isCodeBlock
+                    ? "#2a2a2a"
+                    : "transparent"
+              }
               paddingRight={line.role === "user" ? 1 : 0}
+              paddingLeft={isCodeBlock ? 1 : 0}
             >
               {line.role === "user" && line.content && (
                 <text fg="#ffca38">▎ </text>
