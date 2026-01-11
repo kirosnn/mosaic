@@ -8,9 +8,10 @@ interface CustomInputProps {
   placeholder?: string
   password?: boolean
   focused?: boolean
+  pasteRequestId?: number
 }
 
-export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true }: CustomInputProps) {
+export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0 }: CustomInputProps) {
   const [value, setValue] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
   const [cursorVisible, setCursorVisible] = useState(true)
@@ -59,6 +60,12 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     }
   }
 
+  useEffect(() => {
+    if (!focused) return
+    if (!pasteRequestId) return
+    pasteFromClipboard()
+  }, [pasteRequestId, focused])
+
   useKeyboard((key) => {
     if (!focused) return
     setCursorVisible(true)
@@ -84,16 +91,6 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       return
     }
 
-    if (key.name === 'f2') {
-      pasteFromClipboard()
-      return
-    }
-
-    if (key.ctrl && key.name === 'v') {
-      pasteFromClipboard()
-      return
-    }
-
     if (key.name === 'return') {
       onSubmit(value)
       setValue('')
@@ -104,7 +101,10 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setCursorPosition(prev => prev - 1)
       }
     } else if (key.name === 'delete') {
-      if (cursorPosition < value.length) {
+      if (key.ctrl || key.meta) {
+        setValue('')
+        setCursorPosition(0)
+      } else if (cursorPosition < value.length) {
         setValue(prev => prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1))
       }
     } else if (key.name === 'left') {

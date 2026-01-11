@@ -5,10 +5,12 @@ import { VERSION } from "../utils/version";
 interface WelcomeProps {
   onComplete: () => void;
   isFirstRun: boolean;
+  shortcutsOpen?: boolean;
 }
 
-export function Welcome({ onComplete, isFirstRun }: WelcomeProps) {
+export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false }: WelcomeProps) {
   useKeyboard((key) => {
+    if (shortcutsOpen) return;
     if (key.name === 'return') {
       onComplete();
     }

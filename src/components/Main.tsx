@@ -3,13 +3,20 @@ import { TextAttributes } from "@opentui/core";
 import { CustomInput } from "./CustomInput";
 import { VERSION } from "../utils/version";
 import { useKeyboard } from "@opentui/react";
+import { sendMessage } from "../agent";
+import { parseMarkdownLine, renderMarkdownSegment, wrapMarkdownText } from "../utils/markdown";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
 }
 
-export function Main() {
+interface MainProps {
+  pasteRequestId?: number;
+  shortcutsOpen?: boolean;
+}
+
+export function Main({ pasteRequestId = 0, shortcutsOpen = false }: MainProps) {
   const [currentPage, setCurrentPage] = useState<"home" | "chat">("home");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -111,6 +118,7 @@ export function Main() {
 
   useKeyboard((key) => {
     if (currentPage !== "chat") return;
+    if (shortcutsOpen) return;
 
     if (key.name === 'up') {
       shouldAutoScroll.current = false;
@@ -139,18 +147,49 @@ export function Main() {
 
   const handleSubmit = async (value: string) => {
     if (!value.trim() || isProcessing) return;
+
     const userMessage: Message = { role: "user", content: value };
     setMessages((prev: Message[]) => [...prev, userMessage]);
     setIsProcessing(true);
     shouldAutoScroll.current = true;
-    setTimeout(() => {
-      const aiMessage: Message = {
-        role: "assistant",
-        content: `You said: "${value}". This is a placeholder response. AI integration coming soon!`
-      };
-      setMessages((prev: Message[]) => [...prev, aiMessage]);
+
+    try {
+      const conversationHistory = [...messages, userMessage];
+      let assistantContent = '';
+
+      setMessages((prev: Message[]) => [...prev, { role: "assistant", content: '' }]);
+
+      for await (const chunk of sendMessage(conversationHistory)) {
+        assistantContent += chunk;
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          newMessages[newMessages.length - 1] = {
+            role: "assistant",
+            content: assistantContent
+          };
+          return newMessages;
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      setMessages((prev: Message[]) => {
+        const newMessages = [...prev];
+        if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
+          newMessages[newMessages.length - 1] = {
+            role: "assistant",
+            content: `Error: ${errorMessage}`
+          };
+        } else {
+          newMessages.push({
+            role: "assistant",
+            content: `Error: ${errorMessage}`
+          });
+        }
+        return newMessages;
+      });
+    } finally {
       setIsProcessing(false);
-    }, 500);
+    }
   };
 
   if (currentPage === "home") {
@@ -180,7 +219,8 @@ export function Main() {
             <CustomInput
               onSubmit={handleHomeSubmit}
               placeholder="Ask anything..."
-              focused={true}
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             />
           </box>
         </box>
@@ -199,6 +239,7 @@ export function Main() {
     content: string;
     role: "user" | "assistant";
     isFirst: boolean;
+    segments?: import("../utils/markdown").MarkdownSegment[];
   }
 
   const allLines: RenderLine[] = [];
@@ -215,13 +256,25 @@ export function Main() {
           isFirst: i === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
         });
       } else {
-        const wrappedLines = wrapText(paragraph, maxWidth);
-        for (let j = 0; j < wrappedLines.length; j++) {
-          allLines.push({
-            content: wrappedLines[j] || '',
-            role: message.role,
-            isFirst: i === 0 && j === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
-          });
+        if (message.role === 'assistant') {
+          const wrappedLines = wrapMarkdownText(paragraph, maxWidth);
+          for (let j = 0; j < wrappedLines.length; j++) {
+            allLines.push({
+              content: wrappedLines[j]?.text || '',
+              role: message.role,
+              isFirst: i === 0 && j === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0,
+              segments: wrappedLines[j]?.segments
+            });
+          }
+        } else {
+          const wrappedLines = wrapText(paragraph, maxWidth);
+          for (let j = 0; j < wrappedLines.length; j++) {
+            allLines.push({
+              content: wrappedLines[j] || '',
+              role: message.role,
+              isFirst: i === 0 && j === 0 && allLines.filter(l => l.role === message.role && l.content !== '').length === 0
+            });
+          }
         }
       }
     }
@@ -252,17 +305,30 @@ export function Main() {
   return (
     <box flexDirection="column" width="100%" height="100%" position="relative">
       <box flexGrow={1} flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={3}>
-        {visibleLines.map((line, index) => (
-          <box key={startIndex + index} flexDirection="row" width="100%">
-            {line.isFirst && line.role === "user" && (
-              <text fg="#1a1a1a" attributes={TextAttributes.BOLD}>&gt; </text>
-            )}
-            {(!line.isFirst || line.role === "assistant") && line.role === "user" && line.content && (
-              <text>  </text>
-            )}
-            <text fg={line.role === "user" ? "white" : "gray"}>{line.content || ' '}</text>
-          </box>
-        ))}
+        {visibleLines.map((line, index) => {
+          return (
+            <box
+              key={startIndex + index}
+              flexDirection="row"
+              width="100%"
+              backgroundColor={line.role === "user" && line.content ? "#1a1a1a" : "transparent"}
+              paddingRight={line.role === "user" ? 1 : 0}
+            >
+              {line.role === "user" && line.content && (
+                <text fg="#ffca38">▎ </text>
+              )}
+              {line.role === "user" ? (
+                <text fg="white">{line.content || ' '}</text>
+              ) : line.segments && line.segments.length > 0 ? (
+                <>
+                  {line.segments.map((segment, segIndex) => renderMarkdownSegment(segment, segIndex))}
+                </>
+              ) : (
+                <text fg="white">{line.content || ' '}</text>
+              )}
+            </box>
+          );
+        })}
       </box>
 
       <box
@@ -281,12 +347,12 @@ export function Main() {
         minWidth="100%"
       >
         <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
-          <text fg="#ffca38" attributes={TextAttributes.BOLD}>&gt; </text>
           <box flexGrow={1} flexShrink={1} minWidth={0}>
             <CustomInput
               onSubmit={handleSubmit}
               placeholder="Type your message..."
-              focused={!isProcessing}
+              focused={!isProcessing && !shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             />
           </box>
         </box>

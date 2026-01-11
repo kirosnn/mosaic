@@ -31,6 +31,7 @@ export interface MosaicConfig {
   provider?: string;
   model?: string;
   apiKey?: string;
+  systemPrompt?: string;
   customProviders?: CustomProvider[];
   customModels?: { [providerId: string]: AIModel[] };
 }
@@ -242,4 +243,15 @@ export function removeCustomModel(providerId: string, modelId: string): void {
 export function getCustomModels(providerId: string): AIModel[] {
   const config = readConfig();
   return config.customModels?.[providerId] || [];
+}
+
+export function updateSystemPrompt(systemPrompt: string): void {
+  const config = readConfig();
+  config.systemPrompt = systemPrompt;
+  writeConfig(config);
+}
+
+export function getSystemPrompt(): string | undefined {
+  const config = readConfig();
+  return config.systemPrompt;
 }

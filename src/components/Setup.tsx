@@ -7,6 +7,8 @@ import { CustomInput } from './CustomInput';
 
 interface SetupProps {
   onComplete: (provider: string, model: string, apiKey?: string) => void;
+  pasteRequestId?: number;
+  shortcutsOpen?: boolean;
 }
 
 type SetupStep =
@@ -27,7 +29,7 @@ type SetupStep =
   | 'apikey'
   | 'confirm';
 
-export function Setup({ onComplete }: SetupProps) {
+export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }: SetupProps) {
   const [step, setStep] = useState<SetupStep>('provider');
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -232,6 +234,7 @@ export function Setup({ onComplete }: SetupProps) {
 
   useEffect(() => {
     const handleKeyPress = (key: KeyEvent) => {
+      if (shortcutsOpen) return;
       if (key.name === 'escape') {
         goBack();
       } else if (step === 'confirm' && key.name === 'return') {
@@ -260,7 +263,7 @@ export function Setup({ onComplete }: SetupProps) {
     return () => {
       renderer.keyInput.off('keypress', handleKeyPress);
     };
-  }, [step, selectedProvider, selectedModel, apiKey, customRequiresApiKey, customModels, customName, customDescription, customBaseUrl, tempModelName, tempModelId, tempModelDescription, renderer.keyInput]);
+  }, [step, selectedProvider, selectedModel, apiKey, customRequiresApiKey, customModels, customName, customDescription, customBaseUrl, tempModelName, tempModelId, tempModelDescription, shortcutsOpen, renderer.keyInput]);
 
   return (
     <box width="100%" height="100%" flexDirection="column" padding={2}>
@@ -273,7 +276,7 @@ export function Setup({ onComplete }: SetupProps) {
           <box marginBottom={1}>
             <text>Select your AI provider (↑/↓ to navigate, Enter to select):</text>
           </box>
-          <SelectList options={providerOptions} onSelect={handleProviderSelect} />
+          <SelectList options={providerOptions} onSelect={handleProviderSelect} disabled={shortcutsOpen} />
         </box>
       )}
 
@@ -283,7 +286,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter custom provider name:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomNameSubmit}
             placeholder="My Custom Provider"
           />
@@ -299,7 +303,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter a description for {customName}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomDescriptionSubmit}
             placeholder="Description of the provider"
           />
@@ -315,7 +320,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter the API base URL:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomBaseUrlSubmit}
             placeholder="https://api.example.com/v1"
           />
@@ -340,7 +346,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter model name{customModels.length > 0 ? ` (${customModels.length} added)` : ''}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelNameSubmit}
             placeholder="GPT-4 or Claude Opus"
           />
@@ -356,7 +363,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter model ID for {tempModelName}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelIdSubmit}
             placeholder="gpt-4 or claude-opus-4"
           />
@@ -372,7 +380,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter description for {tempModelName}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelDescriptionSubmit}
             placeholder="Best for complex tasks"
           />
@@ -399,7 +408,7 @@ export function Setup({ onComplete }: SetupProps) {
           <box marginBottom={1}>
             <text>Select the AI model (↑/↓ to navigate, Enter to select):</text>
           </box>
-          <SelectList options={modelOptions} onSelect={handleModelSelect} />
+          <SelectList options={modelOptions} onSelect={handleModelSelect} disabled={shortcutsOpen} />
           <box marginTop={1}>
             <text attributes={TextAttributes.DIM}>Escape to go back</text>
           </box>
@@ -425,7 +434,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter model name:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelNameExistingSubmit}
             placeholder="GPT-4o-mini or Claude 3.5 Sonnet"
           />
@@ -441,7 +451,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter model ID for {tempModelName}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelIdExistingSubmit}
             placeholder="gpt-4o-mini or claude-3-5-sonnet-20241022"
           />
@@ -457,7 +468,8 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Enter description for {tempModelName}:</text>
           </box>
           <CustomInput
-            focused={true}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomModelDescriptionExistingSubmit}
             placeholder="Fast and efficient model for general tasks"
           />
@@ -474,11 +486,13 @@ export function Setup({ onComplete }: SetupProps) {
           </box>
           <CustomInput
             onSubmit={handleApiKeySubmit}
+            focused={!shortcutsOpen}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             placeholder="sk-..."
             password={true}
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>F2 to paste, then press Enter, Escape to go back</text>
+            <text attributes={TextAttributes.DIM}>Alt+V (or Ctrl+V) to paste, then press Enter, Escape to go back</text>
           </box>
         </box>
       )}

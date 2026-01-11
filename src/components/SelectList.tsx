@@ -11,12 +11,14 @@ export interface SelectOption {
 interface SelectListProps {
   options: SelectOption[];
   onSelect: (value: any) => void;
+  disabled?: boolean;
 }
 
-export function SelectList({ options, onSelect }: SelectListProps) {
+export function SelectList({ options, onSelect, disabled = false }: SelectListProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useKeyboard((key) => {
+    if (disabled) return;
     if (key.name === 'up' || key.name === 'k') {
       setSelectedIndex(prev => prev === 0 ? options.length - 1 : prev - 1);
     } else if (key.name === 'down' || key.name === 'j') {
