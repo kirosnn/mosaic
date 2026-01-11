@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { TextAttributes } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { useState, useEffect } from 'react';
+import { TextAttributes, type KeyEvent } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
 import { getAllProviders, getProviderById, addCustomProvider, type CustomProvider, type AIModel } from '../utils/config';
 import { SelectList, type SelectOption } from './SelectList';
 import { CustomInput } from './CustomInput';
@@ -38,6 +38,7 @@ export function Setup({ onComplete }: SetupProps) {
   const [tempModelId, setTempModelId] = useState<string>('');
   const [tempModelDescription, setTempModelDescription] = useState<string>('');
 
+  const renderer = useRenderer();
   const allProviders = getAllProviders();
   const providerOptions: SelectOption[] = [
     ...allProviders.map(p => ({
@@ -141,25 +142,73 @@ export function Setup({ onComplete }: SetupProps) {
     setStep('model');
   };
 
-  useKeyboard((key) => {
-    if (step === 'confirm' && key.name === 'return') {
-      onComplete(selectedProvider, selectedModel, apiKey || undefined);
-    } else if (step === 'custom-apikey-required') {
-      if (key.name === 'y') {
-        setCustomRequiresApiKey(true);
-        setStep('custom-model-name');
-      } else if (key.name === 'n') {
-        setCustomRequiresApiKey(false);
-        setStep('custom-model-name');
-      }
-    } else if (step === 'custom-add-another-model') {
-      if (key.name === 'y') {
-        setStep('custom-model-name');
-      } else if (key.name === 'n') {
-        finalizeCustomProvider();
-      }
+  const getPreviousStep = (currentStep: SetupStep): SetupStep | null => {
+    switch (currentStep) {
+      case 'provider':
+        return null;
+      case 'custom-name':
+        return 'provider';
+      case 'custom-description':
+        return 'custom-name';
+      case 'custom-baseurl':
+        return 'custom-description';
+      case 'custom-apikey-required':
+        return 'custom-baseurl';
+      case 'custom-model-name':
+        return 'custom-apikey-required';
+      case 'custom-model-id':
+        return 'custom-model-name';
+      case 'custom-model-description':
+        return 'custom-model-id';
+      case 'custom-add-another-model':
+        return 'custom-model-description';
+      case 'model':
+        return selectedProvider === '__custom__' ? 'custom-add-another-model' : 'provider';
+      case 'apikey':
+        return 'model';
+      case 'confirm':
+        return currentProvider?.requiresApiKey ? 'apikey' : 'model';
+      default:
+        return null;
     }
-  });
+  };
+
+  const goBack = () => {
+    const previousStep = getPreviousStep(step);
+    if (previousStep) {
+      setStep(previousStep);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyPress = (key: KeyEvent) => {
+      if (key.name === 'escape') {
+        goBack();
+      } else if (step === 'confirm' && key.name === 'return') {
+        onComplete(selectedProvider, selectedModel, apiKey || undefined);
+      } else if (step === 'custom-apikey-required') {
+        if (key.name === 'y') {
+          setCustomRequiresApiKey(true);
+          setStep('custom-model-name');
+        } else if (key.name === 'n') {
+          setCustomRequiresApiKey(false);
+          setStep('custom-model-name');
+        }
+      } else if (step === 'custom-add-another-model') {
+        if (key.name === 'y') {
+          setStep('custom-model-name');
+        } else if (key.name === 'n') {
+          finalizeCustomProvider();
+        }
+      }
+    };
+
+    renderer.keyInput.on('keypress', handleKeyPress);
+
+    return () => {
+      renderer.keyInput.off('keypress', handleKeyPress);
+    };
+  }, [step, selectedProvider, selectedModel, apiKey, customRequiresApiKey, customModels, customName, customDescription, customBaseUrl, tempModelName, tempModelId, tempModelDescription, renderer.keyInput]);
 
   return (
     <box width="100%" height="100%" flexDirection="column" padding={2}>
@@ -187,7 +236,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="My Custom Provider"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -203,7 +252,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="Description of the provider"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -219,7 +268,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="https://api.example.com/v1"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -244,7 +293,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="GPT-4 or Claude Opus"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -260,7 +309,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="gpt-4 or claude-opus-4"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -276,7 +325,7 @@ export function Setup({ onComplete }: SetupProps) {
             placeholder="Best for complex tasks"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
@@ -299,6 +348,9 @@ export function Setup({ onComplete }: SetupProps) {
             <text>Select the AI model (↑/↓ to navigate, Enter to select):</text>
           </box>
           <SelectList options={modelOptions} onSelect={handleModelSelect} />
+          <box marginTop={1}>
+            <text attributes={TextAttributes.DIM}>Escape to go back</text>
+          </box>
         </box>
       )}
 
@@ -313,7 +365,7 @@ export function Setup({ onComplete }: SetupProps) {
             password={true}
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>F2 to paste, then press Enter</text>
+            <text attributes={TextAttributes.DIM}>F2 to paste, then press Enter, Escape to go back</text>
           </box>
         </box>
       )}
@@ -327,7 +379,7 @@ export function Setup({ onComplete }: SetupProps) {
             {apiKey && <text>API Key: ********************</text>}
           </box>
           <box marginTop={2}>
-            <text attributes={TextAttributes.DIM}>Press Enter to continue...</text>
+            <text attributes={TextAttributes.DIM}>Press Enter to continue, Escape to go back</text>
           </box>
         </box>
       )}
