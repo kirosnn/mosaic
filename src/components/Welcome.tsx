@@ -19,12 +19,12 @@ export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false }: Welco
   return (
     <box width="100%" height="100%" justifyContent="center" alignItems="center">
       <box flexDirection="row">
-        <box flexDirection="column" alignItems="flex-start" marginRight={2}>
-          <text attributes={TextAttributes.BOLD}>{'███╗   ███╗'}</text>
-          <text attributes={TextAttributes.BOLD}>{'████╗ ████║'}</text>
-          <text attributes={TextAttributes.BOLD}>{'███╔████╔███║'}</text>
+        <box flexDirection="column" alignItems="center" marginBottom={2}>
+          <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╗   ███╗</text>
+          <text fg="#ffca38" attributes={TextAttributes.BOLD}>████╗ ████║</text>
+          <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╔████╔███║</text>
         </box>
-        <box flexDirection="column" alignItems="flex-start">
+        <box flexDirection="column" alignItems="flex-start" marginLeft={2}>
           <text attributes={TextAttributes.DIM}>Mosaic welcomes you !</text>
           <text attributes={TextAttributes.DIM}>Mosaic CLI v{VERSION}</text>
           <text attributes={TextAttributes.DIM}>Now are you ready to {isFirstRun ? 'configure' : 'use'} it ?</text>

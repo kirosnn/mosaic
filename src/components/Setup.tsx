@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { TextAttributes, type KeyEvent } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { getAllProviders, getProviderById, addCustomProvider, addCustomModel, type CustomProvider, type AIModel } from '../utils/config';
+import { getAllProviders, getProviderById, modelRequiresApiKey, addCustomProvider, addCustomModel, type CustomProvider, type AIModel } from '../utils/config';
 import { SelectList, type SelectOption } from './SelectList';
 import { CustomInput } from './CustomInput';
 
@@ -88,7 +88,8 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }:
       setStep('add-custom-model');
     } else {
       setSelectedModel(value);
-      if (currentProvider?.requiresApiKey) {
+      const requiresKey = !!currentProvider && (currentProvider.requiresApiKey || modelRequiresApiKey(currentProvider.id, value));
+      if (requiresKey) {
         setStep('apikey');
       } else {
         setStep('confirm');
@@ -219,7 +220,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }:
       case 'apikey':
         return 'model';
       case 'confirm':
-        return currentProvider?.requiresApiKey ? 'apikey' : 'model';
+        return currentProvider && (currentProvider.requiresApiKey || modelRequiresApiKey(currentProvider.id, selectedModel)) ? 'apikey' : 'model';
       default:
         return null;
     }

@@ -6,6 +6,10 @@ import { Welcome } from './Welcome';
 import { Setup } from './Setup';
 import { Main } from './Main';
 import { ShortcutsModal } from './ShortcutsModal';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 type AppScreen = 'welcome' | 'setup' | 'main';
 
@@ -13,10 +17,26 @@ export function App() {
   const [screen, setScreen] = useState<AppScreen>('main');
   const [isReady, setIsReady] = useState(false);
   const [pasteRequestId, setPasteRequestId] = useState(0);
+  const [copyRequestId, setCopyRequestId] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutsTab, setShortcutsTab] = useState<0 | 1>(0);
 
   const renderer = useRenderer();
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (process.platform === 'win32') {
+        const escaped = text.replace(/'/g, "''");
+        await execAsync(`powershell -command "Set-Clipboard -Value '${escaped}'"`);
+      } else if (process.platform === 'darwin') {
+        await execAsync(`echo ${JSON.stringify(text)} | pbcopy`);
+      } else {
+        await execAsync(`echo ${JSON.stringify(text)} | xclip -selection clipboard`);
+      }
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+    }
+  };
 
   useEffect(() => {
     const handleKeyPress = (key: KeyEvent) => {
@@ -28,6 +48,10 @@ export function App() {
       const isCtrlP = (k.name === 'p' && k.ctrl) || k.sequence === '\x10';
       const isAltP = process.platform !== 'darwin' && k.name === 'p' && (k.alt || k.meta) && !k.ctrl;
 
+      const isCtrlC = (k.name === 'c' && k.ctrl) || k.sequence === '\x03';
+      const isCmdC = process.platform === 'darwin' && k.name === 'c' && k.meta && !k.alt;
+      const isAltC = process.platform !== 'darwin' && k.name === 'c' && (k.alt || k.meta) && !k.ctrl;
+
       const isF1 = k.name === 'f1';
       const isF2 = k.name === 'f2';
 
@@ -37,6 +61,10 @@ export function App() {
 
       if (isCtrlP || isAltP) {
         setShortcutsOpen(prev => !prev);
+      }
+
+      if ((isCtrlC && !k.shift) || isCmdC || isAltC) {
+        setCopyRequestId(prev => prev + 1);
       }
 
       if (shortcutsOpen && (isF1 || isF2)) {
@@ -101,7 +129,12 @@ export function App() {
 
   return (
     <box width="100%" height="100%">
-      <Main pasteRequestId={pasteRequestId} shortcutsOpen={shortcutsOpen} />
+      <Main
+        pasteRequestId={pasteRequestId}
+        copyRequestId={copyRequestId}
+        onCopy={copyToClipboard}
+        shortcutsOpen={shortcutsOpen}
+      />
       {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
     </box>
   );

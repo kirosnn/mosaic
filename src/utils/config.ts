@@ -18,6 +18,7 @@ export interface AIModel {
   id: string;
   name: string;
   description: string;
+  requiresApiKey?: boolean;
 }
 
 export interface CustomProvider extends AIProvider {
@@ -101,8 +102,8 @@ export const AI_PROVIDERS: AIProvider[] = [
     requiresApiKey: false,
     models: [
       { id: 'gpt-oss:120b', name: 'GPT OSS 120b', description: 'Best OSS reasoning model (and only one) OpenAI created' },
-      { id: 'glm-4.7:cloud', name: 'GLM 4.7', description: 'Advancing the coding capability, from zAI' },
-      { id: 'devstral-2:123b-cloud', name: 'Devstral 2 Cloud', description: 'Devstral is an agentic LLM for software engineering tasks, from Mistral' },
+      { id: 'glm-4.7:cloud', name: 'GLM 4.7 Cloud', description: 'Advancing the coding capability, from zAI', requiresApiKey: true },
+      { id: 'devstral-2:123b-cloud', name: 'Devstral 2 Cloud', description: 'Devstral is an agentic LLM for software engineering tasks, from Mistral', requiresApiKey: true },
     ]
   },
   {
@@ -190,6 +191,16 @@ export function getAllProviders(): AIProvider[] {
 
 export function getProviderById(id: string): AIProvider | undefined {
   return getAllProviders().find(p => p.id === id);
+}
+
+export function getModelById(providerId: string, modelId: string): AIModel | undefined {
+  const provider = getProviderById(providerId);
+  return provider?.models.find(m => m.id === modelId);
+}
+
+export function modelRequiresApiKey(providerId: string, modelId: string): boolean {
+  const model = getModelById(providerId, modelId);
+  return model?.requiresApiKey === true;
 }
 
 export function addCustomProvider(provider: CustomProvider): void {

@@ -1,18 +1,64 @@
 import { TextAttributes } from "@opentui/core";
 
 export interface MarkdownSegment {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'codeblock' | 'codeblock-content' | 'heading' | 'listitem';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem';
   content: string;
   level?: number;
 }
 
-export function parseMarkdownLine(line: string): MarkdownSegment[] {
+function parseInline(text: string): MarkdownSegment[] {
   const segments: MarkdownSegment[] = [];
 
-  if (line.startsWith('```')) {
-    return [{ type: 'codeblock', content: line.replace(/^```/, '') }];
+  let i = 0;
+  let buffer = '';
+
+  const flushText = () => {
+    if (buffer) {
+      segments.push({ type: 'text', content: buffer });
+      buffer = '';
+    }
+  };
+
+  while (i < text.length) {
+    if (text[i] === '`') {
+      const j = text.indexOf('`', i + 1);
+      if (j !== -1) {
+        flushText();
+        segments.push({ type: 'code', content: text.substring(i + 1, j) });
+        i = j + 1;
+        continue;
+      }
+    }
+
+    if (text.substring(i, i + 2) === '**') {
+      const j = text.indexOf('**', i + 2);
+      if (j !== -1) {
+        flushText();
+        segments.push({ type: 'bold', content: text.substring(i + 2, j) });
+        i = j + 2;
+        continue;
+      }
+    }
+
+    if (text[i] === '*' && text.substring(i, i + 2) !== '**') {
+      const j = text.indexOf('*', i + 1);
+      if (j !== -1) {
+        flushText();
+        segments.push({ type: 'italic', content: text.substring(i + 1, j) });
+        i = j + 1;
+        continue;
+      }
+    }
+
+    buffer += text[i];
+    i++;
   }
 
+  flushText();
+  return segments.length > 0 ? segments : [{ type: 'text', content: text }];
+}
+
+export function parseMarkdownLine(line: string): MarkdownSegment[] {
   if (line.match(/^#{1,6}\s/)) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match && match[2]) {
@@ -21,73 +67,11 @@ export function parseMarkdownLine(line: string): MarkdownSegment[] {
   }
 
   if (line.match(/^[-*+]\s/)) {
-    return [{ type: 'listitem', content: line.replace(/^[-*+]\s+/, '') }];
+    const content = line.replace(/^[-*+]\s+/, '');
+    return [{ type: 'text', content: '• ' }, ...parseInline(content)];
   }
 
-  let i = 0;
-  let text = '';
-
-  while (i < line.length) {
-    if (line.substring(i, i + 1) === '`') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '`') {
-        j++;
-      }
-
-      if (j < line.length) {
-        if (text) {
-          segments.push({ type: 'text', content: text });
-          text = '';
-        }
-        segments.push({ type: 'code', content: line.substring(i + 1, j) });
-        i = j + 1;
-        continue;
-      }
-    }
-
-    if (line.substring(i, i + 2) === '**') {
-      let j = i + 2;
-      while (j < line.length - 1 && line.substring(j, j + 2) !== '**') {
-        j++;
-      }
-
-      if (j < line.length - 1 && line.substring(j, j + 2) === '**') {
-        if (text) {
-          segments.push({ type: 'text', content: text });
-          text = '';
-        }
-        segments.push({ type: 'bold', content: line.substring(i + 2, j) });
-        i = j + 2;
-        continue;
-      }
-    }
-
-    if (line.substring(i, i + 1) === '*' && line.substring(i, i + 2) !== '**') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '*') {
-        j++;
-      }
-
-      if (j < line.length && line[j] === '*') {
-        if (text) {
-          segments.push({ type: 'text', content: text });
-          text = '';
-        }
-        segments.push({ type: 'italic', content: line.substring(i + 1, j) });
-        i = j + 1;
-        continue;
-      }
-    }
-
-    text += line[i];
-    i++;
-  }
-
-  if (text) {
-    segments.push({ type: 'text', content: text });
-  }
-
-  return segments.length > 0 ? segments : [{ type: 'text', content: line }];
+  return parseInline(line);
 }
 
 export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
@@ -104,12 +88,6 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
           <text fg="white">{segment.content}</text>
         </box>
       );
-
-    case 'codeblock':
-      return <text key={key} fg="#888888" attributes={TextAttributes.DIM}>{segment.content}</text>;
-
-    case 'codeblock-content':
-      return <text key={key} fg="#e0e0e0">{segment.content}</text>;
 
     case 'heading':
       return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
@@ -129,7 +107,6 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
 }
 
 export interface ParsedMarkdownLine {
-  isCodeBlock: boolean;
   segments: MarkdownSegment[];
   rawLine: string;
 }
@@ -137,32 +114,12 @@ export interface ParsedMarkdownLine {
 export function parseMarkdownContent(content: string): ParsedMarkdownLine[] {
   const lines = content.split('\n');
   const result: ParsedMarkdownLine[] = [];
-  let inCodeBlock = false;
 
   for (const line of lines) {
-    if (line.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      result.push({
-        isCodeBlock: true,
-        segments: [{ type: 'codeblock', content: line.replace(/^```/, '') }],
-        rawLine: line
-      });
-      continue;
-    }
-
-    if (inCodeBlock) {
-      result.push({
-        isCodeBlock: true,
-        segments: [{ type: 'codeblock-content', content: line }],
-        rawLine: line
-      });
-    } else {
-      result.push({
-        isCodeBlock: false,
-        segments: parseMarkdownLine(line),
-        rawLine: line
-      });
-    }
+    result.push({
+      segments: parseMarkdownLine(line),
+      rawLine: line
+    });
   }
 
   return result;
@@ -178,9 +135,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 
   for (const segment of segments) {
     const content = segment.content;
-    const prefix = segment.type === 'bold' ? '**' : segment.type === 'italic' ? '*' : segment.type === 'code' ? '`' : '';
-    const suffix = prefix;
-    const fullText = prefix + content + suffix;
+    const fullText = content;
 
     if (!currentLine) {
       if (fullText.length <= maxWidth) {
@@ -192,13 +147,13 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 
         for (const word of words) {
           const testText = tempContent ? tempContent + ' ' + word : word;
-          const testFullText = prefix + testText + suffix;
+          const testFullText = testText;
 
           if (testFullText.length <= maxWidth) {
             tempContent = testText;
           } else {
             if (tempContent) {
-              currentLine = prefix + tempContent + suffix;
+              currentLine = tempContent;
               currentSegments.push({ ...segment, content: tempContent });
               lines.push({ text: currentLine, segments: currentSegments });
               currentLine = '';
@@ -209,7 +164,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
         }
 
         if (tempContent) {
-          currentLine = prefix + tempContent + suffix;
+          currentLine = tempContent;
           currentSegments.push({ ...segment, content: tempContent });
         }
       }
@@ -231,13 +186,13 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 
           for (const word of words) {
             const testText = tempContent ? tempContent + ' ' + word : word;
-            const testFullText = prefix + testText + suffix;
+            const testFullText = testText;
 
             if (testFullText.length <= maxWidth) {
               tempContent = testText;
             } else {
               if (tempContent) {
-                currentLine = prefix + tempContent + suffix;
+                currentLine = tempContent;
                 currentSegments = [{ ...segment, content: tempContent }];
                 lines.push({ text: currentLine, segments: currentSegments });
                 currentLine = '';
@@ -248,7 +203,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
           }
 
           if (tempContent) {
-            currentLine = prefix + tempContent + suffix;
+            currentLine = tempContent;
             currentSegments = [{ ...segment, content: tempContent }];
           }
         }
@@ -261,4 +216,17 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
   }
 
   return lines.length > 0 ? lines : [{ text: '', segments: [] }];
+}
+
+export interface WrappedMarkdownBlock {
+  type: 'line';
+  wrappedLines?: { text: string; segments: MarkdownSegment[] }[];
+}
+
+export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMarkdownBlock[] {
+  const lines = text.split('\n');
+  return lines.map((line) => ({
+    type: 'line',
+    wrappedLines: wrapMarkdownText(line, maxWidth)
+  }));
 }

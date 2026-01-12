@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/react"
 import { execSync } from 'child_process'
+import { getInputHistory } from '../utils/history'
 
 interface CustomInputProps {
   onSubmit: (value: string) => void
@@ -17,6 +18,13 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const [cursorVisible, setCursorVisible] = useState(true)
   const [pasteBuffer, setPasteBuffer] = useState('')
   const [inPasteMode, setInPasteMode] = useState(false)
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const [currentInput, setCurrentInput] = useState('')
+  const [inputHistory, setInputHistory] = useState<string[]>([])
+
+  useEffect(() => {
+    setInputHistory(getInputHistory())
+  }, [])
 
   useEffect(() => {
     if (!focused) {
@@ -95,6 +103,9 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       onSubmit(value)
       setValue('')
       setCursorPosition(0)
+      setHistoryIndex(-1)
+      setCurrentInput('')
+      setInputHistory(getInputHistory())
     } else if (key.name === 'backspace') {
       if (cursorPosition > 0) {
         setValue(prev => prev.slice(0, cursorPosition - 1) + prev.slice(cursorPosition))
@@ -106,6 +117,34 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setCursorPosition(0)
       } else if (cursorPosition < value.length) {
         setValue(prev => prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1))
+      }
+    } else if (key.name === 'up') {
+      if (inputHistory.length === 0) return
+
+      if (historyIndex === -1) {
+        setCurrentInput(value)
+        const newIndex = inputHistory.length - 1
+        setHistoryIndex(newIndex)
+        setValue(inputHistory[newIndex]!)
+        setCursorPosition(inputHistory[newIndex]!.length)
+      } else if (historyIndex > 0) {
+        const newIndex = historyIndex - 1
+        setHistoryIndex(newIndex)
+        setValue(inputHistory[newIndex]!)
+        setCursorPosition(inputHistory[newIndex]!.length)
+      }
+    } else if (key.name === 'down') {
+      if (historyIndex === -1) return
+
+      if (historyIndex < inputHistory.length - 1) {
+        const newIndex = historyIndex + 1
+        setHistoryIndex(newIndex)
+        setValue(inputHistory[newIndex]!)
+        setCursorPosition(inputHistory[newIndex]!.length)
+      } else {
+        setHistoryIndex(-1)
+        setValue(currentInput)
+        setCursorPosition(currentInput.length)
       }
     } else if (key.name === 'left') {
       setCursorPosition(prev => Math.max(0, prev - 1))
@@ -119,10 +158,12 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       const pastedText = key.sequence
       setValue(prev => prev.slice(0, cursorPosition) + pastedText + prev.slice(cursorPosition))
       setCursorPosition(prev => prev + pastedText.length)
+      setHistoryIndex(-1)
     } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
       const char = key.sequence
       setValue(prev => prev.slice(0, cursorPosition) + char + prev.slice(cursorPosition))
       setCursorPosition(prev => prev + char.length)
+      setHistoryIndex(-1)
     }
   })
 
