@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/mosaic.png" width="250" />
+</p>
+
 # Mosaic CLI
 
 **Version 0.0.5.04**
