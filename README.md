@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/mosaic.png" width="250" />
+  <img src="docs/mosaic.png" width="200" />
 </p>
 
 # Mosaic CLI
