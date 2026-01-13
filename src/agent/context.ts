@@ -38,13 +38,14 @@ export class AgentContextManager {
     });
   }
 
-  addToolResult(toolCallId: string, result: unknown): void {
+  addToolResult(toolCallId: string, toolName: string, result: unknown): void {
     this.messages.push({
       role: 'tool',
       content: [
         {
           type: 'tool-result',
           toolCallId,
+          toolName,
           result,
         },
       ],

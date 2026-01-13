@@ -126,6 +126,17 @@ export interface ProviderConfig {
   maxSteps?: number;
 }
 
+export interface AgentConfig {
+  maxSteps?: number;
+}
+
+export interface AgentContext {
+  messages: CoreMessage[];
+  systemPrompt: string;
+  tools: Record<string, CoreTool>;
+  config: AgentConfig;
+}
+
 export interface AgentMessage {
   role: 'user' | 'assistant';
   content: string;

@@ -44,8 +44,14 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     const handleResize = () => {
-      setTerminalWidth(process.stdout.columns || 80);
-      setTerminalHeight(process.stdout.rows || 24);
+      const newWidth = process.stdout.columns || 80;
+      const newHeight = process.stdout.rows || 24;
+      setTerminalWidth(newWidth);
+      setTerminalHeight(newHeight);
+      setScrollOffset(prev => {
+        if (shouldAutoScroll.current) return 0;
+        return prev;
+      });
     };
     process.stdout.on('resize', handleResize);
     return () => {
@@ -57,25 +63,34 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (!text) return [''];
     if (text.length <= maxWidth) return [text];
 
-    const words = text.split(' ');
     const lines: string[] = [];
     let currentLine = '';
+    let i = 0;
 
-    for (const word of words) {
-      if (word.length > maxWidth) {
-        if (currentLine) {
-          lines.push(currentLine);
-          currentLine = '';
-        }
-        for (let i = 0; i < word.length; i += maxWidth) {
-          lines.push(word.slice(i, i + maxWidth));
-        }
-      } else if (currentLine && (currentLine + ' ' + word).length > maxWidth) {
+    while (i < text.length) {
+      const char = text[i];
+
+      if (char === ' ' && currentLine.length === maxWidth) {
         lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = currentLine ? currentLine + ' ' + word : word;
+        currentLine = '';
+        i++;
+        continue;
       }
+
+      if (currentLine.length + 1 > maxWidth) {
+        const lastSpaceIndex = currentLine.lastIndexOf(' ');
+        if (lastSpaceIndex > 0) {
+          lines.push(currentLine.slice(0, lastSpaceIndex));
+          currentLine = currentLine.slice(lastSpaceIndex + 1) + char;
+        } else {
+          lines.push(currentLine);
+          currentLine = char || '';
+        }
+      } else {
+        currentLine += char;
+      }
+
+      i++;
     }
 
     if (currentLine) {
@@ -205,24 +220,28 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({ role: m.role, content: m.content }));
       let assistantChunk = '';
-      let currentToolCall: { toolName: string; args: Record<string, unknown> } | null = null;
-      let assistantMessageIndex = -1;
+      const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
       let assistantMessageId: string | null = null;
       let streamHadError = false;
 
       for await (const event of agent.streamMessages(conversationHistory)) {
         if (event.type === 'text-delta') {
           assistantChunk += event.content;
+
+          if (assistantMessageId === null) {
+            assistantMessageId = createId();
+          }
+
+          const currentMessageId = assistantMessageId;
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
-            if (assistantMessageIndex === -1) {
-              assistantMessageIndex = newMessages.length;
-              assistantMessageId = createId();
-              newMessages.push({ id: assistantMessageId, role: "assistant", content: assistantChunk });
+            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+
+            if (messageIndex === -1) {
+              newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk });
             } else {
-              newMessages[assistantMessageIndex] = {
-                id: assistantMessageId || newMessages[assistantMessageIndex]!.id,
-                role: "assistant",
+              newMessages[messageIndex] = {
+                ...newMessages[messageIndex]!,
                 content: assistantChunk
               };
             }
@@ -231,10 +250,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         } else if (event.type === 'step-start') {
           stepCount++;
         } else if (event.type === 'tool-call-end') {
-          currentToolCall = { toolName: event.toolName, args: event.args };
-        } else if (event.type === 'tool-result' && currentToolCall) {
-          const toolName = currentToolCall.toolName;
-          const toolArgs = currentToolCall.args;
+          pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+        } else if (event.type === 'tool-result') {
+          const pending = pendingToolCalls.get(event.toolCallId);
+          const toolName = pending?.toolName ?? event.toolName;
+          const toolArgs = pending?.args ?? {};
+          pendingToolCalls.delete(event.toolCallId);
           const { content: toolContent, success } = formatToolMessage(
             toolName,
             toolArgs,
@@ -248,7 +269,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               content: assistantChunk,
               timestamp: Date.now()
             });
-            assistantChunk = '';
           }
 
           conversationSteps.push({
@@ -262,29 +282,18 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
-            if (assistantMessageIndex !== -1) {
-              newMessages.splice(assistantMessageIndex + 1, 0, {
-                id: createId(),
-                role: "tool",
-                content: toolContent,
-                toolName,
-                success: success
-              });
-            } else {
-              newMessages.push({
-                id: createId(),
-                role: "tool",
-                content: toolContent,
-                toolName,
-                success: success
-              });
-            }
+            newMessages.push({
+              id: createId(),
+              role: "tool",
+              content: toolContent,
+              toolName,
+              success: success
+            });
             return newMessages;
           });
 
-          assistantMessageIndex = -1;
+          assistantChunk = '';
           assistantMessageId = null;
-          currentToolCall = null;
         } else if (event.type === 'error') {
           if (assistantChunk.trim()) {
             conversationSteps.push({
@@ -292,7 +301,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               content: assistantChunk,
               timestamp: Date.now()
             });
-            assistantChunk = '';
           }
 
           const errorContent = `API error: ${event.error}`;
@@ -304,22 +312,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
-            const errorMessage: Message = {
+            newMessages.push({
               id: createId(),
               role: 'assistant',
               content: errorContent,
               isError: true,
-            };
-
-            if (assistantMessageIndex !== -1) {
-              newMessages.splice(assistantMessageIndex + 1, 0, errorMessage);
-            } else {
-              newMessages.push(errorMessage);
-            }
-
+            });
             return newMessages;
           });
 
+          assistantChunk = '';
+          assistantMessageId = null;
           streamHadError = true;
           break;
         } else if (event.type === 'finish') {
@@ -361,14 +364,14 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           newMessages[newMessages.length - 1] = {
             id: newMessages[newMessages.length - 1]!.id,
             role: "assistant",
-            content: `Error: ${errorMessage}`,
+            content: `Mosaic error: ${errorMessage}`,
             isError: true
           };
         } else {
           newMessages.push({
             id: createId(),
             role: "assistant",
-            content: `Error: ${errorMessage}`,
+            content: `Mosaic error: ${errorMessage}`,
             isError: true
           });
         }
@@ -474,7 +477,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
       for (let i = 0; i < paragraphs.length; i++) {
         const paragraph = paragraphs[i];
-        if (!paragraph || paragraph.trim() === '') {
+        if (paragraph === '') {
           allItems.push({
             key: `${messageKey}-paragraph-${i}-empty`,
             type: 'line',

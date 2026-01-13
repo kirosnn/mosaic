@@ -20,61 +20,75 @@ export class GoogleProvider implements Provider {
     });
 
     try {
-      for await (const chunk of result.fullStream) {
-        switch (chunk.type) {
+      let stepCounter = 0;
+
+      for await (const chunk of result.fullStream as any) {
+        const c: any = chunk;
+        switch (c.type) {
           case 'text-delta':
             yield {
               type: 'text-delta',
-              content: chunk.textDelta,
+              content: c.textDelta,
             };
             break;
 
           case 'step-start':
             yield {
               type: 'step-start',
-              stepNumber: chunk.stepIndex,
+              stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : stepCounter,
             };
+            stepCounter++;
             break;
 
           case 'step-finish':
             yield {
               type: 'step-finish',
-              stepNumber: chunk.stepIndex,
-              finishReason: chunk.finishReason,
+              stepNumber:
+                typeof c.stepIndex === 'number' ? c.stepIndex : Math.max(0, stepCounter - 1),
+              finishReason: String(c.finishReason ?? 'stop'),
             };
             break;
 
           case 'tool-call':
             yield {
               type: 'tool-call-end',
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              args: chunk.args,
+              toolCallId: String(c.toolCallId ?? ''),
+              toolName: String(c.toolName ?? ''),
+              args: (c.args ?? {}) as Record<string, unknown>,
             };
             break;
 
           case 'tool-result':
             yield {
               type: 'tool-result',
-              toolCallId: chunk.toolCallId,
-              toolName: chunk.toolName,
-              result: chunk.result,
+              toolCallId: String(c.toolCallId ?? ''),
+              toolName: String(c.toolName ?? ''),
+              result: c.result,
             };
             break;
 
           case 'finish':
             yield {
               type: 'finish',
-              finishReason: chunk.finishReason,
-              usage: chunk.usage,
+              finishReason: String(c.finishReason ?? 'stop'),
+              usage: c.usage,
             };
             break;
 
           case 'error':
+            {
+              const err = c.error;
+              const msg =
+                err instanceof Error
+                  ? err.message
+                  : typeof err === 'string'
+                    ? err
+                    : 'Unknown error';
             yield {
               type: 'error',
-              error: chunk.error.message || 'Unknown error',
+              error: msg,
             };
+            }
             break;
         }
       }

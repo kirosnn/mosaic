@@ -83,21 +83,36 @@ function parsePseudoToolCalls(text: string): Array<{ toolName: string; args: Rec
     const line = rawLine.trim();
     if (!line) continue;
 
-    const m = line.match(/^(?:\|\s*)?(read_file|write_file|list_files|execute_command)\s+(path|command)\s*:\s*(.+)$/i);
-    if (!m) continue;
+    const kv = line.match(/^(?:\|\s*)?(read_file|write_file|list_files|execute_command)\s+(path|command|content)\s*:\s*(.+)$/i);
+    if (kv) {
+      const toolName = kv[1]!.toLowerCase();
+      const key = kv[2]!.toLowerCase();
+      const value = (kv[3] || '').trim();
+      if (!value) continue;
 
-    const toolName = m[1]!.toLowerCase();
-    const key = m[2]!.toLowerCase();
-    const value = (m[3] || '').trim();
+      if (toolName === 'list_files' && key === 'path') {
+        calls.push({ toolName, args: { path: value } });
+      } else if (toolName === 'read_file' && key === 'path') {
+        calls.push({ toolName, args: { path: value } });
+      } else if (toolName === 'execute_command' && key === 'command') {
+        calls.push({ toolName, args: { command: value } });
+      } else if (toolName === 'write_file' && key === 'path') {
+        calls.push({ toolName, args: { path: value, content: '' } });
+      } else if (toolName === 'write_file' && key === 'content') {
+        const last = calls[calls.length - 1];
+        if (last && last.toolName === 'write_file') {
+          last.args = { ...last.args, content: value };
+        }
+      }
+      continue;
+    }
 
-    if (!value) continue;
-
-    if (toolName === 'list_files' && key === 'path') {
-      calls.push({ toolName, args: { path: value } });
-    } else if (toolName === 'read_file' && key === 'path') {
-      calls.push({ toolName, args: { path: value } });
-    } else if (toolName === 'execute_command' && key === 'command') {
-      calls.push({ toolName, args: { command: value } });
+    const shorthand = line.match(/^(?:\|\s*)?(write\s+file|write_file)\s+(.+)$/i);
+    if (shorthand) {
+      const path = (shorthand[2] || '').trim();
+      if (!path) continue;
+      calls.push({ toolName: 'write_file', args: { path, content: '' } });
+      continue;
     }
   }
 

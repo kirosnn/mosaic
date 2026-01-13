@@ -1,5 +1,5 @@
-import { readFile, writeFile, readdir } from 'fs/promises';
-import { join, resolve } from 'path';
+import { readFile, writeFile, readdir, appendFile, stat, mkdir } from 'fs/promises';
+import { join, resolve, dirname, extname } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -11,6 +11,107 @@ export interface ToolResult {
   error?: string;
 }
 
+function validatePath(fullPath: string, workspace: string): boolean {
+  return fullPath.startsWith(workspace);
+}
+
+function matchGlob(filename: string, pattern: string): boolean {
+  const regexPattern = pattern
+    .replace(/\./g, '\\.')
+    .replace(/\*\*/g, '<!DOUBLESTAR!>')
+    .replace(/\*/g, '[^/]*')
+    .replace(/<!DOUBLESTAR!>/g, '.*')
+    .replace(/\?/g, '.');
+
+  const regex = new RegExp(`^${regexPattern}$`);
+  return regex.test(filename);
+}
+
+async function searchInFile(filePath: string, query: string, caseSensitive: boolean): Promise<Array<{ line: number; content: string }>> {
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    const lines = content.split('\n');
+    const matches: Array<{ line: number; content: string }> = [];
+
+    const searchQuery = caseSensitive ? query : query.toLowerCase();
+
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = lines[i] ?? '';
+      const lineContent = caseSensitive ? rawLine : rawLine.toLowerCase();
+      if (lineContent.includes(searchQuery)) {
+        matches.push({ line: i + 1, content: rawLine });
+      }
+    }
+
+    return matches;
+  } catch {
+    return [];
+  }
+}
+
+async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<string[]> {
+  const results: string[] = [];
+
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!includeHidden && entry.name.startsWith('.')) continue;
+
+      const fullPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        const subFiles = await walkDirectory(fullPath, filePattern, includeHidden);
+        results.push(...subFiles);
+      } else {
+        if (!filePattern || matchGlob(entry.name, filePattern)) {
+          results.push(fullPath);
+        }
+      }
+    }
+  } catch {
+    return results;
+  }
+
+  return results;
+}
+
+async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<string[]> {
+  const fullPath = resolve(workspace, dirPath);
+  const files = await walkDirectory(fullPath, filterPattern, includeHidden);
+
+  return files.map(file => file.replace(workspace + (workspace.endsWith('/') || workspace.endsWith('\\') ? '' : '/'), ''));
+}
+
+async function findFilesByPattern(pattern: string, searchPath: string): Promise<string[]> {
+  const results: string[] = [];
+
+  const hasDoubleStar = pattern.includes('**');
+
+  if (hasDoubleStar) {
+    const parts = pattern.split('**');
+    const filePattern = (parts[parts.length - 1] ?? '').replace(/^\//, '');
+    const files = await walkDirectory(searchPath, undefined, false);
+
+    for (const file of files) {
+      const relativePath = file.replace(searchPath + (searchPath.endsWith('/') || searchPath.endsWith('\\') ? '' : '/'), '');
+      if (matchGlob(relativePath, pattern)) {
+        results.push(relativePath);
+      }
+    }
+  } else {
+    const entries = await readdir(searchPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      if (matchGlob(entry.name, pattern) && entry.isFile()) {
+        results.push(entry.name);
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
   const workspace = process.cwd();
 
@@ -20,7 +121,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         const path = args.path as string;
         const fullPath = resolve(workspace, path);
 
-        if (!fullPath.startsWith(workspace)) {
+        if (!validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -36,44 +137,88 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
       case 'write_file': {
         const path = args.path as string;
-        const content = args.content as string;
+        const content = typeof args.content === 'string' ? args.content : '';
+        const append = args.append as boolean | undefined;
         const fullPath = resolve(workspace, path);
 
-        if (!fullPath.startsWith(workspace)) {
+        if (!validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
           };
         }
 
-        await writeFile(fullPath, content, 'utf-8');
-        return {
-          success: true,
-          result: `File written successfully: ${path}`
-        };
+        await mkdir(dirname(fullPath), { recursive: true });
+
+        if (append) {
+          await appendFile(fullPath, content, 'utf-8');
+          return {
+            success: true,
+            result: `Content appended successfully to: ${path}`
+          };
+        } else {
+          await writeFile(fullPath, content, 'utf-8');
+          return {
+            success: true,
+            result: `File written successfully: ${path}`
+          };
+        }
       }
 
       case 'list_files': {
         const path = args.path as string;
+        const recursive = args.recursive as boolean | undefined;
+        const filter = args.filter as string | undefined;
+        const includeHidden = args.include_hidden as boolean | undefined;
         const fullPath = resolve(workspace, path);
 
-        if (!fullPath.startsWith(workspace)) {
+        if (!validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
           };
         }
 
-        const entries = await readdir(fullPath, { withFileTypes: true });
-        const files = entries.map(entry => ({
-          name: entry.name,
-          type: entry.isDirectory() ? 'directory' : 'file'
-        }));
+        if (recursive) {
+          const files = await listFilesRecursive(path, workspace, filter, includeHidden);
+          const fileStats = await Promise.all(
+            files.map(async (file) => {
+              const filePath = resolve(workspace, file);
+              const stats = await stat(filePath);
+              return {
+                path: file,
+                type: stats.isDirectory() ? 'directory' : 'file',
+                size: stats.size,
+              };
+            })
+          );
+          return {
+            success: true,
+            result: JSON.stringify(fileStats, null, 2)
+          };
+        } else {
+          const entries = await readdir(fullPath, { withFileTypes: true });
+          let filteredEntries = entries;
 
-        return {
-          success: true,
-          result: JSON.stringify(files, null, 2)
-        };
+          if (!includeHidden) {
+            filteredEntries = entries.filter(entry => !entry.name.startsWith('.'));
+          }
+
+          if (filter) {
+            const regex = new RegExp(filter.replace(/\*/g, '.*').replace(/\?/g, '.'));
+            filteredEntries = filteredEntries.filter(entry => regex.test(entry.name));
+          }
+
+          const files = filteredEntries.map(entry => ({
+            name: entry.name,
+            type: entry.isDirectory() ? 'directory' : 'file'
+          }));
+
+          return {
+            success: true,
+            result: JSON.stringify(files, null, 2)
+          };
+        }
       }
 
       case 'execute_command': {
@@ -86,6 +231,124 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         return {
           success: true,
           result: stdout || stderr || 'Command executed successfully'
+        };
+      }
+
+      case 'grep': {
+        const filePattern = args.file_pattern as string;
+        const query = args.query as string | undefined;
+        const searchPath = (args.path as string | undefined) || '.';
+        const caseSensitive = (args.case_sensitive as boolean | undefined) ?? false;
+        const maxResults = (args.max_results as number | undefined) ?? 100;
+        const fullPath = resolve(workspace, searchPath);
+
+        if (!validatePath(fullPath, workspace)) {
+          return {
+            success: false,
+            error: 'Access denied: path is outside workspace'
+          };
+        }
+
+        const files = await findFilesByPattern(filePattern, fullPath);
+
+        if (!query) {
+          return {
+            success: true,
+            result: JSON.stringify(files, null, 2)
+          };
+        }
+
+        const results: Array<{ file: string; matches: Array<{ line: number; content: string }> }> = [];
+        let totalResults = 0;
+
+        for (const file of files) {
+          if (totalResults >= maxResults) break;
+
+          const filePath = resolve(fullPath, file);
+          const matches = await searchInFile(filePath, query, caseSensitive);
+          if (matches.length > 0) {
+            results.push({
+              file: join(searchPath, file),
+              matches: matches.slice(0, maxResults - totalResults)
+            });
+            totalResults += matches.length;
+          }
+        }
+
+        return {
+          success: true,
+          result: JSON.stringify(results, null, 2)
+        };
+      }
+
+      case 'edit_file': {
+        const path = args.path as string;
+        const oldContent = args.old_content as string;
+        const newContent = args.new_content as string;
+        const occurrence = (args.occurrence as number | undefined) ?? 1;
+        const fullPath = resolve(workspace, path);
+
+        if (!validatePath(fullPath, workspace)) {
+          return {
+            success: false,
+            error: 'Access denied: path is outside workspace'
+          };
+        }
+
+        const content = await readFile(fullPath, 'utf-8');
+        const parts = content.split(oldContent);
+
+        if (parts.length < occurrence + 1) {
+          return {
+            success: false,
+            error: `Could not find occurrence ${occurrence} of the specified content`
+          };
+        }
+
+        const before = parts.slice(0, occurrence).join(oldContent);
+        const after = parts.slice(occurrence).join(oldContent);
+        const updatedContent = before + newContent + after;
+
+        await writeFile(fullPath, updatedContent, 'utf-8');
+
+        return {
+          success: true,
+          result: `File edited successfully: ${path}`
+        };
+      }
+
+      case 'create_directory': {
+        const path = args.path as string;
+        const extension = extname(path || '');
+        const knownFileExtensions = new Set([
+          '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+          '.py', '.go', '.java', '.kt', '.rb', '.php', '.rs',
+          '.c', '.cc', '.cpp', '.h', '.hpp',
+          '.json', '.yaml', '.yml', '.toml', '.ini',
+          '.md', '.txt', '.env',
+          '.sh', '.bat', '.ps1',
+          '.html', '.css', '.scss', '.less',
+        ]);
+        if (extension && knownFileExtensions.has(extension.toLowerCase())) {
+          return {
+            success: false,
+            error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write_file with path "${path}" to create a file instead.`
+          };
+        }
+        const fullPath = resolve(workspace, path);
+
+        if (!validatePath(fullPath, workspace)) {
+          return {
+            success: false,
+            error: 'Access denied: path is outside workspace'
+          };
+        }
+
+        await mkdir(fullPath, { recursive: true });
+
+        return {
+          success: true,
+          result: `Directory created: ${path}`
         };
       }
 

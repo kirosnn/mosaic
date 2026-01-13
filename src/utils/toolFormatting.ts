@@ -5,7 +5,10 @@ export const DEFAULT_MAX_TOOL_LINES = 10;
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   read_file: 'Read',
   write_file: 'Write',
+  edit_file: 'Edit',
   list_files: 'List',
+  create_directory: 'Mkdir',
+  grep: 'Grep',
   execute_command: 'Command',
 };
 
@@ -21,7 +24,7 @@ function truncateLines(lines: string[], maxLines?: number): string[] {
 
   const visibleLines = lines.slice(0, Math.max(0, maxLines - 1));
   const hiddenCount = Math.max(0, lines.length - visibleLines.length);
-  return [...visibleLines, `(.. ${hiddenCount} more lines)`];
+  return [...visibleLines, `(${hiddenCount} more lines)`];
 }
 
 export function formatToolResult(result: unknown): string {
@@ -38,13 +41,26 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
   switch (toolName) {
     case 'read_file':
     case 'write_file':
-    case 'list_files': {
+    case 'edit_file':
+    case 'list_files':
+    case 'create_directory': {
       return null;
+    }
+
+    case 'grep': {
+      const parts: string[] = [];
+      const filePattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
+      if (filePattern) parts.push(`pattern: ${filePattern}`);
+
+      const query = typeof args.query === 'string' ? args.query : '';
+      if (query) parts.push(`query: "${query}"`);
+
+      return parts.length > 0 ? parts.join(', ') : null;
     }
 
     case 'execute_command': {
       const command = typeof args.command === 'string' ? args.command : '';
-      return command ? `command: ${command}` : null;
+      return command || null;
     }
 
     default: {
@@ -80,8 +96,14 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
   switch (toolName) {
     case 'read_file':
     case 'write_file':
+    case 'edit_file':
     case 'list_files':
+    case 'create_directory':
       return path ? `${displayName} (${path})` : displayName;
+    case 'grep': {
+      const grepPath = typeof args.path === 'string' ? args.path : '.';
+      return grepPath !== '.' ? `${displayName} (${grepPath})` : displayName;
+    }
     default:
       return displayName;
   }
@@ -95,12 +117,12 @@ function getLineCount(text: string): number {
 function formatListTree(result: unknown): string[] {
   if (typeof result !== 'string') return [];
   try {
-    const parsed = JSON.parse(result) as Array<{ name?: string; type?: string }>;
+    const parsed = JSON.parse(result) as Array<{ name?: string; path?: string; type?: string }>;
     if (!Array.isArray(parsed)) return [];
 
     const entries = parsed
       .map((e) => ({
-        name: typeof e.name === 'string' ? e.name : '',
+        name: typeof e.name === 'string' ? e.name : (typeof e.path === 'string' ? e.path : ''),
         type: typeof e.type === 'string' ? e.type : '',
       }))
       .filter((e) => e.name);
@@ -121,23 +143,80 @@ function formatListTree(result: unknown): string[] {
   }
 }
 
+function formatGrepResult(result: unknown): string[] {
+  if (typeof result !== 'string') return [];
+  try {
+    const parsed = JSON.parse(result);
+
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) return ['No results'];
+
+      if (typeof parsed[0] === 'string') {
+        return parsed.map(file => `  ${file}`);
+      }
+
+      if (typeof parsed[0] === 'object' && parsed[0] !== null) {
+        const lines: string[] = [];
+        for (const item of parsed) {
+          if (item.file) {
+            lines.push(`${item.file}:`);
+            if (Array.isArray(item.matches)) {
+              for (const match of item.matches) {
+                if (match.line && match.content) {
+                  lines.push(`  ${match.line}: ${match.content.trim()}`);
+                }
+              }
+            }
+          }
+        }
+        return lines.length > 0 ? lines : ['No matches'];
+      }
+    }
+
+    return [result];
+  } catch {
+    return typeof result === 'string' ? [result] : [];
+  }
+}
+
+function getToolErrorText(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const obj = result as Record<string, unknown>;
+  const error = obj.error;
+  return typeof error === 'string' && error.trim() ? error.trim() : null;
+}
+
 function formatToolBodyLines(toolName: string, args: Record<string, unknown>, result: unknown): string[] {
+  const errorText = getToolErrorText(result);
+  if (errorText) return [`Tool error: ${errorText}`];
+
   switch (toolName) {
     case 'read_file': {
-      const path = typeof args.path === 'string' ? args.path : '';
       const content = typeof result === 'string' ? result : '';
       const lineCount = getLineCount(content);
-      const label = path ? `Read ${lineCount} lines` : `Read ${lineCount} lines`;
-      return [label];
+      return [`Read ${lineCount} lines`];
     }
 
     case 'write_file': {
-      return ['Done'];
+      const append = args.append === true;
+      return append ? ['Appended'] : ['Done'];
+    }
+
+    case 'edit_file': {
+      return ['Edited'];
+    }
+
+    case 'create_directory': {
+      return ['Created'];
     }
 
     case 'list_files': {
       const treeLines = formatListTree(result);
       return treeLines.length > 0 ? treeLines : ['(empty)'];
+    }
+
+    case 'grep': {
+      return formatGrepResult(result);
     }
 
     default: {

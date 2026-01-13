@@ -142,30 +142,32 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
         currentLine = fullText;
         currentSegments.push(segment);
       } else {
-        const words = content.split(' ');
-        let tempContent = '';
-
-        for (const word of words) {
-          const testText = tempContent ? tempContent + ' ' + word : word;
-          const testFullText = testText;
-
-          if (testFullText.length <= maxWidth) {
-            tempContent = testText;
+        let remaining = content;
+        while (remaining) {
+          if (remaining.length <= maxWidth) {
+            currentLine = remaining;
+            currentSegments.push({ ...segment, content: remaining });
+            remaining = '';
           } else {
-            if (tempContent) {
-              currentLine = tempContent;
-              currentSegments.push({ ...segment, content: tempContent });
+            const breakPoint = remaining.lastIndexOf(' ', maxWidth);
+            if (breakPoint > 0) {
+              const chunk = remaining.slice(0, breakPoint);
+              currentLine = chunk;
+              currentSegments.push({ ...segment, content: chunk });
               lines.push({ text: currentLine, segments: currentSegments });
               currentLine = '';
               currentSegments = [];
+              remaining = remaining.slice(breakPoint + 1);
+            } else {
+              const chunk = remaining.slice(0, maxWidth);
+              currentLine = chunk;
+              currentSegments.push({ ...segment, content: chunk });
+              lines.push({ text: currentLine, segments: currentSegments });
+              currentLine = '';
+              currentSegments = [];
+              remaining = remaining.slice(maxWidth);
             }
-            tempContent = word;
           }
-        }
-
-        if (tempContent) {
-          currentLine = tempContent;
-          currentSegments.push({ ...segment, content: tempContent });
         }
       }
     } else {
@@ -181,30 +183,32 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
         currentSegments = [segment];
 
         if (fullText.length > maxWidth) {
-          const words = content.split(' ');
-          let tempContent = '';
-
-          for (const word of words) {
-            const testText = tempContent ? tempContent + ' ' + word : word;
-            const testFullText = testText;
-
-            if (testFullText.length <= maxWidth) {
-              tempContent = testText;
+          let remaining = content;
+          while (remaining) {
+            if (remaining.length <= maxWidth) {
+              currentLine = remaining;
+              currentSegments = [{ ...segment, content: remaining }];
+              remaining = '';
             } else {
-              if (tempContent) {
-                currentLine = tempContent;
-                currentSegments = [{ ...segment, content: tempContent }];
+              const breakPoint = remaining.lastIndexOf(' ', maxWidth);
+              if (breakPoint > 0) {
+                const chunk = remaining.slice(0, breakPoint);
+                currentLine = chunk;
+                currentSegments = [{ ...segment, content: chunk }];
                 lines.push({ text: currentLine, segments: currentSegments });
                 currentLine = '';
                 currentSegments = [];
+                remaining = remaining.slice(breakPoint + 1);
+              } else {
+                const chunk = remaining.slice(0, maxWidth);
+                currentLine = chunk;
+                currentSegments = [{ ...segment, content: chunk }];
+                lines.push({ text: currentLine, segments: currentSegments });
+                currentLine = '';
+                currentSegments = [];
+                remaining = remaining.slice(maxWidth);
               }
-              tempContent = word;
             }
-          }
-
-          if (tempContent) {
-            currentLine = tempContent;
-            currentSegments = [{ ...segment, content: tempContent }];
           }
         }
       }

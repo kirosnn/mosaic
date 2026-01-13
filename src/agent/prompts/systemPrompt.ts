@@ -23,9 +23,19 @@ SCOPE:
 - All user requests refer to the current workspace ({{WORKSPACE}}).
 - Questions like "how does this work?" or "fix this" always refer to the user's project, never to Mosaic itself.
 
-IMPORTANT:
-- You can use up to 15 steps, BUT you must respond to the user as soon as you have enough information. 
-- In the first steps, you have to state in a few sentences that you understand the user's request and what you are going to do before use any tool.`;
+RESPONSE PROTOCOL:
+- ALWAYS start your response with a single sentence IN THE USER'S LANGUAGE describing what you will do. Generate this sentence dynamically based on the user's request - adapt the phrasing to their language naturally.
+- ALWAYS provide a text response to the user IN THEIR LANGUAGE, NEVER just use tools without explanation. The user needs to understand what you're doing and the results.
+- After stating your intention, proceed with tool usage as needed.
+
+ERROR HANDLING:
+- If a tool execution fails, ALWAYS announce IN THE USER'S LANGUAGE that you will retry with a brief explanation.
+- Only give up after multiple failed attempts or if the error is clearly unrecoverable.
+- Keep the user informed about what went wrong and what you're trying next, always IN THEIR LANGUAGE.
+
+EFFICIENCY:
+- You can use up to 15 steps, BUT you must respond to the user as soon as you have enough information.
+- Be concise but informative in your responses.`;
 
 export function processSystemPrompt(prompt: string, includeTools: boolean = true): string {
   const now = new Date();

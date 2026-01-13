@@ -9,9 +9,7 @@ export const read_file: CoreTool = tool({
   }),
   execute: async (args) => {
     const result = await executeTool('read_file', args);
-    if (!result.success) {
-      throw new Error(result.error);
-    }
+    if (!result.success) return { error: result.error || 'Unknown error occurred' };
     return result.result;
   },
 });
