@@ -476,7 +476,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       let isFirstContent = true;
 
       for (let i = 0; i < paragraphs.length; i++) {
-        const paragraph = paragraphs[i];
+        const paragraph = paragraphs[i] ?? '';
         if (paragraph === '') {
           allItems.push({
             key: `${messageKey}-paragraph-${i}-empty`,

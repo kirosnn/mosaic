@@ -60,6 +60,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }:
   ];
 
   const currentProvider = getProviderById(selectedProvider);
+  const isOllamaCloudModel = selectedProvider === 'ollama' && (selectedModel.includes(':cloud') || selectedModel.includes('-cloud'));
   const modelOptions: SelectOption[] = currentProvider?.models.map(m => ({
     name: m.name,
     description: m.description,
@@ -483,17 +484,26 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }:
       {step === 'apikey' && (
         <box flexDirection="column" flexGrow={1}>
           <box marginBottom={1}>
-            <text>Enter your {currentProvider?.name} API key:</text>
+            <text>
+              Enter your {currentProvider?.name} API key:
+            </text>
           </box>
+          {isOllamaCloudModel && (
+            <box marginBottom={1} flexDirection="column" alignItems="flex-start">
+              <text>
+                This is an Ollama Cloud model. You must create an API key on:
+              </text>
+              <text attributes={TextAttributes.DIM}>https://ollama.com/settings/keys</text>
+            </box>
+          )}
           <CustomInput
             onSubmit={handleApiKeySubmit}
             focused={!shortcutsOpen}
             pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            placeholder="sk-..."
-            password={true}
+            placeholder={isOllamaCloudModel ? "ollama_..." : "sk-..."}
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Alt+V (or Ctrl+V) to paste, then press Enter, Escape to go back</text>
+            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
