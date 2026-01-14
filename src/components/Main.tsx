@@ -215,6 +215,22 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     });
 
     try {
+      const providerStatus = await Agent.ensureProviderReady();
+      if (!providerStatus.ready) {
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          newMessages.push({
+            id: createId(),
+            role: "assistant",
+            content: `Ollama error: ${providerStatus.error || 'Could not start Ollama. Make sure Ollama is installed.'}`,
+            isError: true
+          });
+          return newMessages;
+        });
+        setIsProcessing(false);
+        return;
+      }
+
       const agent = new Agent();
       const conversationHistory = [...messages, userMessage]
         .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')

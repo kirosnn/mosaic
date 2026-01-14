@@ -238,6 +238,31 @@ function coreMessagesToOllamaMessages(messages: CoreMessage[]): any[] {
     .filter(Boolean);
 }
 
+export async function checkAndStartOllama(): Promise<{ running: boolean; started: boolean; error?: string }> {
+  const ollamaClient = new Ollama();
+
+  try {
+    await ollamaVersion(ollamaClient);
+    return { running: true, started: false };
+  } catch {
+    // Ollama is not running, try to start it
+  }
+
+  try {
+    await ensureOllamaServe();
+
+    // Wait and verify it's running
+    await retry(() => ollamaVersion(ollamaClient), 6, 350);
+    return { running: true, started: true };
+  } catch (e) {
+    return {
+      running: false,
+      started: false,
+      error: e instanceof Error ? e.message : 'Failed to start Ollama'
+    };
+  }
+}
+
 export class OllamaProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],

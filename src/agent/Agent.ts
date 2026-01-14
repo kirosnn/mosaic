@@ -13,12 +13,34 @@ import { OpenAIProvider } from './provider/openai';
 import { GoogleProvider } from './provider/google';
 import { MistralProvider } from './provider/mistral';
 import { XaiProvider } from './provider/xai';
-import { OllamaProvider } from './provider/ollama';
+import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 
 export class Agent {
   private messageHistory: CoreMessage[] = [];
   private provider: Provider;
   private config: ProviderConfig;
+  private static ollamaChecked = false;
+
+  static async ensureProviderReady(): Promise<{ ready: boolean; started?: boolean; error?: string }> {
+    const userConfig = readConfig();
+
+    if (userConfig.provider === 'ollama') {
+      if (Agent.ollamaChecked) {
+        return { ready: true };
+      }
+
+      const result = await checkAndStartOllama();
+      Agent.ollamaChecked = true;
+
+      if (!result.running) {
+        return { ready: false, error: result.error };
+      }
+
+      return { ready: true, started: result.started };
+    }
+
+    return { ready: true };
+  }
 
   constructor() {
     const userConfig = readConfig();

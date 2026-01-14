@@ -15,7 +15,7 @@ interface CustomInputProps {
 export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0 }: CustomInputProps) {
   const [value, setValue] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
-  const [cursorVisible, setCursorVisible] = useState(true)
+  const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const [pasteBuffer, setPasteBuffer] = useState('')
   const [inPasteMode, setInPasteMode] = useState(false)
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -27,17 +27,14 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   }, [])
 
   useEffect(() => {
-    if (!focused) {
-      setCursorVisible(true)
-      return
+    const handleResize = () => {
+      setTerminalWidth(process.stdout.columns || 80)
     }
-
-    const interval = setInterval(() => {
-      setCursorVisible(prev => !prev)
-    }, 500)
-
-    return () => clearInterval(interval)
-  }, [focused])
+    process.stdout.on('resize', handleResize)
+    return () => {
+      process.stdout.off('resize', handleResize)
+    }
+  }, [])
 
   useEffect(() => {
     if (!focused) return
@@ -76,7 +73,6 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
 
   useKeyboard((key) => {
     if (!focused) return
-    setCursorVisible(true)
 
     if (key.sequence && key.sequence.includes('\x1b[200~')) {
       setInPasteMode(true)
@@ -171,39 +167,86 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const cursorChar = focused ? '█' : '│'
   const isEmpty = value.length === 0
 
+  const lineWidth = Math.max(10, terminalWidth - 4)
+
+  const wrapTextWithCursor = (text: string, cursorPos: number, maxWidth: number): { lines: string[], cursorLine: number, cursorCol: number } => {
+    if (text.length === 0) {
+      return { lines: [''], cursorLine: 0, cursorCol: 0 }
+    }
+
+    const lines: string[] = []
+    let currentLine = ''
+    let cursorLine = 0
+    let cursorCol = 0
+
+    for (let i = 0; i < text.length; i++) {
+      if (i === cursorPos) {
+        cursorLine = lines.length
+        cursorCol = currentLine.length
+      }
+
+      currentLine += text[i]
+
+      if (currentLine.length >= maxWidth) {
+        lines.push(currentLine)
+        currentLine = ''
+      }
+    }
+
+    if (cursorPos === text.length) {
+      cursorLine = lines.length
+      cursorCol = currentLine.length
+    }
+
+    if (currentLine.length > 0 || lines.length === 0) {
+      lines.push(currentLine)
+    }
+
+    return { lines, cursorLine, cursorCol }
+  }
+
   if (isEmpty) {
     if (!placeholder) {
       return (
-        <box flexDirection="row" flexGrow={1} width="100%">
-          <text>{cursorVisible ? cursorChar : ' '}</text>
+        <box flexDirection="column" flexGrow={1} width="100%">
+          <box flexDirection="row">
+            <text>{cursorChar}</text>
+          </box>
         </box>
       )
     }
-    if (cursorVisible) {
-      return (
-        <box flexDirection="row" flexGrow={1} width="100%">
+    return (
+      <box flexDirection="column" flexGrow={1} width="100%">
+        <box flexDirection="row">
           <text>{cursorChar}</text>
           {placeholder.slice(1) && <text attributes={TextAttributes.DIM}>{placeholder.slice(1)}</text>}
         </box>
-      )
-    } else {
-      return (
-        <box flexDirection="row" flexGrow={1} width="100%">
-          <text attributes={TextAttributes.DIM}>{placeholder}</text>
-        </box>
-      )
-    }
+      </box>
+    )
   }
 
-  const cursor = cursorVisible ? cursorChar : ' '
-  const beforeCursor = displayValue.slice(0, cursorPosition)
-  const afterCursor = displayValue.slice(cursorPosition)
+  const { lines, cursorLine, cursorCol } = wrapTextWithCursor(displayValue, cursorPosition, lineWidth)
 
   return (
-    <box flexDirection="row" flexGrow={1} width="100%">
-      {beforeCursor && <text>{beforeCursor}</text>}
-      <text>{cursor}</text>
-      {afterCursor && <text>{afterCursor}</text>}
+    <box flexDirection="column" flexGrow={1} width="100%">
+      {lines.map((line, lineIndex) => {
+        if (lineIndex === cursorLine) {
+          const beforeCursor = line.slice(0, cursorCol)
+          const afterCursor = line.slice(cursorCol)
+          return (
+            <box key={lineIndex} flexDirection="row">
+              {beforeCursor && <text>{beforeCursor}</text>}
+              <text>{cursorChar}</text>
+              {afterCursor && <text>{afterCursor}</text>}
+            </box>
+          )
+        }
+        return (
+          <box key={lineIndex} flexDirection="row">
+            <text>{line || ' '}</text>
+          </box>
+        )
+      })}
     </box>
   )
 }
