@@ -43,6 +43,11 @@ export class CLI {
   }
 
   showHelp(): void {
+    console.log('');
+    console.log('███╗   ███╗');
+    console.log('████╗ ████║');
+    console.log('███╔████╔███║');
+    console.log('');
     console.log(`Mosaic CLI v${VERSION}`);
     console.log('An AI-powered CLI code assistant');
     console.log('');
@@ -63,6 +68,7 @@ export class CLI {
     console.log('  mosaic --verbose             # Start with verbose mode enabled');
     console.log('  mosaic -v ./my-project       # Start in my-project with verbose mode');
     console.log('  mosaic -d ./src --verbose    # Start in src directory with verbose mode');
+    console.log('');
   }
 }
 
