@@ -1,3 +1,4 @@
+```
 TODO (for my own and if developers want contributing to the project):   
     ✔ - Improve the UI with information message   
     ✘ - Add slash command system   
@@ -14,4 +15,5 @@ TODO (for my own and if developers want contributing to the project):
         ✘ - Semantic compression / embeddings for long-term context   
         ✘ - Contextual display in CLI   
    
-> **Ready for 0.0.6.01 after that.**   
+Ready for 0.0.6.01 after that.   
+```
