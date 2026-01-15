@@ -1,6 +1,7 @@
 TODO (for my own and if developers want contributing to the project):
     ✔ - Improve the UI with information message
     ✘ - Add slash command system
+    ✘ - Add verbose mod when need to debug
     ✘ - Memory system :
         ✘ - Workspace-based memory storage
         ✘ - 30-day TTL implementation
