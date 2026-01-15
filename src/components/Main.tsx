@@ -4,6 +4,7 @@ import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage } from "../utils/toolFormatting";
+import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
 import type { MainProps, Message } from "./main/types";
 import { HomePage } from "./main/HomePage";
 import { ChatPage } from "./main/ChatPage";
@@ -15,7 +16,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [scrollOffset, setScrollOffset] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
+  const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const shouldAutoScroll = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -34,6 +37,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     return () => {
       process.stdout.off('resize', handleResize);
     };
+  }, []);
+
+  useEffect(() => {
+    return subscribeQuestion(setQuestionRequest);
   }, []);
 
   useEffect(() => {
@@ -103,6 +110,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (currentPage !== "chat") return;
     if (shortcutsOpen) return;
 
+    if (key.name === 'escape') {
+      if (isProcessing) {
+        abortControllerRef.current?.abort();
+      }
+      return;
+    }
+
+    if (questionRequest && (key.name === 'up' || key.name === 'down' || key.name === 'pageup' || key.name === 'pagedown')) {
+      return;
+    }
+
     if (key.name === 'up') {
       shouldAutoScroll.current = false;
       setScrollOffset((prev) => prev + 1);
@@ -143,6 +161,23 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     let totalTokens = { prompt: 0, completion: 0, total: 0 };
     let stepCount = 0;
     const config = readConfig();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    let abortNotified = false;
+    const notifyAbort = () => {
+      if (abortNotified) return;
+      abortNotified = true;
+      setMessages((prev: Message[]) => {
+        const newMessages = [...prev];
+        newMessages.push({
+          id: createId(),
+          role: "tool",
+          success: false,
+          content: "Generation aborted. \n↪ What should Mosaic do instead?"
+        });
+        return newMessages;
+      });
+    };
 
     conversationSteps.push({
       type: 'user',
@@ -176,7 +211,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       let assistantMessageId: string | null = null;
       let streamHadError = false;
 
-      for await (const event of agent.streamMessages(conversationHistory)) {
+      for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
         if (event.type === 'text-delta') {
           assistantChunk += event.content;
 
@@ -247,6 +282,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           assistantChunk = '';
           assistantMessageId = null;
         } else if (event.type === 'error') {
+          if (abortController.signal.aborted) {
+            notifyAbort();
+            streamHadError = true;
+            break;
+          }
           if (assistantChunk.trim()) {
             conversationSteps.push({
               type: 'assistant',
@@ -288,6 +328,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         }
       }
 
+      if (abortController.signal.aborted) {
+        notifyAbort();
+        return;
+      }
+
       if (!streamHadError && assistantChunk.trim()) {
         conversationSteps.push({
           type: 'assistant',
@@ -309,6 +354,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       saveConversation(conversationData);
 
     } catch (error) {
+      if (abortController.signal.aborted) {
+        notifyAbort();
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
       setMessages((prev: Message[]) => {
         const newMessages = [...prev];
@@ -330,6 +379,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         return newMessages;
       });
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setIsProcessing(false);
     }
   };

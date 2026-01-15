@@ -5,6 +5,7 @@ import { VERSION } from './version';
 
 const CONFIG_DIR = join(homedir(), '.mosaic');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const MOSAIC_CONFIG_FILE = join(CONFIG_DIR, 'mosaic.jsonc');
 
 export interface AIProvider {
   id: string;
@@ -122,6 +123,13 @@ export const AI_PROVIDERS: AIProvider[] = [
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+  ensureMosaicConfigFile();
+}
+
+export function ensureMosaicConfigFile(): void {
+  if (!existsSync(MOSAIC_CONFIG_FILE)) {
+    writeFileSync(MOSAIC_CONFIG_FILE, JSON.stringify({}, null, 2), 'utf-8');
   }
 }
 

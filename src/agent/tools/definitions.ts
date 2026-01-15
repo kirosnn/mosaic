@@ -1,21 +1,21 @@
 import type { CoreTool } from 'ai';
 
-import { execute_command } from './execute_command';
-import { list_files } from './list_files';
-import { read_file } from './read_file';
-import { write_file } from './write_file';
-import { grep } from './grep';
-import { edit_file } from './edit_file';
-import { create_directory } from './create_directory';
+import { bash } from './bash.ts';
+import { list } from './list.ts';
+import { read } from './read.ts';
+import { write } from './write.ts';
+import { grep } from './grep.ts';
+import { edit } from './edit.ts';
+import { question } from './question.ts';
 
 export const tools: Record<string, CoreTool> = {
-  read_file,
-  write_file,
-  list_files,
-  execute_command,
+  read,
+  write,
+  list,
+  bash,
   grep,
-  edit_file,
-  create_directory,
+  edit,
+  question,
 };
 
 export function getTools(): Record<string, CoreTool> {

@@ -1,8 +1,12 @@
+import { useEffect, useState } from "react";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
+import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import { wrapText } from "./wrapText";
+import { QuestionPanel } from "./QuestionPanel";
+import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines } from "./ThinkingIndicator";
 
 interface ChatPageProps {
   messages: Message[];
@@ -26,11 +30,21 @@ export function ChatPage({
   onSubmit,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
-  const viewportHeight = Math.max(5, terminalHeight - 5);
+  const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
+
+  useEffect(() => {
+    return subscribeQuestion(setQuestionRequest);
+  }, []);
+
+  const bottomReservedLines = getBottomReservedLinesForInputBar({
+    isProcessing,
+    hasQuestion: Boolean(questionRequest),
+  });
+  const viewportHeight = Math.max(5, terminalHeight - (bottomReservedLines + 2));
 
   interface RenderItem {
     key: string;
-    type: 'line';
+    type: 'line' | 'question';
     content?: string;
     role: "user" | "assistant" | "tool";
     isFirst: boolean;
@@ -39,6 +53,7 @@ export function ChatPage({
     success?: boolean;
     isError?: boolean;
     isSpacer?: boolean;
+    questionRequest?: QuestionRequest;
     visualLines: number;
   }
 
@@ -47,7 +62,8 @@ export function ChatPage({
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     const messageKey = message.id || `m-${messageIndex}`;
-    if (message.role === 'assistant') {
+    const messageRole = message.displayRole ?? message.role;
+    if (messageRole === 'assistant') {
       const blocks = parseAndWrapMarkdown(message.content, maxWidth);
       let isFirstContent = true;
 
@@ -62,7 +78,7 @@ export function ChatPage({
               key: `${messageKey}-line-${blockIndex}-${j}`,
               type: 'line',
               content: wrapped.text || '',
-              role: message.role,
+              role: messageRole,
               isFirst: isFirstContent && j === 0,
               segments: wrapped.segments,
               isError: message.isError,
@@ -85,27 +101,27 @@ export function ChatPage({
             key: `${messageKey}-paragraph-${i}-empty`,
             type: 'line',
             content: '',
-            role: message.role,
+            role: messageRole,
             isFirst: false,
-            indent: message.role === 'tool' ? getToolParagraphIndent(i) : 0,
-            success: message.role === 'tool' ? message.success : undefined,
+            indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
+            success: messageRole === 'tool' ? message.success : undefined,
             isSpacer: true,
             visualLines: 1
           });
         } else {
-          const indent = message.role === 'tool' ? getToolParagraphIndent(i) : 0;
-          const wrapTarget = message.role === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
-          const wrapWidth = message.role === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
+          const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
+          const wrapTarget = messageRole === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
+          const wrapWidth = messageRole === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
           const wrappedLines = wrapText(wrapTarget, wrapWidth);
           for (let j = 0; j < wrappedLines.length; j++) {
             allItems.push({
               key: `${messageKey}-paragraph-${i}-line-${j}`,
               type: 'line',
               content: wrappedLines[j] || '',
-              role: message.role,
+              role: messageRole,
               isFirst: isFirstContent && i === 0 && j === 0,
               indent,
-              success: message.role === 'tool' ? message.success : undefined,
+              success: messageRole === 'tool' ? message.success : undefined,
               visualLines: 1
             });
           }
@@ -118,21 +134,30 @@ export function ChatPage({
       key: `${messageKey}-spacer`,
       type: 'line',
       content: '',
-      role: message.role,
+      role: messageRole,
       isFirst: false,
       isSpacer: true,
       visualLines: 1
     });
   }
 
-  if (isProcessing) {
+  if (questionRequest) {
     allItems.push({
-      key: 'thinking',
-      type: 'line',
-      content: 'Thinking...',
+      key: `question-${questionRequest.id}`,
+      type: 'question',
       role: 'assistant',
       isFirst: true,
-      visualLines: 1
+      questionRequest,
+      visualLines: Math.max(6, 5 + questionRequest.options.length),
+    });
+    allItems.push({
+      key: `question-${questionRequest.id}-spacer`,
+      type: 'line',
+      content: '',
+      role: 'assistant',
+      isFirst: false,
+      isSpacer: true,
+      visualLines: 1,
     });
   }
 
@@ -176,8 +201,22 @@ export function ChatPage({
 
   return (
     <box flexDirection="column" width="100%" height="100%" position="relative">
-      <box flexGrow={1} flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={3}>
+      <box flexGrow={1} flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={bottomReservedLines}>
         {visibleLines.map((item) => {
+          if (item.type === 'question') {
+            const req = item.questionRequest;
+            if (!req) return null;
+            return (
+              <box key={item.key} flexDirection="column" width="100%">
+                <QuestionPanel
+                  request={req}
+                  disabled={shortcutsOpen}
+                  onAnswer={(index) => answerQuestion(index)}
+                />
+              </box>
+            );
+          }
+
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
           const showToolBar = item.role === "tool" && !item.isSpacer;
           const showToolBackground = item.role === "tool" && !item.isSpacer;
@@ -224,7 +263,7 @@ export function ChatPage({
         paddingTop={0}
         paddingBottom={0}
         flexShrink={0}
-        minHeight={3}
+        minHeight={getInputBarBaseLines()}
         minWidth="100%"
       >
         <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
@@ -232,11 +271,15 @@ export function ChatPage({
             <CustomInput
               onSubmit={onSubmit}
               placeholder="Type your message..."
-              focused={!isProcessing && !shortcutsOpen}
+              focused={!isProcessing && !shortcutsOpen && !questionRequest}
               pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             />
           </box>
         </box>
+      </box>
+
+      <box position="absolute" bottom={getInputBarBaseLines()} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest)} />
       </box>
     </box>
   );

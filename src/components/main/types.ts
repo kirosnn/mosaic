@@ -1,6 +1,7 @@
 export interface Message {
   id: string;
   role: "user" | "assistant" | "tool";
+  displayRole?: "user" | "assistant" | "tool";
   content: string;
   toolName?: string;
   success?: boolean;

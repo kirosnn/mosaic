@@ -142,9 +142,14 @@ export interface AgentMessage {
   content: string;
 }
 
+export interface ProviderSendOptions {
+  abortSignal?: AbortSignal;
+}
+
 export interface Provider {
   sendMessage(
     messages: CoreMessage[],
-    config: ProviderConfig
+    config: ProviderConfig,
+    options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent>;
 }

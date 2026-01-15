@@ -3,13 +3,14 @@ const TOOL_BODY_INDENT = 2;
 export const DEFAULT_MAX_TOOL_LINES = 10;
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  read_file: 'Read',
-  write_file: 'Write',
-  edit_file: 'Edit',
-  list_files: 'List',
+  read: 'Read',
+  write: 'Write',
+  edit: 'Edit',
+  list: 'List',
   create_directory: 'Mkdir',
   grep: 'Grep',
-  execute_command: 'Command',
+  bash: 'Command',
+  question: 'Question',
 };
 
 function getToolDisplayName(toolName: string): string {
@@ -39,12 +40,17 @@ export function formatToolResult(result: unknown): string {
 
 function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): string | null {
   switch (toolName) {
-    case 'read_file':
-    case 'write_file':
-    case 'edit_file':
-    case 'list_files':
+    case 'read':
+    case 'write':
+    case 'edit':
+    case 'list':
     case 'create_directory': {
       return null;
+    }
+
+    case 'question': {
+      const prompt = typeof args.prompt === 'string' ? args.prompt : '';
+      return prompt ? `prompt: "${prompt}"` : null;
     }
 
     case 'grep': {
@@ -58,7 +64,7 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
       return parts.length > 0 ? parts.join(', ') : null;
     }
 
-    case 'execute_command': {
+    case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
       return command || null;
     }
@@ -94,10 +100,10 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
   const path = typeof args.path === 'string' ? args.path : '';
 
   switch (toolName) {
-    case 'read_file':
-    case 'write_file':
-    case 'edit_file':
-    case 'list_files':
+    case 'read':
+    case 'write':
+    case 'edit':
+    case 'list':
     case 'create_directory':
       return path ? `${displayName} (${path})` : displayName;
     case 'grep': {
@@ -191,18 +197,18 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
   if (errorText) return [`Tool error: ${errorText}`];
 
   switch (toolName) {
-    case 'read_file': {
+    case 'read': {
       const content = typeof result === 'string' ? result : '';
       const lineCount = getLineCount(content);
       return [`Read ${lineCount} lines`];
     }
 
-    case 'write_file': {
+    case 'write': {
       const append = args.append === true;
       return append ? ['Appended'] : ['Done'];
     }
 
-    case 'edit_file': {
+    case 'edit': {
       return ['Edited'];
     }
 
@@ -210,13 +216,25 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
       return ['Created'];
     }
 
-    case 'list_files': {
+    case 'list': {
       const treeLines = formatListTree(result);
       return treeLines.length > 0 ? treeLines : ['(empty)'];
     }
 
     case 'grep': {
       return formatGrepResult(result);
+    }
+
+    case 'question': {
+      if (result && typeof result === 'object') {
+        const obj = result as Record<string, unknown>;
+        const label = typeof obj.label === 'string' ? obj.label : '';
+        const value = typeof obj.value === 'string' ? obj.value : '';
+        if (label && value) return [`Selected: ${label} (${value})`];
+        if (label) return [`Selected: ${label}`];
+        if (value) return [`Selected: ${value}`];
+      }
+      return ['Selected'];
     }
 
     default: {

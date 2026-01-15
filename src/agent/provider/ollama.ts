@@ -1,7 +1,7 @@
 import { Ollama } from 'ollama';
 import { spawn } from 'child_process';
 import { CoreMessage, CoreTool } from 'ai';
-import { AgentEvent, Provider, ProviderConfig } from '../types';
+import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 
 let serveStartPromise: Promise<void> | null = null;
 const pullPromises = new Map<string, Promise<void>>();
@@ -258,7 +258,7 @@ export async function checkAndStartOllama(): Promise<{ running: boolean; started
     return {
       running: false,
       started: false,
-      error: e instanceof Error ? e.message : 'Failed to start Ollama'
+      error: e instanceof Error ? e.message : 'Failed to start Ollama',
     };
   }
 }
@@ -266,9 +266,14 @@ export async function checkAndStartOllama(): Promise<{ running: boolean; started
 export class OllamaProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],
-    config: ProviderConfig
+    config: ProviderConfig,
+    options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const apiKey = config.apiKey;
+
+    if (options?.abortSignal?.aborted) {
+      return;
+    }
 
     let ollamaClient: Ollama;
     let requestModel: string;
@@ -341,6 +346,7 @@ export class OllamaProvider implements Provider {
 
     try {
       for (let stepNumber = 0; stepNumber < maxSteps; stepNumber++) {
+        if (options?.abortSignal?.aborted) return;
         yield {
           type: 'step-start',
           stepNumber,
@@ -358,12 +364,14 @@ export class OllamaProvider implements Provider {
               tools: toolsSchema,
               stream: true,
               think: true,
+              signal: options?.abortSignal,
             } as any) as any,
           2,
           500
         );
 
         for await (const chunk of stream as AsyncGenerator<any>) {
+          if (options?.abortSignal?.aborted) return;
           const thinkingDelta = chunk?.message?.thinking;
           if (typeof thinkingDelta === 'string' && thinkingDelta) {
             assistantThinking += thinkingDelta;
@@ -407,6 +415,7 @@ export class OllamaProvider implements Provider {
 
         if (normalizedCalls.length > 0 && config.tools && stepNumber < maxSteps - 1) {
           for (let i = 0; i < normalizedCalls.length; i++) {
+            if (options?.abortSignal?.aborted) return;
             const call = normalizedCalls[i]!;
             const toolCallId = `ollama-${stepNumber}-${call.index}-${i}`;
 

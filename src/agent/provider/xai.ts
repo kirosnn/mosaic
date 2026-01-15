@@ -1,11 +1,12 @@
 import { streamText, CoreMessage } from 'ai';
 import { createXai } from '@ai-sdk/xai';
-import { AgentEvent, Provider, ProviderConfig } from '../types';
+import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 
 export class XaiProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],
-    config: ProviderConfig
+    config: ProviderConfig,
+    options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const xai = createXai({
       apiKey: config.apiKey,
@@ -17,6 +18,7 @@ export class XaiProvider implements Provider {
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
+      abortSignal: options?.abortSignal,
     });
 
     try {
@@ -93,15 +95,16 @@ export class XaiProvider implements Provider {
                   : typeof err === 'string'
                     ? err
                     : 'Unknown error';
-            yield {
-              type: 'error',
-              error: msg,
-            };
+              yield {
+                type: 'error',
+                error: msg,
+              };
             }
             break;
         }
       }
     } catch (error) {
+      if (options?.abortSignal?.aborted) return;
       yield {
         type: 'error',
         error: error instanceof Error ? error.message : 'Unknown error occurred',

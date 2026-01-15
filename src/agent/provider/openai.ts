@@ -1,11 +1,12 @@
 import { streamText, CoreMessage } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import { AgentEvent, Provider, ProviderConfig } from '../types';
+import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 
 export class OpenAIProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],
-    config: ProviderConfig
+    config: ProviderConfig,
+    options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const openai = createOpenAI({
       apiKey: config.apiKey,
@@ -34,6 +35,7 @@ export class OpenAIProvider implements Provider {
         system: config.systemPrompt,
         tools: config.tools,
         maxSteps: config.maxSteps ?? 10,
+        abortSignal: options?.abortSignal,
         providerOptions: {
           openai: {
             strictJsonSchema,
@@ -146,6 +148,7 @@ export class OpenAIProvider implements Provider {
     try {
       yield* run('responses', true);
     } catch (error) {
+      if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
       const looksLikeStrictSchemaError =
         msg.includes('Invalid schema for function') &&
@@ -157,6 +160,7 @@ export class OpenAIProvider implements Provider {
           yield* run('responses', false);
           return;
         } catch (retryError) {
+          if (options?.abortSignal?.aborted) return;
           yield {
             type: 'error',
             error: retryError instanceof Error ? retryError.message : 'Unknown error occurred',
@@ -171,6 +175,7 @@ export class OpenAIProvider implements Provider {
           yield* run(fallbackEndpoint, true);
           return;
         } catch (endpointError) {
+          if (options?.abortSignal?.aborted) return;
           const endpointMsg = endpointError instanceof Error ? endpointError.message : String(endpointError);
           const strictSchemaFromFallback =
             endpointMsg.includes('Invalid schema for function') &&
@@ -182,6 +187,7 @@ export class OpenAIProvider implements Provider {
               yield* run(fallbackEndpoint, false);
               return;
             } catch (endpointRetryError) {
+              if (options?.abortSignal?.aborted) return;
               yield {
                 type: 'error',
                 error:

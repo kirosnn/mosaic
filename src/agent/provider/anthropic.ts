@@ -1,11 +1,12 @@
 import { streamText, CoreMessage } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
-import { AgentEvent, Provider, ProviderConfig } from '../types';
+import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],
-    config: ProviderConfig
+    config: ProviderConfig,
+    options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const anthropic = createAnthropic({
       apiKey: config.apiKey,
@@ -17,6 +18,7 @@ export class AnthropicProvider implements Provider {
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
+      abortSignal: options?.abortSignal,
     });
 
     try {
@@ -102,6 +104,7 @@ export class AnthropicProvider implements Provider {
         }
       }
     } catch (error) {
+      if (options?.abortSignal?.aborted) return;
       yield {
         type: 'error',
         error: error instanceof Error ? error.message : 'Unknown error occurred',

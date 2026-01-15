@@ -117,7 +117,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
   try {
     switch (toolName) {
-      case 'read_file': {
+      case 'read': {
         const path = args.path as string;
         const fullPath = resolve(workspace, path);
 
@@ -135,7 +135,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         };
       }
 
-      case 'write_file': {
+      case 'write': {
         const path = args.path as string;
         const content = typeof args.content === 'string' ? args.content : '';
         const append = args.append === null ? undefined : (args.append as boolean | undefined);
@@ -165,7 +165,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         }
       }
 
-      case 'list_files': {
+      case 'list': {
         const path = args.path as string;
         const recursive = args.recursive === null ? undefined : (args.recursive as boolean | undefined);
         const filter = args.filter === null ? undefined : (args.filter as string | undefined);
@@ -221,7 +221,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         }
       }
 
-      case 'execute_command': {
+      case 'bash': {
         const command = args.command as string;
         const { stdout, stderr } = await execAsync(command, {
           cwd: workspace,
@@ -281,7 +281,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         };
       }
 
-      case 'edit_file': {
+      case 'edit': {
         const path = args.path as string;
         const oldContent = args.old_content as string;
         const newContent = args.new_content as string;
@@ -332,7 +332,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         if (extension && knownFileExtensions.has(extension.toLowerCase())) {
           return {
             success: false,
-            error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write_file with path "${path}" to create a file instead.`
+            error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write with path "${path}" to create a file instead.`
           };
         }
         const fullPath = resolve(workspace, path);

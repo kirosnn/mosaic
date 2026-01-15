@@ -2,7 +2,7 @@ import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
 
-export const write_file: CoreTool = tool({
+export const write: CoreTool = tool({
   description: 'Write or overwrite a file in the workspace. Creates parent directories automatically if they do not exist.',
   parameters: z.object({
     path: z.string().describe('The path to the file relative to the workspace root'),
@@ -10,7 +10,7 @@ export const write_file: CoreTool = tool({
     append: z.boolean().nullable().describe('If true, append to the file instead of overwriting (use null for false)'),
   }),
   execute: async (args) => {
-    const result = await executeTool('write_file', args);
+    const result = await executeTool('write', args);
     if (!result.success) return { error: result.error };
     return result.result;
   },

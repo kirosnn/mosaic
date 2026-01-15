@@ -4,6 +4,7 @@ import {
   AgentMessage,
   ProviderConfig,
   Provider,
+  ProviderSendOptions,
 } from './types';
 import { readConfig } from '../utils/config';
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
@@ -84,14 +85,14 @@ export class Agent {
     }
   }
 
-  async *sendMessage(userMessage: string): AsyncGenerator<AgentEvent> {
+  async *sendMessage(userMessage: string, options?: ProviderSendOptions): AsyncGenerator<AgentEvent> {
     this.messageHistory.push({
       role: 'user',
       content: userMessage,
     });
 
     try {
-      yield* this.provider.sendMessage(this.messageHistory, this.config);
+      yield* this.provider.sendMessage(this.messageHistory, this.config, options);
     } catch (error) {
       yield {
         type: 'error',
@@ -100,14 +101,14 @@ export class Agent {
     }
   }
 
-  async *streamMessages(messages: AgentMessage[]): AsyncGenerator<AgentEvent> {
+  async *streamMessages(messages: AgentMessage[], options?: ProviderSendOptions): AsyncGenerator<AgentEvent> {
     this.messageHistory = messages.map(msg => ({
       role: msg.role,
       content: msg.content,
     }));
 
     try {
-      yield* this.provider.sendMessage(this.messageHistory, this.config);
+      yield* this.provider.sendMessage(this.messageHistory, this.config, options);
     } catch (error) {
       yield {
         type: 'error',

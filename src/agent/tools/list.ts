@@ -2,7 +2,7 @@ import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
 
-export const list_files: CoreTool = tool({
+export const list: CoreTool = tool({
   description: 'List files and directories in a directory with optional recursive listing and filtering',
   parameters: z.object({
     path: z
@@ -13,7 +13,7 @@ export const list_files: CoreTool = tool({
     include_hidden: z.boolean().nullable().describe('If true, include hidden files (starting with .) (use null for false)'),
   }),
   execute: async (args) => {
-    const result = await executeTool('list_files', args);
+    const result = await executeTool('list', args);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     return result.result;
   },
