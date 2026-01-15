@@ -4,6 +4,7 @@ import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage } from '../utils/toolFormatting';
+import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
@@ -11,7 +12,7 @@ import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
 
-export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false }: MainProps) {
+export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false }: MainProps) {
   const [currentPage, setCurrentPage] = useState<"home" | "chat">("home");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -25,9 +26,14 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentPageRef = useRef(currentPage);
   const shortcutsOpenRef = useRef(shortcutsOpen);
+  const commandsOpenRef = useRef(commandsOpen);
   const questionRequestRef = useRef<QuestionRequest | null>(questionRequest);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+  useEffect(() => {
+    initializeCommands();
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -57,6 +63,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     shortcutsOpenRef.current = shortcutsOpen;
   }, [shortcutsOpen]);
+
+  useEffect(() => {
+    commandsOpenRef.current = commandsOpen;
+  }, [commandsOpen]);
 
   useEffect(() => {
     questionRequestRef.current = questionRequest;
@@ -147,6 +157,26 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
     const hasPastedBlocks = Boolean(meta?.pastedBlocks && meta.pastedBlocks.length > 0);
     if (!value.trim() && !hasPastedBlocks) return;
+
+    if (isCommand(value)) {
+      const result = await executeCommand(value);
+      if (result) {
+        const commandMessage: Message = {
+          id: createId(),
+          role: "slash",
+          content: result.content,
+          isError: !result.success
+        };
+
+        setMessages((prev: Message[]) => [...prev, commandMessage]);
+
+        if (result.shouldAddToHistory !== false) {
+          addInputToHistory(value.trim());
+        }
+
+        return;
+      }
+    }
 
     const composedContent = hasPastedBlocks
       ? `${meta!.pastedBlocks!

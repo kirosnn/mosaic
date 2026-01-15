@@ -9,6 +9,7 @@ interface SetupProps {
   onComplete: (provider: string, model: string, apiKey?: string) => void;
   pasteRequestId?: number;
   shortcutsOpen?: boolean;
+  commandsOpen?: boolean;
 }
 
 type SetupStep =
@@ -29,7 +30,7 @@ type SetupStep =
   | 'apikey'
   | 'confirm';
 
-export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false }: SetupProps) {
+export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, commandsOpen = false }: SetupProps) {
   const [step, setStep] = useState<SetupStep>('provider');
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');

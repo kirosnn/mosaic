@@ -6,6 +6,7 @@ import { Welcome } from './Welcome';
 import { Setup } from './Setup';
 import { Main } from './Main';
 import { ShortcutsModal } from './ShortcutsModal';
+import { CommandModal } from './CommandsModal';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -20,6 +21,7 @@ export function App() {
   const [copyRequestId, setCopyRequestId] = useState(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutsTab, setShortcutsTab] = useState<0 | 1>(0);
+  const [commandsOpen, setCommandsOpen] = useState(false);
 
   const renderer = useRenderer();
 
@@ -48,6 +50,9 @@ export function App() {
       const isCtrlP = (k.name === 'p' && k.ctrl) || k.sequence === '\x10';
       const isAltP = process.platform !== 'darwin' && k.name === 'p' && (k.alt || k.meta) && !k.ctrl;
 
+      const isCtrlO = (k.name === 'o' && k.ctrl) || k.sequence === '\x0f';
+      const isAltO = process.platform !== 'darwin' && k.name === 'o' && (k.alt || k.meta) && !k.ctrl;
+
       const isCtrlC = (k.name === 'c' && k.ctrl) || k.sequence === '\x03';
       const isCmdC = process.platform === 'darwin' && k.name === 'c' && k.meta && !k.alt;
       const isAltC = process.platform !== 'darwin' && k.name === 'c' && (k.alt || k.meta) && !k.ctrl;
@@ -63,6 +68,10 @@ export function App() {
         setShortcutsOpen(prev => !prev);
       }
 
+      if (isCtrlO || isAltO) {
+        setCommandsOpen(prev => !prev);
+      }
+
       if ((isCtrlC && !k.shift) || isCmdC || isAltC) {
         setCopyRequestId(prev => prev + 1);
       }
@@ -73,6 +82,7 @@ export function App() {
 
       if (k.name === 'escape') {
         setShortcutsOpen(false);
+        setCommandsOpen(false);
       }
     };
 
@@ -112,8 +122,9 @@ export function App() {
   if (screen === 'welcome') {
     return (
       <box width="100%" height="100%">
-        <Welcome onComplete={handleWelcomeComplete} isFirstRun={true} shortcutsOpen={shortcutsOpen} />
+        <Welcome onComplete={handleWelcomeComplete} isFirstRun={true} shortcutsOpen={shortcutsOpen} commandsOpen={commandsOpen} />
         {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
+        {commandsOpen && <CommandModal />}
       </box>
     );
   }
@@ -121,8 +132,9 @@ export function App() {
   if (screen === 'setup') {
     return (
       <box width="100%" height="100%">
-        <Setup onComplete={handleSetupComplete} pasteRequestId={pasteRequestId} shortcutsOpen={shortcutsOpen} />
+        <Setup onComplete={handleSetupComplete} pasteRequestId={pasteRequestId} shortcutsOpen={shortcutsOpen} commandsOpen={commandsOpen} />
         {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
+        {commandsOpen && <CommandModal />}
       </box>
     );
   }
@@ -134,8 +146,10 @@ export function App() {
         copyRequestId={copyRequestId}
         onCopy={copyToClipboard}
         shortcutsOpen={shortcutsOpen}
+        commandsOpen={commandsOpen}
       />
       {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
+      {commandsOpen && <CommandModal />}
     </box>
   );
 }

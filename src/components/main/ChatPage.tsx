@@ -51,7 +51,7 @@ export function ChatPage({
     key: string;
     type: 'line' | 'question' | 'blend';
     content?: string;
-    role: "user" | "assistant" | "tool";
+    role: "user" | "assistant" | "tool" | "slash";
     isFirst: boolean;
     indent?: number;
     segments?: import("../../utils/markdown").MarkdownSegment[];
@@ -113,7 +113,7 @@ export function ChatPage({
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
             success: messageRole === 'tool' ? message.success : undefined,
-            isSpacer: messageRole !== 'tool',
+            isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
             visualLines: 1
           });
         } else {
@@ -248,14 +248,16 @@ export function ChatPage({
 
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
           const showToolBar = item.role === "tool" && !item.isSpacer;
+          const showSlashBar = item.role === "slash" && !item.isSpacer;
           const showToolBackground = item.role === "tool" && !item.isSpacer;
+          const showSlashBackground = item.role === "slash" && !item.isSpacer;
           return (
             <box
               key={item.key}
               flexDirection="row"
               width="100%"
-              backgroundColor={((item.role === "user" && item.content) || showToolBackground || showErrorBar) ? "#1a1a1a" : "transparent"}
-              paddingRight={((item.role === "user" && item.content) || showToolBackground || showErrorBar) ? 1 : 0}
+              backgroundColor={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"}
+              paddingRight={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? 1 : 0}
             >
               {item.role === "user" && item.content && (
                 <text fg="#ffca38">▎ </text>
@@ -263,10 +265,13 @@ export function ChatPage({
               {showToolBar && (
                 <text fg={item.success ? "#38ff65" : "#ff3838"}>▎ </text>
               )}
+              {showSlashBar && (
+                <text fg="white">▎ </text>
+              )}
               {showErrorBar && (
                 <text fg="#ff3838">▎ </text>
               )}
-              {item.role === "user" || item.role === "tool" ? (
+              {item.role === "user" || item.role === "tool" || item.role === "slash" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.segments && item.segments.length > 0 ? (
                 <>
@@ -307,8 +312,8 @@ export function ChatPage({
         </box>
       </box>
 
-      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1}>
-        <text attributes={TextAttributes.DIM}>ctrl+p to view shortcuts</text>
+      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="flex-end">
+        <text attributes={TextAttributes.DIM}>ctrl+o to see commands — ctrl+p to view shortcuts</text>
       </box>
 
       <box position="absolute" bottom={getInputBarBaseLines() + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>

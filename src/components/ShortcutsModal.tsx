@@ -31,7 +31,7 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
   return (
     <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor="#0a0a0a">
       <box width="100%" height="100%" justifyContent="center" alignItems="center">
-        <box flexDirection="column" width="80%" maxWidth={80} backgroundColor="#1a1a1a" padding={2}>
+        <box flexDirection="column" width="80%" height="80%" backgroundColor="#1a1a1a" padding={2}>
           <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
             <text attributes={TextAttributes.BOLD}>Keyboard shortcuts</text>
             <text attributes={TextAttributes.DIM}>Esc to close the page</text>
@@ -46,17 +46,19 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
             </box>
           </box>
 
-          <box flexDirection="column" width="100%">
-            {shortcuts.map((s, idx) => (
-              <box key={idx} flexDirection="row" width="100%" marginBottom={1}>
-                <box width={22}>
-                  <text fg="#ffca38" attributes={TextAttributes.BOLD}>{s.keys}</text>
+          <box flexDirection="column" width="100%" flexGrow={1}>
+            <box flexDirection="column" width="100%" overflow="scroll">
+              {shortcuts.map((s, idx) => (
+                <box key={idx} flexDirection="row" width="100%" marginBottom={1}>
+                  <box width={22}>
+                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>{s.keys}</text>
+                  </box>
+                  <box flexGrow={1} minWidth={0}>
+                    <text attributes={TextAttributes.DIM}>{s.description}</text>
+                  </box>
                 </box>
-                <box flexGrow={1} minWidth={0}>
-                  <text attributes={TextAttributes.DIM}>{s.description}</text>
-                </box>
-              </box>
-            ))}
+              ))}
+            </box>
           </box>
         </box>
       </box>

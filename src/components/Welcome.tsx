@@ -6,9 +6,10 @@ interface WelcomeProps {
   onComplete: () => void;
   isFirstRun: boolean;
   shortcutsOpen?: boolean;
+  commandsOpen?: boolean;
 }
 
-export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false }: WelcomeProps) {
+export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false, commandsOpen = false }: WelcomeProps) {
   useKeyboard((key) => {
     if (shortcutsOpen) return;
     if (key.name === 'return') {

@@ -27,8 +27,8 @@ export const THINKING_WORDS = [
 
 export interface Message {
   id: string;
-  role: "user" | "assistant" | "tool";
-  displayRole?: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "tool" | "slash";
+  displayRole?: "user" | "assistant" | "tool" | "slash";
   displayContent?: string;
   content: string;
   toolName?: string;
@@ -43,4 +43,5 @@ export interface MainProps {
   copyRequestId?: number;
   onCopy?: (text: string) => void;
   shortcutsOpen?: boolean;
+  commandsOpen?: boolean;
 }
