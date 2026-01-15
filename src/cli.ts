@@ -2,7 +2,6 @@ import { VERSION } from './utils/version';
 
 export interface ParsedArgs {
   help: boolean;
-  verbose: boolean;
   directory?: string;
 }
 
@@ -10,7 +9,6 @@ export class CLI {
   parseArgs(args: string[]): ParsedArgs {
     const parsed: ParsedArgs = {
       help: false,
-      verbose: false,
     };
 
     const positionalArgs: string[] = [];
@@ -18,8 +16,6 @@ export class CLI {
     for (const arg of args) {
       if (arg === '--help' || arg === '-h') {
         parsed.help = true;
-      } else if (arg === '--verbose' || arg === '-v') {
-        parsed.verbose = true;
       } else if (arg === '--directory' || arg === '-d') {
         const nextIndex = args.indexOf(arg) + 1;
         if (nextIndex < args.length && !args[nextIndex]!.startsWith('-')) {
@@ -56,7 +52,6 @@ export class CLI {
     console.log('');
     console.log('Options:');
     console.log('  --help, -h              Show this help message');
-    console.log('  --verbose, -v           Enable verbose mode (show detailed execution logs)');
     console.log('  --directory, -d <path>  Open Mosaic in the specified directory');
     console.log('');
     console.log('Arguments:');
@@ -65,9 +60,6 @@ export class CLI {
     console.log('Examples:');
     console.log('  mosaic                       # Start Mosaic in current directory');
     console.log('  mosaic ./my-project          # Start Mosaic in my-project directory');
-    console.log('  mosaic --verbose             # Start with verbose mode enabled');
-    console.log('  mosaic -v ./my-project       # Start in my-project with verbose mode');
-    console.log('  mosaic -d ./src --verbose    # Start in src directory with verbose mode');
     console.log('');
   }
 }

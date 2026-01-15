@@ -28,7 +28,6 @@ After linking, you can run Mosaic from any directory:
 ```bash
 mosaic
 mosaic --help
-mosaic --verbose
 ```
 
 ### Local Development
@@ -58,21 +57,16 @@ After the first run, Mosaic will remember that you've completed the setup and go
 mosaic                    # Start Mosaic in current directory
 mosaic ./my-project       # Start Mosaic in a specific directory
 mosaic --help             # Display help message
-mosaic --verbose          # Enable verbose mode with detailed execution logs
-mosaic -v ./my-project    # Start in a directory with verbose mode
 ```
 
 ### Available Options
 
 - `--help`, `-h` - Show help message with usage information and exit
-- `--verbose`, `-v` - Enable verbose mode for detailed execution logs
 - `--directory`, `-d <path>` - Open Mosaic in the specified directory
 - `[directory]` - Optional directory path (positional argument, alternative to `-d`)
 
 Options can be combined in any order:
 ```bash
-mosaic -v -d ./src           # Verbose mode + directory flag
-mosaic --verbose ./my-app    # Verbose mode + positional directory
 mosaic -d ./src -v           # Order doesn't matter
 ```
 
