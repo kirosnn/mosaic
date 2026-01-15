@@ -8,7 +8,7 @@ export const edit: CoreTool = tool({
     path: z.string().describe('The path to the file relative to the workspace root'),
     old_content: z.string().describe('The exact text content to find and replace'),
     new_content: z.string().describe('The new text content to replace with'),
-    occurrence: z.number().nullable().describe('Which occurrence to replace (1 for first, 2 for second, etc. Use null for 1)'),
+    occurrence: z.number().nullable().optional().describe('Which occurrence to replace (1 for first, 2 for second, etc. Use null for 1)'),
   }),
   execute: async (args) => {
     const result = await executeTool('edit', args);

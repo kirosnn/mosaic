@@ -9,7 +9,7 @@ export const question: CoreTool = tool({
     options: z.array(
       z.object({
         label: z.string().describe('The option label shown to the user.'),
-        value: z.string().nullable().describe('Optional value returned for the selected option. Use null if not needed.'),
+        value: z.string().nullable().optional().describe('Optional value returned for the selected option. Use null if not needed.'),
       })
     ).describe('List of options the user can pick from.'),
   }),
