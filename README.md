@@ -6,7 +6,16 @@
 
 **Version 0.0.6.00**
 
-Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in your terminal.
+Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in your terminal, offering seamless interaction with AI coding assistants through a modern, responsive interface.
+
+## Features
+
+- **Multi-Provider AI Support**: Compatible with OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
+- **Terminal-First UI**: Modern React-based interface rendered directly in the terminal using OpenTUI
+- **Powerful Tool Integration**: Built-in tools for file operations, code search, terminal commands, and more
+- **Slash Commands**: Quick access to common operations and workflows
+- **Workspace Context**: Intelligent understanding of your project structure and conventions
+- **Memory System**: Persistent context retention across sessions (in development)
 
 ## Prerequisites
 
@@ -45,11 +54,12 @@ bun install
 ### First Run
 
 When you run Mosaic for the first time, it will:
-1. Display a welcome screen
+1. Display a welcome screen with setup instructions
 2. Create a configuration directory at `~/.mosaic/`
-3. Wait for you to press Enter to continue
+3. Guide you through provider and API key configuration
+4. Initialize the workspace context
 
-After the first run, Mosaic will remember that you've completed the setup and go directly to the main screen.
+After the first run, Mosaic will remember your configuration and go directly to the main interface.
 
 ### Running Mosaic
 
@@ -67,8 +77,18 @@ mosaic --help             # Display help message
 
 Options can be combined in any order:
 ```bash
-mosaic -d ./src -v           # Order doesn't matter
+mosaic -d ./src           # Start in ./src directory
 ```
+
+### Interface Features
+
+Once running, Mosaic provides:
+
+- **Chat Interface**: Natural language interaction with your AI coding assistant
+- **File Operations**: Direct file reading, editing, and creation through AI
+- **Terminal Integration**: Execute shell commands and see results in real-time
+- **Code Search**: Powerful grep-based code searching across your project
+- **Context Awareness**: Automatic understanding of your project's structure and technologies
 
 ## Development
 
@@ -91,42 +111,58 @@ bun run src/index.tsx    # Execute directly with Bun
 Mosaic stores its configuration in `~/.mosaic/`:
 - `config.json` - Tracks first run status and version information
 
-## Project Structure
-
-```
-mosaic/
-├── src/
-│   ├── index.tsx           # Application entry point
-│   ├── cli.ts              # Command-line interface system
-│   ├── components/
-│   │   ├── App.tsx         # Main application router
-│   │   ├── Welcome.tsx     # First-run welcome screen
-│   │   └── Main.tsx        # Main application screen
-│   └── utils/
-│       ├── version.ts      # Version information
-│       └── config.ts       # Configuration management
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
 ## Technical Stack
 
-- **Runtime**: [Bun](https://bun.sh) - Fast JavaScript runtime
+- **Runtime**: [Bun](https://bun.sh) - Fast all-in-one JavaScript runtime
 - **UI Framework**: [OpenTUI](https://github.com/opentui/opentui) - Terminal UI with React
-  - `@opentui/core` - Core terminal rendering engine
-  - `@opentui/react` - React bindings for OpenTUI
+  - `@opentui/core@^0.1.69` - Core terminal rendering engine
+  - `@opentui/react@^0.1.69` - React bindings for OpenTUI
+- **AI Integration**: [AI SDK](https://github.com/vercel/ai) - Unified AI provider interface
+  - Support for OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
 - **Language**: TypeScript with strict mode enabled
 - **React**: Version 19.2.3
+- **Database**: Better SQLite 3 for local data storage
+- **Validation**: Zod for runtime type validation
+
+## Supported AI Providers
+
+Mosaic supports multiple AI providers through the Vercel AI SDK:
+
+- **OpenAI**: GPT-4, GPT-3.5-turbo and other models
+- **Anthropic**: Claude models (Opus, Sonnet, Haiku)
+- **Google**: Gemini models
+- **Mistral**: Mistral and Mixtral models
+- **xAI**: Grok models
+- **Ollama**: Local models with automatic service management
 
 ## Architecture
 
 Mosaic uses a dual-mode architecture:
 
-1. **CLI Mode**: When arguments are provided, the CLI parser handles commands
-2. **Interactive Mode**: Without arguments, launches the OpenTUI React interface
+1. **CLI Mode**: When arguments are provided, the CLI parser handles commands and directory navigation
+2. **Interactive Mode**: Without arguments, launches the OpenTUI React interface for AI-assisted development
 
-The application leverages OpenTUI to render React components in the terminal using a flexbox-based layout system, similar to React Native.
+### Core Components
+
+- **Agent System**: Multi-provider AI integration with tool calling capabilities
+- **Tool Integration**: File operations (read, write, edit), terminal commands, code search, and directory listing
+- **Context Management**: Workspace-aware conversation history and project understanding
+- **Command System**: Slash commands for quick access to common operations
+- **Configuration**: Persistent settings stored in `~/.mosaic/`
+
+The application leverages OpenTUI to render React components in the terminal using a flexbox-based layout system, similar to React Native, providing a responsive and modern user experience.
+
+## Available Tools
+
+Mosaic provides the AI agent with powerful tools for code assistance:
+
+- **File Operations**: `read`, `write`, `edit` - Complete file manipulation capabilities
+- **Directory Management**: `list` - Browse and understand project structure
+- **Code Search**: `grep` - Fast, regex-powered code searching across the entire project
+- **Terminal Integration**: `bash` - Execute shell commands with real-time output
+- **Question Answering**: `question` - Direct Q&A capabilities for clarification
+
+These tools enable the AI to understand your codebase, make changes, run tests, and perform complex development tasks autonomously.
 
 ## Contributing
 
