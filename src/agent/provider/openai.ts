@@ -11,20 +11,50 @@ export class OpenAIProvider implements Provider {
       apiKey: config.apiKey,
     });
 
-    const result = streamText({
-      model: openai(config.model),
-      messages: messages,
-      system: config.systemPrompt,
-      tools: config.tools,
-      maxSteps: config.maxSteps || 10,
-    });
+    type OpenAIEndpoint = 'responses' | 'chat' | 'completion';
 
-    try {
+    const pickModel = (endpoint: OpenAIEndpoint) => {
+      switch (endpoint) {
+        case 'responses':
+          return openai.responses(config.model);
+        case 'chat':
+          return openai.chat(config.model);
+        case 'completion':
+          return openai.completion(config.model);
+      }
+    };
+
+    const run = async function* (
+      endpoint: OpenAIEndpoint,
+      strictJsonSchema: boolean
+    ): AsyncGenerator<AgentEvent> {
+      const result = streamText({
+        model: pickModel(endpoint),
+        messages: messages,
+        system: config.systemPrompt,
+        tools: config.tools,
+        maxSteps: config.maxSteps ?? 10,
+        providerOptions: {
+          openai: {
+            strictJsonSchema,
+          },
+        },
+      });
+
       let stepCounter = 0;
 
       for await (const chunk of result.fullStream as any) {
         const c: any = chunk;
         switch (c.type) {
+          case 'reasoning':
+            if (c.textDelta) {
+              yield {
+                type: 'reasoning-delta',
+                content: c.textDelta,
+              };
+            }
+            break;
+
           case 'text-delta':
             yield {
               type: 'text-delta',
@@ -92,10 +122,88 @@ export class OpenAIProvider implements Provider {
             break;
         }
       }
+
+      return;
+    };
+
+    const classifyEndpointError = (msg: string): OpenAIEndpoint | null => {
+      const m = msg || '';
+      if (m.includes('v1/chat/completions')) {
+        if (m.toLowerCase().includes('not a chat model')) return 'responses';
+      }
+      if (m.includes('v1/responses')) {
+        if (m.toLowerCase().includes('not supported') || m.toLowerCase().includes('unknown')) return 'chat';
+      }
+      if (m.includes('v1/completions')) {
+        return 'completion';
+      }
+      if (m.toLowerCase().includes('did you mean to use v1/completions')) {
+        return 'completion';
+      }
+      return null;
+    };
+
+    try {
+      yield* run('responses', true);
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const looksLikeStrictSchemaError =
+        msg.includes('Invalid schema for function') &&
+        msg.includes('required') &&
+        msg.includes('properties');
+
+      if (looksLikeStrictSchemaError) {
+        try {
+          yield* run('responses', false);
+          return;
+        } catch (retryError) {
+          yield {
+            type: 'error',
+            error: retryError instanceof Error ? retryError.message : 'Unknown error occurred',
+          };
+          return;
+        }
+      }
+
+      const fallbackEndpoint = classifyEndpointError(msg);
+      if (fallbackEndpoint && fallbackEndpoint !== 'responses') {
+        try {
+          yield* run(fallbackEndpoint, true);
+          return;
+        } catch (endpointError) {
+          const endpointMsg = endpointError instanceof Error ? endpointError.message : String(endpointError);
+          const strictSchemaFromFallback =
+            endpointMsg.includes('Invalid schema for function') &&
+            endpointMsg.includes('required') &&
+            endpointMsg.includes('properties');
+
+          if (strictSchemaFromFallback) {
+            try {
+              yield* run(fallbackEndpoint, false);
+              return;
+            } catch (endpointRetryError) {
+              yield {
+                type: 'error',
+                error:
+                  endpointRetryError instanceof Error
+                    ? endpointRetryError.message
+                    : 'Unknown error occurred',
+              };
+              return;
+            }
+          }
+
+          yield {
+            type: 'error',
+            error: endpointMsg || 'Unknown error occurred',
+          };
+          return;
+        }
+      }
+
       yield {
         type: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: msg || 'Unknown error occurred',
       };
     }
   }

@@ -1,7 +1,7 @@
 {
   "name": "mosaic-cli",
   "module": "src/index.tsx",
-  "version": "0.0.5.04",
+  "version": "0.0.5.05",
   "description": "The open source coding agent.",
   "type": "module",
   "bin": {

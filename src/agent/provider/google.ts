@@ -25,6 +25,15 @@ export class GoogleProvider implements Provider {
       for await (const chunk of result.fullStream as any) {
         const c: any = chunk;
         switch (c.type) {
+          case 'reasoning':
+            if (c.textDelta) {
+              yield {
+                type: 'reasoning-delta',
+                content: c.textDelta,
+              };
+            }
+            break;
+
           case 'text-delta':
             yield {
               type: 'text-delta',

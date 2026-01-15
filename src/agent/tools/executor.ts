@@ -138,7 +138,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
       case 'write_file': {
         const path = args.path as string;
         const content = typeof args.content === 'string' ? args.content : '';
-        const append = args.append as boolean | undefined;
+        const append = args.append === null ? undefined : (args.append as boolean | undefined);
         const fullPath = resolve(workspace, path);
 
         if (!validatePath(fullPath, workspace)) {
@@ -167,9 +167,9 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
       case 'list_files': {
         const path = args.path as string;
-        const recursive = args.recursive as boolean | undefined;
-        const filter = args.filter as string | undefined;
-        const includeHidden = args.include_hidden as boolean | undefined;
+        const recursive = args.recursive === null ? undefined : (args.recursive as boolean | undefined);
+        const filter = args.filter === null ? undefined : (args.filter as string | undefined);
+        const includeHidden = args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined);
         const fullPath = resolve(workspace, path);
 
         if (!validatePath(fullPath, workspace)) {
@@ -236,10 +236,10 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
       case 'grep': {
         const filePattern = args.file_pattern as string;
-        const query = args.query as string | undefined;
-        const searchPath = (args.path as string | undefined) || '.';
-        const caseSensitive = (args.case_sensitive as boolean | undefined) ?? false;
-        const maxResults = (args.max_results as number | undefined) ?? 100;
+        const query = args.query === null ? undefined : (args.query as string | undefined);
+        const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
+        const caseSensitive = ((args.case_sensitive === null ? undefined : (args.case_sensitive as boolean | undefined)) ?? false);
+        const maxResults = ((args.max_results === null ? undefined : (args.max_results as number | undefined)) ?? 100);
         const fullPath = resolve(workspace, searchPath);
 
         if (!validatePath(fullPath, workspace)) {
@@ -285,7 +285,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         const path = args.path as string;
         const oldContent = args.old_content as string;
         const newContent = args.new_content as string;
-        const occurrence = (args.occurrence as number | undefined) ?? 1;
+        const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
         const fullPath = resolve(workspace, path);
 
         if (!validatePath(fullPath, workspace)) {
