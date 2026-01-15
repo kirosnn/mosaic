@@ -13,3 +13,5 @@ TODO (for my own and if developers want contributing to the project):
         ✘ - Automatic memory summaries
         ✘ - Semantic compression / embeddings for long-term context
         ✘ - Contextual display in CLI
+
+> **Ready for 0.0.6.01 after that.**
