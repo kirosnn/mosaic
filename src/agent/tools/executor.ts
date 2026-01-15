@@ -15,6 +15,32 @@ function validatePath(fullPath: string, workspace: string): boolean {
   return fullPath.startsWith(workspace);
 }
 
+const EXCLUDED_DIRECTORIES = new Set([
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  '.output',
+  'coverage',
+  '.cache',
+  '.parcel-cache',
+  '.turbo',
+  '__pycache__',
+  '.pytest_cache',
+  'venv',
+  '.venv',
+  'env',
+  '.env',
+  'vendor',
+  'target',
+  '.idea',
+  '.vscode',
+]);
+
 function matchGlob(filename: string, pattern: string): boolean {
   const regexPattern = pattern
     .replace(/\./g, '\\.')
@@ -49,8 +75,14 @@ async function searchInFile(filePath: string, query: string, caseSensitive: bool
   }
 }
 
-async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<string[]> {
-  const results: string[] = [];
+interface WalkResult {
+  path: string;
+  isDirectory: boolean;
+  excluded?: boolean;
+}
+
+async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<WalkResult[]> {
+  const results: WalkResult[] = [];
 
   try {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -61,11 +93,15 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        const subFiles = await walkDirectory(fullPath, filePattern, includeHidden);
-        results.push(...subFiles);
+        if (EXCLUDED_DIRECTORIES.has(entry.name)) {
+          results.push({ path: fullPath, isDirectory: true, excluded: true });
+        } else {
+          const subFiles = await walkDirectory(fullPath, filePattern, includeHidden);
+          results.push(...subFiles);
+        }
       } else {
         if (!filePattern || matchGlob(entry.name, filePattern)) {
-          results.push(fullPath);
+          results.push({ path: fullPath, isDirectory: false });
         }
       }
     }
@@ -76,11 +112,15 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
   return results;
 }
 
-async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<string[]> {
+async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkResult[]> {
   const fullPath = resolve(workspace, dirPath);
   const files = await walkDirectory(fullPath, filterPattern, includeHidden);
+  const separator = workspace.endsWith('/') || workspace.endsWith('\\') ? '' : '/';
 
-  return files.map(file => file.replace(workspace + (workspace.endsWith('/') || workspace.endsWith('\\') ? '' : '/'), ''));
+  return files.map(file => ({
+    ...file,
+    path: file.path.replace(workspace + separator, '')
+  }));
 }
 
 async function findFilesByPattern(pattern: string, searchPath: string): Promise<string[]> {
@@ -92,9 +132,11 @@ async function findFilesByPattern(pattern: string, searchPath: string): Promise<
     const parts = pattern.split('**');
     const filePattern = (parts[parts.length - 1] ?? '').replace(/^\//, '');
     const files = await walkDirectory(searchPath, undefined, false);
+    const separator = searchPath.endsWith('/') || searchPath.endsWith('\\') ? '' : '/';
 
     for (const file of files) {
-      const relativePath = file.replace(searchPath + (searchPath.endsWith('/') || searchPath.endsWith('\\') ? '' : '/'), '');
+      if (file.excluded) continue;
+      const relativePath = file.path.replace(searchPath + separator, '');
       if (matchGlob(relativePath, pattern)) {
         results.push(relativePath);
       }
@@ -138,7 +180,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
       case 'write': {
         const path = args.path as string;
         const content = typeof args.content === 'string' ? args.content : '';
-        const append = args.append === null ? undefined : (args.append as boolean | undefined);
+        const append = args.append === true;
         const fullPath = resolve(workspace, path);
 
         if (!validatePath(fullPath, workspace)) {
@@ -183,10 +225,17 @@ export async function executeTool(toolName: string, args: Record<string, unknown
           const files = await listFilesRecursive(path, workspace, filter, includeHidden);
           const fileStats = await Promise.all(
             files.map(async (file) => {
-              const filePath = resolve(workspace, file);
+              if (file.excluded) {
+                return {
+                  path: file.path,
+                  type: 'directory',
+                  excluded: true
+                };
+              }
+              const filePath = resolve(workspace, file.path);
               const stats = await stat(filePath);
               return {
-                path: file,
+                path: file.path,
                 type: stats.isDirectory() ? 'directory' : 'file',
                 size: stats.size,
               };
@@ -201,7 +250,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
           let filteredEntries = entries;
 
           if (!includeHidden) {
-            filteredEntries = entries.filter(entry => !entry.name.startsWith('.'));
+            filteredEntries = filteredEntries.filter(entry => !entry.name.startsWith('.'));
           }
 
           if (filter) {
@@ -211,7 +260,8 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
           const files = filteredEntries.map(entry => ({
             name: entry.name,
-            type: entry.isDirectory() ? 'directory' : 'file'
+            type: entry.isDirectory() ? 'directory' : 'file',
+            ...(entry.isDirectory() && EXCLUDED_DIRECTORIES.has(entry.name) ? { excluded: true } : {})
           }));
 
           return {

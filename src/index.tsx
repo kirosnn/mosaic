@@ -59,7 +59,7 @@ if (args.length > 0) {
   }
 }
 
-setTerminalTitle('✹ Mosaic');
+setTerminalTitle('⁘ Mosaic');
 
 const cleanup = (code = 0) => {
   process.stdout.write('\x1b[?25h');

@@ -3,22 +3,29 @@ import { useKeyboard } from "@opentui/react";
 import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage } from "../utils/toolFormatting";
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage } from '../utils/toolFormatting';
+import type { InputSubmitMeta } from './CustomInput';
+
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
-import type { MainProps, Message } from "./main/types";
-import { HomePage } from "./main/HomePage";
-import { ChatPage } from "./main/ChatPage";
+import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
+import { HomePage } from './main/HomePage';
+import { ChatPage } from './main/ChatPage';
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false }: MainProps) {
   const [currentPage, setCurrentPage] = useState<"home" | "chat">("home");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
+  const [currentTokens, setCurrentTokens] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const shouldAutoScroll = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentPageRef = useRef(currentPage);
+  const shortcutsOpenRef = useRef(shortcutsOpen);
+  const questionRequestRef = useRef<QuestionRequest | null>(questionRequest);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -42,6 +49,18 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
   }, []);
+
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
+  useEffect(() => {
+    shortcutsOpenRef.current = shortcutsOpen;
+  }, [shortcutsOpen]);
+
+  useEffect(() => {
+    questionRequestRef.current = questionRequest;
+  }, [questionRequest]);
 
   useEffect(() => {
     if (currentPage !== "chat") return;
@@ -107,59 +126,57 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, [copyRequestId, onCopy, messages]);
 
   useKeyboard((key) => {
-    if (currentPage !== "chat") return;
-    if (shortcutsOpen) return;
-
     if (key.name === 'escape') {
-      if (isProcessing) {
-        abortControllerRef.current?.abort();
-      }
+      abortControllerRef.current?.abort();
       return;
-    }
-
-    if (questionRequest && (key.name === 'up' || key.name === 'down' || key.name === 'pageup' || key.name === 'pagedown')) {
-      return;
-    }
-
-    if (key.name === 'up') {
-      shouldAutoScroll.current = false;
-      setScrollOffset((prev) => prev + 1);
-    } else if (key.name === 'down') {
-      setScrollOffset((prev) => {
-        const newOffset = Math.max(0, prev - 1);
-        if (newOffset === 0) {
-          shouldAutoScroll.current = true;
-        }
-        return newOffset;
-      });
-    } else if (key.name === 'pageup') {
-      shouldAutoScroll.current = false;
-      setScrollOffset((prev) => prev + 10);
-    } else if (key.name === 'pagedown') {
-      setScrollOffset((prev) => {
-        const newOffset = Math.max(0, prev - 10);
-        if (newOffset === 0) {
-          shouldAutoScroll.current = true;
-        }
-        return newOffset;
-      });
     }
   });
 
-  const handleSubmit = async (value: string) => {
-    if (!value.trim() || isProcessing) return;
+  const handleSubmit = async (value: string, meta?: InputSubmitMeta) => {
+    if (isProcessing) return;
 
-    addInputToHistory(value);
+    const buildPastedDisplay = (blocks: { lineCount: number }[]) => {
+      return blocks
+        .map((b, i) => {
+          const n = i + 1;
+          const linesLabel = b.lineCount === 1 ? 'line' : 'lines';
+          return `[Pasted text #${n} - ${b.lineCount} ${linesLabel}]`;
+        })
+        .join(' ');
+    };
 
-    const userMessage: Message = { id: createId(), role: "user", content: value };
+    const hasPastedBlocks = Boolean(meta?.pastedBlocks && meta.pastedBlocks.length > 0);
+    if (!value.trim() && !hasPastedBlocks) return;
+
+    const composedContent = hasPastedBlocks
+      ? `${meta!.pastedBlocks!
+        .map((b, i) => `[Pasted text #${i + 1}]\n${b.text}`)
+        .join('\n\n')}${value.trim() ? `\n\n${value}` : ''}`
+      : value;
+
+    addInputToHistory(value.trim() ? value : (hasPastedBlocks ? buildPastedDisplay(meta!.pastedBlocks!) : value));
+
+    const userMessage: Message = {
+      id: createId(),
+      role: "user",
+      content: composedContent,
+      displayContent: meta?.pastedBlocks && meta.pastedBlocks.length > 0 ? buildPastedDisplay(meta.pastedBlocks) : (meta?.isPaste ? '[Pasted text]' : undefined),
+    };
+
     setMessages((prev: Message[]) => [...prev, userMessage]);
     setIsProcessing(true);
+    setProcessingStartTime(Date.now());
+    setCurrentTokens(0);
     shouldAutoScroll.current = true;
 
     const conversationId = createId();
     const conversationSteps: ConversationStep[] = [];
     let totalTokens = { prompt: 0, completion: 0, total: 0 };
     let stepCount = 0;
+    const historyChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+    let totalChars = historyChars + composedContent.length;
+    const estimateTokens = () => Math.ceil(totalChars / 4);
+    setCurrentTokens(estimateTokens());
     const config = readConfig();
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -181,7 +198,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
     conversationSteps.push({
       type: 'user',
-      content: value,
+      content: composedContent,
       timestamp: Date.now()
     });
 
@@ -214,6 +231,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
         if (event.type === 'text-delta') {
           assistantChunk += event.content;
+          totalChars += event.content.length;
+          setCurrentTokens(estimateTokens());
 
           if (assistantMessageId === null) {
             assistantMessageId = createId();
@@ -249,6 +268,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             event.result,
             { maxLines: DEFAULT_MAX_TOOL_LINES }
           );
+
+          const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+          totalChars += toolResultStr.length;
+          setCurrentTokens(estimateTokens());
 
           if (assistantChunk.trim()) {
             conversationSteps.push({
@@ -318,12 +341,13 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           streamHadError = true;
           break;
         } else if (event.type === 'finish') {
-          if (event.usage) {
+          if (event.usage && event.usage.totalTokens > 0) {
             totalTokens = {
               prompt: event.usage.promptTokens,
               completion: event.usage.completionTokens,
               total: event.usage.totalTokens
             };
+            setCurrentTokens(event.usage.totalTokens);
           }
         }
       }
@@ -382,15 +406,30 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
+      const duration = processingStartTime ? Date.now() - processingStartTime : null;
+      if (duration && duration >= 60000) {
+        const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          for (let i = newMessages.length - 1; i >= 0; i--) {
+            if (newMessages[i]?.role === 'assistant') {
+              newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
+              break;
+            }
+          }
+          return newMessages;
+        });
+      }
       setIsProcessing(false);
+      setProcessingStartTime(null);
     }
   };
 
   if (currentPage === "home") {
-    const handleHomeSubmit = (value: string) => {
-      if (!value.trim()) return;
+    const handleHomeSubmit = (value: string, meta?: InputSubmitMeta) => {
+      if (!value.trim() && !(meta?.pastedBlocks && meta.pastedBlocks.length > 0)) return;
       setCurrentPage("chat");
-      handleSubmit(value);
+      handleSubmit(value, meta);
     };
 
     return (
@@ -406,6 +445,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     <ChatPage
       messages={messages}
       isProcessing={isProcessing}
+      processingStartTime={processingStartTime}
+      currentTokens={currentTokens}
       scrollOffset={scrollOffset}
       terminalHeight={terminalHeight}
       terminalWidth={terminalWidth}

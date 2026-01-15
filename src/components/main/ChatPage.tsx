@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TextAttributes } from "@opentui/core";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
@@ -6,22 +7,26 @@ import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
-import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines } from "./ThinkingIndicator";
+import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, getInputAreaTotalLines, formatElapsedTime } from "./ThinkingIndicator";
 
 interface ChatPageProps {
   messages: Message[];
   isProcessing: boolean;
+  processingStartTime: number | null;
+  currentTokens: number;
   scrollOffset: number;
   terminalHeight: number;
   terminalWidth: number;
   pasteRequestId: number;
   shortcutsOpen: boolean;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
 }
 
 export function ChatPage({
   messages,
   isProcessing,
+  processingStartTime,
+  currentTokens,
   scrollOffset,
   terminalHeight,
   terminalWidth,
@@ -44,7 +49,7 @@ export function ChatPage({
 
   interface RenderItem {
     key: string;
-    type: 'line' | 'question';
+    type: 'line' | 'question' | 'blend';
     content?: string;
     role: "user" | "assistant" | "tool";
     isFirst: boolean;
@@ -55,6 +60,8 @@ export function ChatPage({
     isSpacer?: boolean;
     questionRequest?: QuestionRequest;
     visualLines: number;
+    blendDuration?: number;
+    blendWord?: string;
   }
 
   const allItems: RenderItem[] = [];
@@ -91,7 +98,8 @@ export function ChatPage({
         }
       }
     } else {
-      const paragraphs = message.content.split('\n');
+      const messageText = message.displayContent ?? message.content;
+      const paragraphs = messageText.split('\n');
       let isFirstContent = true;
 
       for (let i = 0; i < paragraphs.length; i++) {
@@ -105,7 +113,7 @@ export function ChatPage({
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
             success: messageRole === 'tool' ? message.success : undefined,
-            isSpacer: true,
+            isSpacer: messageRole !== 'tool',
             visualLines: 1
           });
         } else {
@@ -128,6 +136,18 @@ export function ChatPage({
           isFirstContent = false;
         }
       }
+    }
+
+    if (message.responseDuration && messageRole === 'assistant') {
+      allItems.push({
+        key: `${messageKey}-blend`,
+        type: 'blend',
+        role: messageRole,
+        isFirst: false,
+        visualLines: 1,
+        blendDuration: message.responseDuration,
+        blendWord: message.blendWord || 'Blended'
+      });
     }
 
     allItems.push({
@@ -217,6 +237,15 @@ export function ChatPage({
             );
           }
 
+          if (item.type === 'blend' && item.blendDuration) {
+            const timeStr = formatElapsedTime(item.blendDuration, false);
+            return (
+              <box key={item.key} flexDirection="row" width="100%">
+                <text attributes={TextAttributes.DIM | TextAttributes.ITALIC}>⁘ {item.blendWord} for {timeStr}</text>
+              </box>
+            );
+          }
+
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
           const showToolBar = item.role === "tool" && !item.isSpacer;
           const showToolBackground = item.role === "tool" && !item.isSpacer;
@@ -253,7 +282,7 @@ export function ChatPage({
 
       <box
         position="absolute"
-        bottom={0}
+        bottom={1.4}
         left={0}
         right={0}
         flexDirection="column"
@@ -278,8 +307,12 @@ export function ChatPage({
         </box>
       </box>
 
-      <box position="absolute" bottom={getInputBarBaseLines()} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest)} />
+      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1}>
+        <text attributes={TextAttributes.DIM}>ctrl+p to view shortcuts</text>
+      </box>
+
+      <box position="absolute" bottom={getInputBarBaseLines() + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest)} startTime={processingStartTime} tokens={currentTokens} />
       </box>
     </box>
   );

@@ -27,15 +27,16 @@ RESPONSE PROTOCOL:
 - ALWAYS start your response with a single sentence IN THE USER'S LANGUAGE describing what you will do. Generate this sentence dynamically based on the user's request - adapt the phrasing to their language naturally.
 - ALWAYS provide a text response to the user IN THEIR LANGUAGE, NEVER just use tools without explanation. The user needs to understand what you're doing and the results.
 - After stating your intention, proceed with tool usage as needed.
+- If you are not sure about something or if user's request is unclear, ask the user for clarification.
 
 ERROR HANDLING:
 - If a tool execution fails, ALWAYS announce IN THE USER'S LANGUAGE that you will retry with a brief explanation.
-- Only give up after multiple failed attempts or if the error is clearly unrecoverable.
+- Only give up after multiple failed attempts or if the error is clearly unrecoverable and tell to the user the problems.
 - Keep the user informed about what went wrong and what you're trying next, always IN THEIR LANGUAGE.
 
 EFFICIENCY:
-- You can use up to 15 steps, BUT you must respond to the user as soon as you have enough information.
-- Be concise but informative in your responses.`;
+- You can use up to 30 steps, BUT you must respond to the user as soon as you have enough information.
+`;
 
 export function processSystemPrompt(prompt: string, includeTools: boolean = true): string {
   const now = new Date();

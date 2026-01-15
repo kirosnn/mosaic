@@ -3,7 +3,7 @@ import { VERSION } from "../../utils/version";
 import { CustomInput } from "../CustomInput";
 
 interface HomePageProps {
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
   pasteRequestId: number;
   shortcutsOpen: boolean;
 }
