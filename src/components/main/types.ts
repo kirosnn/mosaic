@@ -44,4 +44,5 @@ export interface MainProps {
   onCopy?: (text: string) => void;
   shortcutsOpen?: boolean;
   commandsOpen?: boolean;
+  initialMessage?: string;
 }

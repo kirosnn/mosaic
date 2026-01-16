@@ -6,7 +6,7 @@ import { getInputHistory } from '../utils/history'
 
 export interface InputSubmitMeta {
   isPaste?: boolean
-  pastedBlocks?: { lineCount: number; text: string }[]
+  pastedContent?: string
 }
 
 interface CustomInputProps {
@@ -23,38 +23,24 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const [pasteBuffer, setPasteBuffer] = useState('')
   const [inPasteMode, setInPasteMode] = useState(false)
-  const [pastedBlocks, setPastedBlocks] = useState<{ lineCount: number; text: string }[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [currentInput, setCurrentInput] = useState('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
 
   const pasteFlagRef = useRef(false)
+  const pastedContentRef = useRef('')
   const desiredCursorColRef = useRef<number | null>(null)
 
   const normalizePastedText = (text: string) => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-
-  const countLines = (text: string) => {
-    if (!text) return 0
-    return text.split('\n').length
-  }
-
-  const buildPastedDisplay = (blocks: { lineCount: number }[]) => {
-    return blocks
-      .map((b, i) => {
-        const n = i + 1
-        const linesLabel = b.lineCount === 1 ? 'line' : 'lines'
-        return `[Pasted text #${n} - ${b.lineCount} ${linesLabel}]`
-      })
-      .join(' ')
-  }
 
   const addPastedBlock = (pastedText: string) => {
     const normalized = normalizePastedText(pastedText)
     if (!normalized) return
 
-    const lineCount = countLines(normalized)
-    setPastedBlocks(prev => [...prev, { lineCount, text: normalized }])
+    setValue(prev => prev.slice(0, cursorPosition) + normalized + prev.slice(cursorPosition))
+    setCursorPosition(prev => prev + normalized.length)
     pasteFlagRef.current = true
+    pastedContentRef.current = normalized
   }
 
   useEffect(() => {
@@ -108,16 +94,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     if (!focused) return
 
     const typedDisplay = value.replace(/\n/g, ' ')
-    const pastedSummary = pastedBlocks.length > 0 ? buildPastedDisplay(pastedBlocks) : ''
-    const cursorPrefix = !password && pastedBlocks.length > 0
-      ? pastedSummary.length + (typedDisplay ? 1 : 0)
-      : 0
-    const displayValueRaw = !password && pastedBlocks.length > 0
-      ? (typedDisplay ? `${pastedSummary} ${typedDisplay}` : pastedSummary)
-      : typedDisplay
-    const displayCursorPos = !password && pastedBlocks.length > 0
-      ? cursorPrefix + cursorPosition
-      : cursorPosition
+    const displayValueRaw = typedDisplay
+    const displayCursorPos = cursorPosition
     const lineWidth = Math.max(10, terminalWidth - 4)
     const displayLines = displayValueRaw.length > 0
       ? Array.from({ length: Math.ceil(displayValueRaw.length / lineWidth) }, (_, i) => displayValueRaw.slice(i * lineWidth, (i + 1) * lineWidth))
@@ -149,8 +127,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     }
 
     if (key.name === 'return') {
-      const meta: InputSubmitMeta | undefined = pastedBlocks.length > 0 || pasteFlagRef.current
-        ? { isPaste: true, pastedBlocks: pastedBlocks.length > 0 ? pastedBlocks : undefined }
+      const meta: InputSubmitMeta | undefined = pasteFlagRef.current
+        ? { isPaste: true, pastedContent: pastedContentRef.current }
         : undefined
       onSubmit(value, meta)
       setValue('')
@@ -158,30 +136,22 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       setHistoryIndex(-1)
       setCurrentInput('')
       setInputHistory(getInputHistory())
-      setPastedBlocks([])
       pasteFlagRef.current = false
+      pastedContentRef.current = ''
       desiredCursorColRef.current = null
     } else if (key.name === 'backspace') {
       desiredCursorColRef.current = null
       if (cursorPosition > 0) {
         setValue(prev => prev.slice(0, cursorPosition - 1) + prev.slice(cursorPosition))
         setCursorPosition(prev => prev - 1)
-      } else if (pastedBlocks.length > 0) {
-        setPastedBlocks((prev) => {
-          const next = prev.slice(0, -1)
-          if (next.length === 0) {
-            pasteFlagRef.current = false
-          }
-          return next
-        })
       }
     } else if (key.name === 'delete') {
       desiredCursorColRef.current = null
       if (key.ctrl || key.meta) {
         setValue('')
         setCursorPosition(0)
-        setPastedBlocks([])
         pasteFlagRef.current = false
+        pastedContentRef.current = ''
       } else if (cursorPosition < value.length) {
         setValue(prev => prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1))
       }
@@ -194,8 +164,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         const targetCol = desiredCursorColRef.current
         const targetLineLen = displayLines[targetLine]!.length
         const newDisplayPos = (targetLine * lineWidth) + Math.min(targetCol, targetLineLen)
-        const newTypedPos = Math.max(0, newDisplayPos - cursorPrefix)
-        setCursorPosition(Math.min(value.length, newTypedPos))
+        setCursorPosition(Math.min(value.length, newDisplayPos))
         return
       }
 
@@ -223,8 +192,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         const targetCol = desiredCursorColRef.current
         const targetLineLen = displayLines[targetLine]!.length
         const newDisplayPos = (targetLine * lineWidth) + Math.min(targetCol, targetLineLen)
-        const newTypedPos = Math.max(0, newDisplayPos - cursorPrefix)
-        setCursorPosition(Math.min(value.length, newTypedPos))
+        setCursorPosition(Math.min(value.length, newDisplayPos))
         return
       }
 
@@ -267,13 +235,9 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   })
 
   const typedDisplay = value.replace(/\n/g, ' ')
-  const pastedSummary = pastedBlocks.length > 0 ? buildPastedDisplay(pastedBlocks) : ''
-  const displayValueRaw = !password && pastedBlocks.length > 0
-    ? (typedDisplay ? `${pastedSummary} ${typedDisplay}` : pastedSummary)
-    : typedDisplay
-  const displayValue = password && value ? '•'.repeat(value.length) : displayValueRaw
+  const displayValue = password && value ? '•'.repeat(value.length) : typedDisplay
   const cursorChar = '█'
-  const isEmpty = value.length === 0 && pastedBlocks.length === 0
+  const isEmpty = value.length === 0
 
   const lineWidth = Math.max(10, terminalWidth - 4)
 
@@ -325,13 +289,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     )
   }
 
-  const cursorPrefix = !password && pastedBlocks.length > 0
-    ? pastedSummary.length + (typedDisplay ? 1 : 0)
-    : 0
-  const cursorPositionForDisplay = !password && pastedBlocks.length > 0
-    ? cursorPrefix + cursorPosition
-    : cursorPosition
-  const { lines, cursorLine, cursorCol } = wrapTextWithCursor(displayValue, cursorPositionForDisplay, lineWidth)
+  const { lines, cursorLine, cursorCol } = wrapTextWithCursor(displayValue, cursorPosition, lineWidth)
 
   const renderedLines = lines.map((line, lineIndex) => {
     if (lineIndex === cursorLine) {

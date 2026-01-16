@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { KeyEvent } from '@opentui/core';
 import { isFirstRun, markFirstRunComplete } from '../utils/config';
 import { useRenderer } from '@opentui/react';
@@ -7,6 +7,7 @@ import { Setup } from './Setup';
 import { Main } from './Main';
 import { ShortcutsModal } from './ShortcutsModal';
 import { CommandModal } from './CommandsModal';
+import { Notification, type NotificationData } from './Notification';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -14,7 +15,11 @@ const execAsync = promisify(exec);
 
 type AppScreen = 'welcome' | 'setup' | 'main';
 
-export function App() {
+interface AppProps {
+  initialMessage?: string;
+}
+
+export function App({ initialMessage }: AppProps) {
   const [screen, setScreen] = useState<AppScreen>('main');
   const [isReady, setIsReady] = useState(false);
   const [pasteRequestId, setPasteRequestId] = useState(0);
@@ -22,8 +27,19 @@ export function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutsTab, setShortcutsTab] = useState<0 | 1>(0);
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [pendingMessage, setPendingMessage] = useState<string | undefined>(initialMessage);
 
   const renderer = useRenderer();
+
+  const addNotification = useCallback((message: string, type: NotificationData['type'] = 'info', duration?: number) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setNotifications(prev => [...prev, { id, message, type, duration }]);
+  }, []);
+
+  const removeNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -41,48 +57,42 @@ export function App() {
   };
 
   useEffect(() => {
+    const isDarwin = process.platform === 'darwin';
+
     const handleKeyPress = (key: KeyEvent) => {
       const k = key as any;
-      const isCtrlV = (k.name === 'v' && k.ctrl) || k.sequence === '\x16';
-      const isCmdV = process.platform === 'darwin' && k.name === 'v' && k.meta && !k.alt;
-      const isAltV = process.platform !== 'darwin' && k.name === 'v' && (k.alt || k.meta) && !k.ctrl;
-
-      const isCtrlP = (k.name === 'p' && k.ctrl) || k.sequence === '\x10';
-      const isAltP = process.platform !== 'darwin' && k.name === 'p' && (k.alt || k.meta) && !k.ctrl;
-
-      const isCtrlO = (k.name === 'o' && k.ctrl) || k.sequence === '\x0f';
-      const isAltO = process.platform !== 'darwin' && k.name === 'o' && (k.alt || k.meta) && !k.ctrl;
-
-      const isCtrlC = (k.name === 'c' && k.ctrl) || k.sequence === '\x03';
-      const isCmdC = process.platform === 'darwin' && k.name === 'c' && k.meta && !k.alt;
-      const isAltC = process.platform !== 'darwin' && k.name === 'c' && (k.alt || k.meta) && !k.ctrl;
-
-      const isF1 = k.name === 'f1';
-      const isF2 = k.name === 'f2';
-
-      if (isCtrlV || isCmdV || isAltV) {
-        setPasteRequestId(prev => prev + 1);
-      }
-
-      if (isCtrlP || isAltP) {
-        setShortcutsOpen(prev => !prev);
-      }
-
-      if (isCtrlO || isAltO) {
-        setCommandsOpen(prev => !prev);
-      }
-
-      if ((isCtrlC && !k.shift) || isCmdC || isAltC) {
-        setCopyRequestId(prev => prev + 1);
-      }
-
-      if (shortcutsOpen && (isF1 || isF2)) {
-        setShortcutsTab(isF2 ? 1 : 0);
-      }
 
       if (k.name === 'escape') {
         setShortcutsOpen(false);
         setCommandsOpen(false);
+        return;
+      }
+
+      if (shortcutsOpen && (k.name === 'f1' || k.name === 'f2')) {
+        setShortcutsTab(k.name === 'f2' ? 1 : 0);
+        return;
+      }
+
+      const seq = k.sequence;
+
+      if (k.name === 'v' && (k.ctrl || (isDarwin && k.meta && !k.alt) || (!isDarwin && (k.alt || k.meta) && !k.ctrl)) || seq === '\x16') {
+        setPasteRequestId(prev => prev + 1);
+        return;
+      }
+
+      if (k.name === 'p' && (k.ctrl || (!isDarwin && (k.alt || k.meta) && !k.ctrl)) || seq === '\x10') {
+        setShortcutsOpen(prev => !prev);
+        return;
+      }
+
+      if (k.name === 'o' && (k.ctrl || (!isDarwin && (k.alt || k.meta) && !k.ctrl)) || seq === '\x0f') {
+        setCommandsOpen(prev => !prev);
+        return;
+      }
+
+      if (k.name === 'c' && !k.shift && (k.ctrl || (isDarwin && k.meta && !k.alt) || (!isDarwin && (k.alt || k.meta) && !k.ctrl)) || seq === '\x03') {
+        setCopyRequestId(prev => prev + 1);
+        return;
       }
     };
 
@@ -97,6 +107,9 @@ export function App() {
       const firstRun = isFirstRun();
       if (firstRun) {
         setScreen('welcome');
+        if (pendingMessage) {
+          addNotification('Please complete setup first', 'error', 5000);
+        }
       } else {
         setScreen('main');
       }
@@ -104,7 +117,7 @@ export function App() {
     };
 
     checkFirstRun();
-  }, []);
+  }, [pendingMessage, addNotification]);
 
   const handleWelcomeComplete = () => {
     setScreen('setup');
@@ -125,6 +138,7 @@ export function App() {
         <Welcome onComplete={handleWelcomeComplete} isFirstRun={true} shortcutsOpen={shortcutsOpen} commandsOpen={commandsOpen} />
         {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
         {commandsOpen && <CommandModal />}
+        <Notification notifications={notifications} onRemove={removeNotification} />
       </box>
     );
   }
@@ -135,6 +149,7 @@ export function App() {
         <Setup onComplete={handleSetupComplete} pasteRequestId={pasteRequestId} shortcutsOpen={shortcutsOpen} commandsOpen={commandsOpen} />
         {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
         {commandsOpen && <CommandModal />}
+        <Notification notifications={notifications} onRemove={removeNotification} />
       </box>
     );
   }
@@ -147,9 +162,11 @@ export function App() {
         onCopy={copyToClipboard}
         shortcutsOpen={shortcutsOpen}
         commandsOpen={commandsOpen}
+        initialMessage={pendingMessage}
       />
       {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
       {commandsOpen && <CommandModal />}
+      <Notification notifications={notifications} onRemove={removeNotification} />
     </box>
   );
 }

@@ -4,7 +4,7 @@
 
 # Mosaic CLI
 
-**Version 0.0.6.00**
+**Version 0.0.6.01**
 
 Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in your terminal, offering seamless interaction with AI coding assistants through a modern, responsive interface.
 
@@ -64,10 +64,13 @@ After the first run, Mosaic will remember your configuration and go directly to 
 ### Running Mosaic
 
 ```bash
-mosaic                    # Start Mosaic in current directory
-mosaic ./my-project       # Start Mosaic in a specific directory
-mosaic --help             # Display help message
+mosaic                       # Start Mosaic in current directory
+mosaic ./my-project          # Start Mosaic in a specific directory
+mosaic run "fix the bug"     # Launch with a message to execute
+mosaic --help                # Display help message
 ```
+
+The `run` command allows you to launch Mosaic with a message that will be automatically executed in the chat interface. This is useful for quick tasks or when you want to immediately start working on something specific. If the setup is not complete, Mosaic will show an error notification and prompt you to complete the setup first.
 
 ### Uninstalling Mosaic
 
@@ -86,17 +89,25 @@ The `--force` option removes everything without prompts, including:
 - Configuration directory (`~/.mosaic/`)
 - Project-specific files (`.mosaic/` directories and `MOSAIC.md` files)
 
-### Available Options
+### Available Commands and Options
+
+#### Commands
+
+- `run "<message>"` - Launch Mosaic with a message that will be automatically executed in the chat
+- `uninstall` - Uninstall Mosaic and related files
+
+#### Options
 
 - `--help`, `-h` - Show help message with usage information and exit
 - `--directory`, `-d <path>` - Open Mosaic in the specified directory
 - `--force` - Force uninstall without prompts (removes all data)
 - `[directory]` - Optional directory path (positional argument, alternative to `-d`)
 
-Options can be combined in any order:
+Commands and options can be combined:
 ```bash
-mosaic -d ./src           # Start in ./src directory
-mosaic uninstall --force  # Force uninstall
+mosaic -d ./src                    # Start in ./src directory
+mosaic run "add error handling"    # Launch with a task to execute
+mosaic uninstall --force           # Force uninstall
 ```
 
 ### Interface Features

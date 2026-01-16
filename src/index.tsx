@@ -33,6 +33,7 @@ import { resolve } from 'path';
 import { setTerminalTitle, clearTerminal } from './utils/terminalUtils';
 
 const args = process.argv.slice(2);
+let initialMessage: string | undefined;
 
 if (args.length > 0) {
   const parsed = cli.parseArgs(args);
@@ -45,6 +46,10 @@ if (args.length > 0) {
   if (parsed.uninstall) {
     await cli.uninstall(parsed.force);
     process.exit(0);
+  }
+
+  if (parsed.run) {
+    initialMessage = parsed.run;
   }
 
   if (parsed.directory) {
@@ -83,7 +88,7 @@ clearTerminal();
 
 try {
   const renderer = await createCliRenderer();
-  createRoot(renderer).render(<App />);
+  createRoot(renderer).render(<App initialMessage={initialMessage} />);
 } catch {
   cleanup(1);
 }

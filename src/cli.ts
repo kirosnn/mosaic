@@ -9,6 +9,7 @@ export interface ParsedArgs {
   directory?: string;
   uninstall: boolean;
   force: boolean;
+  run?: string;
 }
 
 export class CLI {
@@ -20,24 +21,40 @@ export class CLI {
     };
 
     const positionalArgs: string[] = [];
+    let i = 0;
 
-    for (const arg of args) {
+    while (i < args.length) {
+      const arg = args[i]!;
+
       if (arg === '--help' || arg === '-h') {
         parsed.help = true;
+        i++;
       } else if (arg === '--directory' || arg === '-d') {
-        const nextIndex = args.indexOf(arg) + 1;
-        if (nextIndex < args.length && !args[nextIndex]!.startsWith('-')) {
-          parsed.directory = args[nextIndex];
-          args.splice(nextIndex, 1);
+        i++;
+        if (i < args.length && !args[i]!.startsWith('-')) {
+          parsed.directory = args[i];
+          i++;
         }
       } else if (arg === '--force') {
         parsed.force = true;
+        i++;
+      } else if (arg === 'run') {
+        i++;
+        if (i < args.length) {
+          parsed.run = args[i];
+          i++;
+        } else {
+          console.log('Error: "run" command requires a message argument.');
+          console.log('Usage: mosaic run "your message here"');
+          process.exit(1);
+        }
       } else if (!arg.startsWith('-')) {
         if (arg === 'uninstall') {
           parsed.uninstall = true;
         } else {
           positionalArgs.push(arg);
         }
+        i++;
       } else {
         console.log(`Unknown option: ${arg}`);
         console.log('Use "mosaic --help" to see available options.');
@@ -45,7 +62,7 @@ export class CLI {
       }
     }
 
-    if (positionalArgs.length > 0) {
+    if (positionalArgs.length > 0 && !parsed.run) {
       parsed.directory = positionalArgs[0];
     }
 
@@ -63,6 +80,7 @@ export class CLI {
     console.log('');
     console.log('Usage:');
     console.log('  mosaic [options] [directory]');
+    console.log('  mosaic run "<message>"');
     console.log('  mosaic uninstall [options]');
     console.log('');
     console.log('Options:');
@@ -70,15 +88,19 @@ export class CLI {
     console.log('  --directory, -d <path>  Open Mosaic in the specified directory');
     console.log('  --force                 Force uninstall without prompts (removes all data)');
     console.log('');
-    console.log('Arguments:');
-    console.log('  directory               Open Mosaic in the specified directory (optional)');
+    console.log('Commands:');
+    console.log('  run "<message>"         Launch Mosaic with a message to execute');
     console.log('  uninstall               Uninstall Mosaic and related files');
     console.log('');
+    console.log('Arguments:');
+    console.log('  directory               Open Mosaic in the specified directory (optional)');
+    console.log('');
     console.log('Examples:');
-    console.log('  mosaic                       # Start Mosaic in current directory');
-    console.log('  mosaic ./my-project          # Start Mosaic in my-project directory');
-    console.log('  mosaic uninstall             # Uninstall with interactive prompts');
-    console.log('  mosaic uninstall --force     # Force uninstall (removes all data)');
+    console.log('  mosaic                            # Start Mosaic in current directory');
+    console.log('  mosaic ./my-project               # Start Mosaic in my-project directory');
+    console.log('  mosaic run "fix the bug"          # Launch with a message to execute');
+    console.log('  mosaic uninstall                  # Uninstall with interactive prompts');
+    console.log('  mosaic uninstall --force          # Force uninstall (removes all data)');
     console.log('');
   }
 

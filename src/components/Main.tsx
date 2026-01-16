@@ -12,8 +12,8 @@ import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
 
-export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false }: MainProps) {
-  const [currentPage, setCurrentPage] = useState<"home" | "chat">("home");
+export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage }: MainProps) {
+  const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage ? "chat" : "home");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
@@ -28,6 +28,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const shortcutsOpenRef = useRef(shortcutsOpen);
   const commandsOpenRef = useRef(commandsOpen);
   const questionRequestRef = useRef<QuestionRequest | null>(questionRequest);
+  const initialMessageProcessed = useRef(false);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -145,18 +146,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const handleSubmit = async (value: string, meta?: InputSubmitMeta) => {
     if (isProcessing) return;
 
-    const buildPastedDisplay = (blocks: { lineCount: number }[]) => {
-      return blocks
-        .map((b, i) => {
-          const n = i + 1;
-          const linesLabel = b.lineCount === 1 ? 'line' : 'lines';
-          return `[Pasted text #${n} - ${b.lineCount} ${linesLabel}]`;
-        })
-        .join(' ');
-    };
-
-    const hasPastedBlocks = Boolean(meta?.pastedBlocks && meta.pastedBlocks.length > 0);
-    if (!value.trim() && !hasPastedBlocks) return;
+    const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
+    if (!value.trim() && !hasPastedContent) return;
 
     if (isCommand(value)) {
       const result = await executeCommand(value);
@@ -178,19 +169,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       }
     }
 
-    const composedContent = hasPastedBlocks
-      ? `${meta!.pastedBlocks!
-        .map((b, i) => `[Pasted text #${i + 1}]\n${b.text}`)
-        .join('\n\n')}${value.trim() ? `\n\n${value}` : ''}`
+    const composedContent = hasPastedContent
+      ? `${meta!.pastedContent!}${value.trim() ? `\n\n${value}` : ''}`
       : value;
 
-    addInputToHistory(value.trim() ? value : (hasPastedBlocks ? buildPastedDisplay(meta!.pastedBlocks!) : value));
+    addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : value));
 
     const userMessage: Message = {
       id: createId(),
       role: "user",
       content: composedContent,
-      displayContent: meta?.pastedBlocks && meta.pastedBlocks.length > 0 ? buildPastedDisplay(meta.pastedBlocks) : (meta?.isPaste ? '[Pasted text]' : undefined),
+      displayContent: meta?.isPaste ? '[Pasted text]' : undefined,
     };
 
     setMessages((prev: Message[]) => [...prev, userMessage]);
@@ -455,9 +444,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }
   };
 
+  useEffect(() => {
+    if (initialMessage && !initialMessageProcessed.current && currentPage === "chat") {
+      initialMessageProcessed.current = true;
+      handleSubmit(initialMessage);
+    }
+  }, [initialMessage, currentPage, handleSubmit]);
+
   if (currentPage === "home") {
     const handleHomeSubmit = (value: string, meta?: InputSubmitMeta) => {
-      if (!value.trim() && !(meta?.pastedBlocks && meta.pastedBlocks.length > 0)) return;
+      const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
+      if (!value.trim() && !hasPastedContent) return;
       setCurrentPage("chat");
       handleSubmit(value, meta);
     };
