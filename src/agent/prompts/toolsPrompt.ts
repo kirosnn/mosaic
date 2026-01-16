@@ -47,6 +47,7 @@ COMMAND EXECUTION:
 USER INTERACTION:
 7. question: Ask the user a question with predefined options
    - Use this when you need the user to pick between known choices
+   - Use this when you need user's confirmation
    - The UI will show the prompt and options and return the selected option
    - Parameters:
      - prompt (string)

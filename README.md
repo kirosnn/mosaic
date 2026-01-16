@@ -11,11 +11,10 @@ Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. I
 ## Features
 
 - **Multi-Provider AI Support**: Compatible with OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
-- **Terminal-First UI**: Modern React-based interface rendered directly in the terminal using OpenTUI
-- **Powerful Tool Integration**: Built-in tools for file operations, code search, terminal commands, and more
-- **Slash Commands**: Quick access to common operations and workflows
-- **Workspace Context**: Intelligent understanding of your project structure and conventions
-- **Memory System**: Persistent context retention across sessions (in development)
+- **Terminal-First UI**: Modern React-based interface rendered directly in the terminal
+- **Powerful Tool Integration**: Built-in tools for file operations, code search, and terminal commands
+- **Slash Commands**: Quick access to common operations
+- **Workspace Context**: Project-specific context files for better AI understanding
 
 ## Prerequisites
 
@@ -23,12 +22,10 @@ Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. I
 
 ## Installation
 
-### Global Installation (Recommended)
-
-Install Mosaic globally to use it from anywhere:
-
 ```bash
-cd mosaic
+git clone https://github.com/yourusername/mosaic-cli.git
+cd mosaic-cli
+bun install
 bun link
 ```
 
@@ -36,104 +33,60 @@ After linking, you can run Mosaic from any directory:
 
 ```bash
 mosaic
-mosaic --help
-```
-
-### Local Development
-
-Clone the repository and install dependencies:
-
-```bash
-git clone https://github.com/yourusername/mosaic-cli.git
-cd mosaic-cli
-bun install
 ```
 
 ## Usage
 
 ### First Run
 
-When you run Mosaic for the first time, it will:
-1. Display a welcome screen with setup instructions
+On first run, Mosaic will:
+1. Display a welcome screen
 2. Create a configuration directory at `~/.mosaic/`
-3. Guide you through provider and API key configuration
-4. Initialize the workspace context
+3. Guide you through AI provider setup
 
-After the first run, Mosaic will remember your configuration and go directly to the main interface.
+### Initializing a Project
 
-### Running Mosaic
-
-```bash
-mosaic                       # Start Mosaic in current directory
-mosaic ./my-project          # Start Mosaic in a specific directory
-mosaic run "fix the bug"     # Launch with a message to execute
-mosaic --help                # Display help message
-```
-
-The `run` command allows you to launch Mosaic with a message that will be automatically executed in the chat interface. This is useful for quick tasks or when you want to immediately start working on something specific. If the setup is not complete, Mosaic will show an error notification and prompt you to complete the setup first.
-
-### Uninstalling Mosaic
-
-Mosaic can be uninstalled using the uninstall command. This will remove the global installation and optionally clean up configuration and history files.
+Initialize Mosaic context in your project workspace:
 
 ```bash
-mosaic uninstall             # Interactive uninstall with prompts
-mosaic uninstall --force     # Force uninstall (removes all data)
+/init
 ```
 
-The interactive uninstall will ask you whether to keep:
-- Conversation history
-- Configuration files
+This command creates:
+- `MOSAIC.md` - A context file that helps the AI understand your project structure, patterns, and conventions
+- `.mosaic/` - Project-specific configuration directory
 
-The `--force` option removes everything without prompts, including:
-- Configuration directory (`~/.mosaic/`)
-- Project-specific files (`.mosaic/` directories and `MOSAIC.md` files)
+The AI will automatically analyze your codebase and generate a comprehensive MOSAIC.md file tailored to your project.
 
-### Available Commands and Options
+### Basic Usage
 
-#### Commands
-
-- `run "<message>"` - Launch Mosaic with a message that will be automatically executed in the chat
-- `uninstall` - Uninstall Mosaic and related files
-
-#### Options
-
-- `--help`, `-h` - Show help message with usage information and exit
-- `--directory`, `-d <path>` - Open Mosaic in the specified directory
-- `--force` - Force uninstall without prompts (removes all data)
-- `[directory]` - Optional directory path (positional argument, alternative to `-d`)
-
-Commands and options can be combined:
 ```bash
-mosaic -d ./src                    # Start in ./src directory
-mosaic run "add error handling"    # Launch with a task to execute
-mosaic uninstall --force           # Force uninstall
+mosaic                       # Start in current directory
+mosaic ./my-project          # Start in specific directory
+mosaic run "fix the bug"     # Launch with a task
+mosaic --help                # Show help
 ```
 
-### Interface Features
+### Uninstalling
 
-Once running, Mosaic provides:
+```bash
+mosaic uninstall             # Interactive uninstall
+mosaic uninstall --force     # Remove all data without prompts
+```
 
-- **Chat Interface**: Natural language interaction with your AI coding assistant
-- **File Operations**: Direct file reading, editing, and creation through AI
-- **Terminal Integration**: Execute shell commands and see results in real-time
-- **Code Search**: Powerful grep-based code searching across your project
-- **Context Awareness**: Automatic understanding of your project's structure and technologies
+### Slash Commands
+
+Available commands within Mosaic:
+
+- `/init` or `/i` - Initialize workspace with MOSAIC.md context file
+- `/help` or `/h` - Show available commands
+- `/echo <text>` - Echo text back (testing)
 
 ## Development
 
-### Running in Development Mode
-
 ```bash
-bun run dev              # Run with auto-reload on file changes
-bun run start            # Run the CLI normally
-bun run mosaic           # Alternative way to run the CLI
-```
-
-### Direct Execution
-
-```bash
-bun run src/index.tsx    # Execute directly with Bun
+bun run dev              # Run with auto-reload
+bun run start            # Run normally
 ```
 
 ## Configuration
@@ -143,16 +96,11 @@ Mosaic stores its configuration in `~/.mosaic/`:
 
 ## Technical Stack
 
-- **Runtime**: [Bun](https://bun.sh) - Fast all-in-one JavaScript runtime
-- **UI Framework**: [OpenTUI](https://github.com/opentui/opentui) - Terminal UI with React
-  - `@opentui/core@^0.1.69` - Core terminal rendering engine
-  - `@opentui/react@^0.1.69` - React bindings for OpenTUI
-- **AI Integration**: [AI SDK](https://github.com/vercel/ai) - Unified AI provider interface
-  - Support for OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
-- **Language**: TypeScript with strict mode enabled
-- **React**: Version 19.2.3
-- **Database**: Better SQLite 3 for local data storage
-- **Validation**: Zod for runtime type validation
+- **Runtime**: Bun
+- **UI**: OpenTUI with React
+- **AI Integration**: Vercel AI SDK
+- **Language**: TypeScript
+- **Database**: Better SQLite 3
 
 ## Supported AI Providers
 
@@ -165,34 +113,17 @@ Mosaic supports multiple AI providers through the Vercel AI SDK:
 - **xAI**: Grok models
 - **Ollama**: Local models with automatic service management
 
-## Architecture
+## How It Works
 
-Mosaic uses a dual-mode architecture:
+Mosaic provides AI agents with powerful tools:
 
-1. **CLI Mode**: When arguments are provided, the CLI parser handles commands and directory navigation
-2. **Interactive Mode**: Without arguments, launches the OpenTUI React interface for AI-assisted development
+- **File Operations**: Read, write, and edit files
+- **Directory Management**: List and navigate project structure
+- **Code Search**: Regex-powered grep across the entire project
+- **Terminal Integration**: Execute shell commands
+- **User Interaction**: Ask questions for clarification
 
-### Core Components
-
-- **Agent System**: Multi-provider AI integration with tool calling capabilities
-- **Tool Integration**: File operations (read, write, edit), terminal commands, code search, and directory listing
-- **Context Management**: Workspace-aware conversation history and project understanding
-- **Command System**: Slash commands for quick access to common operations
-- **Configuration**: Persistent settings stored in `~/.mosaic/`
-
-The application leverages OpenTUI to render React components in the terminal using a flexbox-based layout system, similar to React Native, providing a responsive and modern user experience.
-
-## Available Tools
-
-Mosaic provides the AI agent with powerful tools for code assistance:
-
-- **File Operations**: `read`, `write`, `edit` - Complete file manipulation capabilities
-- **Directory Management**: `list` - Browse and understand project structure
-- **Code Search**: `grep` - Fast, regex-powered code searching across the entire project
-- **Terminal Integration**: `bash` - Execute shell commands with real-time output
-- **Question Answering**: `question` - Direct Q&A capabilities for clarification
-
-These tools enable the AI to understand your codebase, make changes, run tests, and perform complex development tasks autonomously.
+The MOSAIC.md context file helps the AI understand your project's architecture, conventions, and patterns, making it more effective at completing tasks.
 
 ## Contributing
 

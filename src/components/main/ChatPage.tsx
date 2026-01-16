@@ -112,7 +112,7 @@ export function ChatPage({
             role: messageRole,
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
-            success: messageRole === 'tool' ? message.success : undefined,
+            success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
             isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
             visualLines: 1
           });
@@ -129,7 +129,8 @@ export function ChatPage({
               role: messageRole,
               isFirst: isFirstContent && i === 0 && j === 0,
               indent,
-              success: messageRole === 'tool' ? message.success : undefined,
+              success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+              isSpacer: false,
               visualLines: 1
             });
           }
@@ -138,7 +139,7 @@ export function ChatPage({
       }
     }
 
-    if (message.responseDuration && messageRole === 'assistant') {
+    if (message.responseDuration && messageRole === 'assistant' && message.responseDuration > 60000) {
       allItems.push({
         key: `${messageKey}-blend`,
         type: 'blend',
@@ -237,20 +238,23 @@ export function ChatPage({
             );
           }
 
-          if (item.type === 'blend' && item.blendDuration) {
-            const timeStr = formatElapsedTime(item.blendDuration, false);
-            return (
-              <box key={item.key} flexDirection="row" width="100%">
-                <text attributes={TextAttributes.DIM | TextAttributes.ITALIC}>⁘ {item.blendWord} for {timeStr}</text>
-              </box>
-            );
+          if (item.type === 'blend') {
+            if (item.blendDuration && item.blendDuration > 60000) {
+              const timeStr = formatElapsedTime(item.blendDuration, false);
+              return (
+                <box key={item.key} flexDirection="row" width="100%">
+                  <text attributes={TextAttributes.DIM | TextAttributes.ITALIC}>⁘ {item.blendWord} for {timeStr}</text>
+                </box>
+              );
+            }
+            return null;
           }
 
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
-          const showToolBar = item.role === "tool" && !item.isSpacer;
-          const showSlashBar = item.role === "slash" && !item.isSpacer;
-          const showToolBackground = item.role === "tool" && !item.isSpacer;
-          const showSlashBackground = item.role === "slash" && !item.isSpacer;
+          const showToolBar = item.role === "tool" && item.isSpacer === false;
+          const showSlashBar = item.role === "slash" && item.isSpacer === false;
+          const showToolBackground = item.role === "tool" && item.isSpacer === false;
+          const showSlashBackground = item.role === "slash" && item.isSpacer === false;
           return (
             <box
               key={item.key}

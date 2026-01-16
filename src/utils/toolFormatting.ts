@@ -65,8 +65,7 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     }
 
     case 'bash': {
-      const command = typeof args.command === 'string' ? args.command : '';
-      return command || null;
+      return null;
     }
 
     default: {
@@ -105,10 +104,14 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     case 'edit':
     case 'list':
     case 'create_directory':
-      return path ? `${displayName} (${path})` : displayName;
+      return path ? `${displayName} \u001b[2m(${path})\u001b[0m` : displayName;
     case 'grep': {
       const grepPath = typeof args.path === 'string' ? args.path : '.';
-      return grepPath !== '.' ? `${displayName} (${grepPath})` : displayName;
+      return grepPath !== '.' ? `${displayName} \u001b[2m(${grepPath})\u001b[0m` : displayName;
+    }
+    case 'bash': {
+      const command = typeof args.command === 'string' ? args.command : '';
+      return command ? `${displayName} \u001b[2m(${command})\u001b[0m` : displayName;
     }
     default:
       return displayName;

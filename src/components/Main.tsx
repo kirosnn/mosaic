@@ -152,6 +152,280 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (isCommand(value)) {
       const result = await executeCommand(value);
       if (result) {
+        if (result.shouldAddToHistory === true) {
+          addInputToHistory(value.trim());
+
+          const userMessage: Message = {
+            id: createId(),
+            role: "user",
+            content: result.content,
+            displayContent: value,
+          };
+
+          setMessages((prev: Message[]) => [...prev, userMessage]);
+          setIsProcessing(true);
+          setProcessingStartTime(Date.now());
+          setCurrentTokens(0);
+          shouldAutoScroll.current = true;
+
+          const conversationId = createId();
+          const conversationSteps: ConversationStep[] = [];
+          let totalTokens = { prompt: 0, completion: 0, total: 0 };
+          let stepCount = 0;
+          const historyChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+          let totalChars = historyChars + result.content.length;
+          const estimateTokens = () => Math.ceil(totalChars / 4);
+          setCurrentTokens(estimateTokens());
+          const config = readConfig();
+          const abortController = new AbortController();
+          abortControllerRef.current = abortController;
+          let abortNotified = false;
+          const notifyAbort = () => {
+            if (abortNotified) return;
+            abortNotified = true;
+            setMessages((prev: Message[]) => {
+              const newMessages = [...prev];
+              newMessages.push({
+                id: createId(),
+                role: "tool",
+                success: false,
+                content: "Generation aborted. \n↪ What should Mosaic do instead?"
+              });
+              return newMessages;
+            });
+          };
+
+          conversationSteps.push({
+            type: 'user',
+            content: result.content,
+            timestamp: Date.now()
+          });
+
+          try {
+            const providerStatus = await Agent.ensureProviderReady();
+            if (!providerStatus.ready) {
+              setMessages((prev: Message[]) => {
+                const newMessages = [...prev];
+                newMessages.push({
+                  id: createId(),
+                  role: "assistant",
+                  content: `Ollama error: ${providerStatus.error || 'Could not start Ollama. Make sure Ollama is installed.'}`,
+                  isError: true
+                });
+                return newMessages;
+              });
+              setIsProcessing(false);
+              return;
+            }
+
+            const agent = new Agent();
+            const conversationHistory = [...messages, userMessage]
+              .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
+              .map((m) => ({ role: m.role, content: m.content }));
+            let assistantChunk = '';
+            const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+            let assistantMessageId: string | null = null;
+            let streamHadError = false;
+
+            for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
+              if (event.type === 'text-delta') {
+                assistantChunk += event.content;
+                totalChars += event.content.length;
+                setCurrentTokens(estimateTokens());
+
+                if (assistantMessageId === null) {
+                  assistantMessageId = createId();
+                }
+
+                const currentMessageId = assistantMessageId;
+                setMessages((prev: Message[]) => {
+                  const newMessages = [...prev];
+                  const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+
+                  if (messageIndex === -1) {
+                    newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk });
+                  } else {
+                    newMessages[messageIndex] = {
+                      ...newMessages[messageIndex]!,
+                      content: assistantChunk
+                    };
+                  }
+                  return newMessages;
+                });
+              } else if (event.type === 'step-start') {
+                stepCount++;
+              } else if (event.type === 'tool-call-end') {
+                pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+              } else if (event.type === 'tool-result') {
+                const pending = pendingToolCalls.get(event.toolCallId);
+                const toolName = pending?.toolName ?? event.toolName;
+                const toolArgs = pending?.args ?? {};
+                pendingToolCalls.delete(event.toolCallId);
+                const { content: toolContent, success } = formatToolMessage(
+                  toolName,
+                  toolArgs,
+                  event.result,
+                  { maxLines: DEFAULT_MAX_TOOL_LINES }
+                );
+
+                const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+                totalChars += toolResultStr.length;
+                setCurrentTokens(estimateTokens());
+
+                if (assistantChunk.trim()) {
+                  conversationSteps.push({
+                    type: 'assistant',
+                    content: assistantChunk,
+                    timestamp: Date.now()
+                  });
+                }
+
+                conversationSteps.push({
+                  type: 'tool',
+                  content: toolContent,
+                  toolName,
+                  toolArgs,
+                  toolResult: event.result,
+                  timestamp: Date.now()
+                });
+
+                setMessages((prev: Message[]) => {
+                  const newMessages = [...prev];
+                  newMessages.push({
+                    id: createId(),
+                    role: "tool",
+                    content: toolContent,
+                    toolName,
+                    success: success
+                  });
+                  return newMessages;
+                });
+
+                assistantChunk = '';
+                assistantMessageId = null;
+              } else if (event.type === 'error') {
+                if (abortController.signal.aborted) {
+                  notifyAbort();
+                  streamHadError = true;
+                  break;
+                }
+                if (assistantChunk.trim()) {
+                  conversationSteps.push({
+                    type: 'assistant',
+                    content: assistantChunk,
+                    timestamp: Date.now()
+                  });
+                }
+
+                const errorContent = `API error: ${event.error}`;
+                conversationSteps.push({
+                  type: 'assistant',
+                  content: errorContent,
+                  timestamp: Date.now()
+                });
+
+                setMessages((prev: Message[]) => {
+                  const newMessages = [...prev];
+                  newMessages.push({
+                    id: createId(),
+                    role: 'assistant',
+                    content: errorContent,
+                    isError: true,
+                  });
+                  return newMessages;
+                });
+
+                assistantChunk = '';
+                assistantMessageId = null;
+                streamHadError = true;
+                break;
+              } else if (event.type === 'finish') {
+                if (event.usage && event.usage.totalTokens > 0) {
+                  totalTokens = {
+                    prompt: event.usage.promptTokens,
+                    completion: event.usage.completionTokens,
+                    total: event.usage.totalTokens
+                  };
+                  setCurrentTokens(event.usage.totalTokens);
+                }
+              }
+            }
+
+            if (abortController.signal.aborted) {
+              notifyAbort();
+              return;
+            }
+
+            if (!streamHadError && assistantChunk.trim()) {
+              conversationSteps.push({
+                type: 'assistant',
+                content: assistantChunk,
+                timestamp: Date.now()
+              });
+            }
+
+            const conversationData: ConversationHistory = {
+              id: conversationId,
+              timestamp: Date.now(),
+              steps: conversationSteps,
+              totalSteps: stepCount,
+              totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
+              model: config.model,
+              provider: config.provider
+            };
+
+            saveConversation(conversationData);
+
+          } catch (error) {
+            if (abortController.signal.aborted) {
+              notifyAbort();
+              return;
+            }
+            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+            setMessages((prev: Message[]) => {
+              const newMessages = [...prev];
+              if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
+                newMessages[newMessages.length - 1] = {
+                  id: newMessages[newMessages.length - 1]!.id,
+                  role: "assistant",
+                  content: `Mosaic error: ${errorMessage}`,
+                  isError: true
+                };
+              } else {
+                newMessages.push({
+                  id: createId(),
+                  role: "assistant",
+                  content: `Mosaic error: ${errorMessage}`,
+                  isError: true
+                });
+              }
+              return newMessages;
+            });
+          } finally {
+            if (abortControllerRef.current === abortController) {
+              abortControllerRef.current = null;
+            }
+            const duration = processingStartTime ? Date.now() - processingStartTime : null;
+            if (duration && duration >= 60000) {
+              const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+              setMessages((prev: Message[]) => {
+                const newMessages = [...prev];
+                for (let i = newMessages.length - 1; i >= 0; i--) {
+                  if (newMessages[i]?.role === 'assistant') {
+                    newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
+                    break;
+                  }
+                }
+                return newMessages;
+              });
+            }
+            setIsProcessing(false);
+            setProcessingStartTime(null);
+          }
+
+          return;
+        }
+
         const commandMessage: Message = {
           id: createId(),
           role: "slash",

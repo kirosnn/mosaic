@@ -2,6 +2,7 @@ import type { CommandResult } from './types';
 import { commandRegistry } from './registry';
 import { echoCommand } from './echo';
 import { helpCommand } from './help';
+import { initCommand } from './init';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -55,4 +56,5 @@ export async function executeCommand(input: string): Promise<CommandResult | nul
 export function initializeCommands(): void {
   commandRegistry.register(echoCommand);
   commandRegistry.register(helpCommand);
+  commandRegistry.register(initCommand);
 }
