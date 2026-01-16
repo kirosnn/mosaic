@@ -92,7 +92,7 @@ bun run start            # Run normally
 ## Configuration
 
 Mosaic stores its configuration in `~/.mosaic/`:
-- `config.json` - Tracks first run status and version information
+- `mosaic.jsonc` - Tracks first run status and version information
 
 ## Technical Stack
 
@@ -111,7 +111,7 @@ Mosaic supports multiple AI providers through the Vercel AI SDK:
 - **Google**: Gemini models
 - **Mistral**: Mistral and Mixtral models
 - **xAI**: Grok models
-- **Ollama**: Local models with automatic service management
+- **Ollama**: Local and cloud models with automatic service management
 
 ## How It Works
 

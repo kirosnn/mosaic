@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
+import { CustomInput } from '../CustomInput';
 import type { QuestionRequest } from '../../utils/questionBridge';
 
 interface QuestionPanelProps {
   request: QuestionRequest;
   disabled?: boolean;
-  onAnswer: (index: number) => void;
+  onAnswer: (index: number, customText?: string) => void;
 }
 
 export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionPanelProps) {
@@ -42,6 +43,13 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
     }
   });
 
+  const handleCustomSubmit = (text: string) => {
+    if (!text || !text.trim()) {
+      return;
+    }
+    onAnswer(0, text);
+  };
+
   return (
     <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
       <box flexDirection="row" marginBottom={1}>
@@ -52,11 +60,11 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
         <text attributes={TextAttributes.BOLD}>{request.prompt}</text>
       </box>
 
-      <box flexDirection="column">
+      <box flexDirection="column" marginBottom={1}>
         {request.options.map((option, index) => {
           const selected = index === selectedIndex;
           const prefix = selected ? '> ' : '  ';
-          const number = index < 9 ? `${index + 1}. ` : '';
+          const number = index <= 8 ? `${index + 1}. ` : '   ';
           return (
             <box key={`${request.id}-${index}`} flexDirection="row" backgroundColor={selected ? '#2a2a2a' : 'transparent'} paddingLeft={1} paddingRight={1}>
               <text fg={selected ? '#ffca38' : 'white'} attributes={selected ? TextAttributes.BOLD : TextAttributes.NONE}>
@@ -67,8 +75,8 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
         })}
       </box>
 
-      <box flexDirection="row" marginTop={1}>
-        <text attributes={TextAttributes.DIM}>Use Up/Down and Enter, or press 1-9.</text>
+      <box flexDirection="row">
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} />
       </box>
     </box>
   );

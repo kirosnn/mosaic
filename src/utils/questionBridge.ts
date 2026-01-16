@@ -14,6 +14,7 @@ export interface QuestionAnswer {
   index: number;
   label: string;
   value: string | null;
+  customText?: string;
 }
 
 type QuestionListener = (request: QuestionRequest | null) => void;
@@ -73,18 +74,30 @@ export async function askQuestion(prompt: string, options: QuestionOption[]): Pr
   return answer;
 }
 
-export function answerQuestion(index: number): void {
+export function answerQuestion(index: number, customText?: string): void {
   if (!currentRequest || !pendingResolve) return;
 
   const option = currentRequest.options[index];
-  if (!option) return;
 
-  const answer: QuestionAnswer = {
-    id: currentRequest.id,
-    index,
-    label: option.label,
-    value: option.value ?? null,
-  };
+  const answer: QuestionAnswer = customText
+    ? {
+        id: currentRequest.id,
+        index: currentRequest.options.length,
+        label: 'Custom response',
+        value: null,
+        customText,
+      }
+    : !option
+    ? undefined!
+    : {
+        id: currentRequest.id,
+        index,
+        label: option.label,
+        value: option.value ?? null,
+        customText,
+      };
+
+  if (!answer) return;
 
   const resolve = pendingResolve;
   pendingResolve = null;

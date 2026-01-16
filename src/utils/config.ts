@@ -35,6 +35,7 @@ export interface MosaicConfig {
   systemPrompt?: string;
   customProviders?: CustomProvider[];
   customModels?: { [providerId: string]: AIModel[] };
+  requireApprovals?: boolean;
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -144,12 +145,19 @@ export function readConfig(): MosaicConfig {
   if (!existsSync(CONFIG_FILE)) {
     return {
       firstRun: true,
-      version: VERSION
+      version: VERSION,
+      requireApprovals: true
     };
   }
 
   const content = readFileSync(CONFIG_FILE, 'utf-8');
-  return JSON.parse(content);
+  const config = JSON.parse(content);
+
+  if (config.requireApprovals === undefined) {
+    config.requireApprovals = true;
+  }
+
+  return config;
 }
 
 export function writeConfig(config: MosaicConfig): void {
@@ -265,4 +273,15 @@ export function updateSystemPrompt(systemPrompt: string): void {
 export function getSystemPrompt(): string | undefined {
   const config = readConfig();
   return config.systemPrompt;
+}
+
+export function shouldRequireApprovals(): boolean {
+  const config = readConfig();
+  return config.requireApprovals !== false;
+}
+
+export function setRequireApprovals(require: boolean): void {
+  const config = readConfig();
+  config.requireApprovals = require;
+  writeConfig(config);
 }

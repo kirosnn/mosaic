@@ -3,10 +3,12 @@ import { TextAttributes } from "@opentui/core";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
+import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
+import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, getInputAreaTotalLines, formatElapsedTime } from "./ThinkingIndicator";
 
 interface ChatPageProps {
@@ -36,20 +38,25 @@ export function ChatPage({
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
+  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
   }, []);
 
+  useEffect(() => {
+    return subscribeApproval(setApprovalRequest);
+  }, []);
+
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
-    hasQuestion: Boolean(questionRequest),
+    hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
   });
   const viewportHeight = Math.max(5, terminalHeight - (bottomReservedLines + 2));
 
   interface RenderItem {
     key: string;
-    type: 'line' | 'question' | 'blend';
+    type: 'line' | 'question' | 'approval' | 'blend';
     content?: string;
     role: "user" | "assistant" | "tool" | "slash";
     isFirst: boolean;
@@ -59,6 +66,7 @@ export function ChatPage({
     isError?: boolean;
     isSpacer?: boolean;
     questionRequest?: QuestionRequest;
+    approvalRequest?: ApprovalRequest;
     visualLines: number;
     blendDuration?: number;
     blendWord?: string;
@@ -182,6 +190,27 @@ export function ChatPage({
     });
   }
 
+  if (approvalRequest) {
+    const previewLines = approvalRequest.preview.content.split('\n').length;
+    allItems.push({
+      key: `approval-${approvalRequest.id}`,
+      type: 'approval',
+      role: 'assistant',
+      isFirst: true,
+      approvalRequest,
+      visualLines: Math.max(8, 6 + Math.min(previewLines, 15)),
+    });
+    allItems.push({
+      key: `approval-${approvalRequest.id}-spacer`,
+      type: 'line',
+      content: '',
+      role: 'assistant',
+      isFirst: false,
+      isSpacer: true,
+      visualLines: 1,
+    });
+  }
+
   const totalVisualLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
   const maxScrollOffset = Math.max(0, totalVisualLines - viewportHeight);
   const clampedScrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollOffset));
@@ -232,7 +261,21 @@ export function ChatPage({
                 <QuestionPanel
                   request={req}
                   disabled={shortcutsOpen}
-                  onAnswer={(index) => answerQuestion(index)}
+                  onAnswer={(index, customText) => answerQuestion(index, customText)}
+                />
+              </box>
+            );
+          }
+
+          if (item.type === 'approval') {
+            const req = item.approvalRequest;
+            if (!req) return null;
+            return (
+              <box key={item.key} flexDirection="column" width="100%">
+                <ApprovalPanel
+                  request={req}
+                  disabled={shortcutsOpen}
+                  onRespond={(approved, customResponse) => respondApproval(approved, customResponse)}
                 />
               </box>
             );
@@ -309,7 +352,7 @@ export function ChatPage({
             <CustomInput
               onSubmit={onSubmit}
               placeholder="Type your message..."
-              focused={!isProcessing && !shortcutsOpen && !questionRequest}
+              focused={!isProcessing && !shortcutsOpen && !questionRequest && !approvalRequest}
               pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             />
           </box>
@@ -321,7 +364,7 @@ export function ChatPage({
       </box>
 
       <box position="absolute" bottom={getInputBarBaseLines() + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest)} startTime={processingStartTime} tokens={currentTokens} />
+        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)} startTime={processingStartTime} tokens={currentTokens} />
       </box>
     </box>
   );

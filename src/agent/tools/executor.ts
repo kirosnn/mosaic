@@ -2,6 +2,8 @@ import { readFile, writeFile, readdir, appendFile, stat, mkdir } from 'fs/promis
 import { join, resolve, dirname, extname } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { requestApproval } from '../../utils/approvalBridge';
+import { shouldRequireApprovals } from '../../utils/config';
 
 const execAsync = promisify(exec);
 
@@ -9,6 +11,7 @@ export interface ToolResult {
   success: boolean;
   result?: string;
   error?: string;
+  userMessage?: string;
 }
 
 const pathValidationCache = new Map<string, boolean>();
@@ -194,10 +197,113 @@ async function findFilesByPattern(pattern: string, searchPath: string): Promise<
   return results;
 }
 
+async function generatePreview(toolName: string, args: Record<string, unknown>, workspace: string) {
+  switch (toolName) {
+    case 'write': {
+      const path = args.path as string;
+      const content = typeof args.content === 'string' ? args.content : '';
+
+      return {
+        title: `Write (${path})`,
+        content: content.length > 500 ? `${content.slice(0, 500)}...` : content,
+      };
+    }
+
+    case 'edit': {
+      const path = args.path as string;
+      const oldContent = args.old_content as string;
+      const newContent = args.new_content as string;
+      const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
+
+      return {
+        title: `Edit (${path})`,
+        content: `--- OLD (occurrence ${occurrence})\n${oldContent}\n\n+++ NEW\n${newContent}`,
+      };
+    }
+
+    case 'bash': {
+      const command = args.command as string;
+
+      return {
+        title: `Command (${command})`,
+        content: command,
+      };
+    }
+
+    default:
+      throw new Error(`Unknown tool: ${toolName}`);
+  }
+}
+
 export async function executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
   const workspace = process.cwd();
 
   try {
+    const needsApproval = (toolName === 'write' || toolName === 'edit' || toolName === 'bash') && shouldRequireApprovals();
+
+    if (needsApproval) {
+      const preview = await generatePreview(toolName, args, workspace);
+      const approvalResult = await requestApproval(toolName as 'write' | 'edit' | 'bash', args, preview);
+
+      if (!approvalResult.approved) {
+        if (approvalResult.customResponse) {
+          const userMessage = `Operation cancelled by user`;
+          const agentError = `OPERATION REJECTED BY USER with custom instructions: "${approvalResult.customResponse}"
+
+The user provided specific instructions for what to do instead. Follow their instructions carefully.
+
+DO NOT use the question tool since the user already provided clear instructions in their custom response.`;
+
+          return {
+            success: false,
+            error: agentError,
+            userMessage: userMessage,
+          };
+        }
+
+        let operationDescription = '';
+        let suggestedOptions = '';
+        switch (toolName) {
+          case 'write':
+            operationDescription = `writing to file "${args.path}"`;
+            suggestedOptions = 'Options could be: "Modify the content", "Write to a different file", "Cancel operation"';
+            break;
+          case 'edit':
+            operationDescription = `editing file "${args.path}"`;
+            suggestedOptions = 'Options could be: "Modify the changes", "Edit a different part", "Cancel operation"';
+            break;
+          case 'bash':
+            operationDescription = `executing command: ${args.command}`;
+            suggestedOptions = 'Options could be: "Modify the command", "Use a different command", "Cancel operation"';
+            break;
+        }
+
+        const agentError = `OPERATION REJECTED BY USER: ${operationDescription}
+
+REQUIRED ACTION: You MUST use the question tool immediately to ask the user why they rejected this and what they want to do instead.
+
+Example question tool usage:
+question(
+  prompt: "Why did you reject ${operationDescription}?",
+  options: [
+    { label: "${suggestedOptions.split(', ')[0]?.replace('Options could be: ', '').replace(/"/g, '')}", value: "modify" },
+    { label: "${suggestedOptions.split(', ')[1]?.replace(/"/g, '')}", value: "alternative" },
+    { label: "${suggestedOptions.split(', ')[2]?.replace(/"/g, '')}", value: "cancel" }
+  ]
+)
+
+DO NOT continue without using the question tool. DO NOT ask in plain text.`;
+
+        const userMessage = `Operation cancelled by user`;
+
+        return {
+          success: false,
+          error: agentError,
+          userMessage: userMessage,
+        };
+      }
+    }
+
     switch (toolName) {
       case 'read': {
         const path = args.path as string;

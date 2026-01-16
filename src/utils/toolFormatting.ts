@@ -191,6 +191,12 @@ function formatGrepResult(result: unknown): string[] {
 function getToolErrorText(result: unknown): string | null {
   if (!result || typeof result !== 'object') return null;
   const obj = result as Record<string, unknown>;
+
+  const userMessage = obj.userMessage;
+  if (typeof userMessage === 'string' && userMessage.trim()) {
+    return userMessage.trim();
+  }
+
   const error = obj.error;
   return typeof error === 'string' && error.trim() ? error.trim() : null;
 }
