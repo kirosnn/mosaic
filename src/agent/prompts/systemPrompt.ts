@@ -1,4 +1,6 @@
 import { homedir, platform, arch } from 'os';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { getToolsPrompt } from './toolsPrompt';
 
 export const DEFAULT_SYSTEM_PROMPT = `You are Mosaic, an AI coding assistant operating in the user's terminal.
@@ -65,6 +67,16 @@ export function processSystemPrompt(prompt: string, includeTools: boolean = true
   let processed = prompt;
   for (const [placeholder, value] of Object.entries(replacements)) {
     processed = processed.replace(new RegExp(placeholder, 'g'), value);
+  }
+
+  const mosaicMdPath = join(workspace, 'MOSAIC.md');
+  if (existsSync(mosaicMdPath)) {
+    try {
+      const mosaicContent = readFileSync(mosaicMdPath, 'utf-8');
+      processed = `${processed}\n\nPROJECT CONTEXT:\nThe following is the MOSAIC.md file for this workspace. It contains important context about this project that will help you understand the codebase better:\n\n${mosaicContent}`;
+    } catch (error) {
+      console.error('Failed to read MOSAIC.md:', error);
+    }
   }
 
   if (includeTools) {
