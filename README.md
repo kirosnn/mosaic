@@ -69,15 +69,34 @@ mosaic ./my-project       # Start Mosaic in a specific directory
 mosaic --help             # Display help message
 ```
 
+### Uninstalling Mosaic
+
+Mosaic can be uninstalled using the uninstall command. This will remove the global installation and optionally clean up configuration and history files.
+
+```bash
+mosaic uninstall             # Interactive uninstall with prompts
+mosaic uninstall --force     # Force uninstall (removes all data)
+```
+
+The interactive uninstall will ask you whether to keep:
+- Conversation history
+- Configuration files
+
+The `--force` option removes everything without prompts, including:
+- Configuration directory (`~/.mosaic/`)
+- Project-specific files (`.mosaic/` directories and `MOSAIC.md` files)
+
 ### Available Options
 
 - `--help`, `-h` - Show help message with usage information and exit
 - `--directory`, `-d <path>` - Open Mosaic in the specified directory
+- `--force` - Force uninstall without prompts (removes all data)
 - `[directory]` - Optional directory path (positional argument, alternative to `-d`)
 
 Options can be combined in any order:
 ```bash
 mosaic -d ./src           # Start in ./src directory
+mosaic uninstall --force  # Force uninstall
 ```
 
 ### Interface Features

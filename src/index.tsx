@@ -42,6 +42,11 @@ if (args.length > 0) {
     process.exit(0);
   }
 
+  if (parsed.uninstall) {
+    await cli.uninstall(parsed.force);
+    process.exit(0);
+  }
+
   if (parsed.directory) {
     const targetDir = resolve(parsed.directory);
 
