@@ -11,8 +11,23 @@ export interface ToolResult {
   error?: string;
 }
 
+const pathValidationCache = new Map<string, boolean>();
+const globPatternCache = new Map<string, RegExp>();
+
 function validatePath(fullPath: string, workspace: string): boolean {
-  return fullPath.startsWith(workspace);
+  const cacheKey = `${fullPath}|${workspace}`;
+  const cached = pathValidationCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = fullPath.startsWith(workspace);
+  pathValidationCache.set(cacheKey, result);
+
+  if (pathValidationCache.size > 1000) {
+    const firstKey = pathValidationCache.keys().next().value;
+    if (firstKey) pathValidationCache.delete(firstKey);
+  }
+
+  return result;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -42,30 +57,48 @@ const EXCLUDED_DIRECTORIES = new Set([
 ]);
 
 function matchGlob(filename: string, pattern: string): boolean {
-  const regexPattern = pattern
-    .replace(/\./g, '\\.')
-    .replace(/\*\*/g, '<!DOUBLESTAR!>')
-    .replace(/\*/g, '[^/]*')
-    .replace(/<!DOUBLESTAR!>/g, '.*')
-    .replace(/\?/g, '.');
+  let regex = globPatternCache.get(pattern);
 
-  const regex = new RegExp(`^${regexPattern}$`);
+  if (!regex) {
+    const regexPattern = pattern
+      .replace(/\./g, '\\.')
+      .replace(/\*\*/g, '<!DOUBLESTAR!>')
+      .replace(/\*/g, '[^/]*')
+      .replace(/<!DOUBLESTAR!>/g, '.*')
+      .replace(/\?/g, '.');
+
+    regex = new RegExp(`^${regexPattern}$`);
+    globPatternCache.set(pattern, regex);
+
+    if (globPatternCache.size > 100) {
+      const firstKey = globPatternCache.keys().next().value;
+      if (firstKey) globPatternCache.delete(firstKey);
+    }
+  }
+
   return regex.test(filename);
 }
 
 async function searchInFile(filePath: string, query: string, caseSensitive: boolean): Promise<Array<{ line: number; content: string }>> {
   try {
     const content = await readFile(filePath, 'utf-8');
-    const lines = content.split('\n');
+    const searchQuery = caseSensitive ? query : query.toLowerCase();
     const matches: Array<{ line: number; content: string }> = [];
 
-    const searchQuery = caseSensitive ? query : query.toLowerCase();
+    let lineNumber = 1;
+    let lineStart = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-      const rawLine = lines[i] ?? '';
-      const lineContent = caseSensitive ? rawLine : rawLine.toLowerCase();
-      if (lineContent.includes(searchQuery)) {
-        matches.push({ line: i + 1, content: rawLine });
+    for (let i = 0; i <= content.length; i++) {
+      if (i === content.length || content[i] === '\n') {
+        const rawLine = content.slice(lineStart, i);
+        const lineContent = caseSensitive ? rawLine : rawLine.toLowerCase();
+
+        if (lineContent.includes(searchQuery)) {
+          matches.push({ line: lineNumber, content: rawLine });
+        }
+
+        lineNumber++;
+        lineStart = i + 1;
       }
     }
 
@@ -86,6 +119,7 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
 
   try {
     const entries = await readdir(dir, { withFileTypes: true });
+    const subDirPromises: Promise<WalkResult[]>[] = [];
 
     for (const entry of entries) {
       if (!includeHidden && entry.name.startsWith('.')) continue;
@@ -96,13 +130,19 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
         if (EXCLUDED_DIRECTORIES.has(entry.name)) {
           results.push({ path: fullPath, isDirectory: true, excluded: true });
         } else {
-          const subFiles = await walkDirectory(fullPath, filePattern, includeHidden);
-          results.push(...subFiles);
+          subDirPromises.push(walkDirectory(fullPath, filePattern, includeHidden));
         }
       } else {
         if (!filePattern || matchGlob(entry.name, filePattern)) {
           results.push({ path: fullPath, isDirectory: false });
         }
+      }
+    }
+
+    if (subDirPromises.length > 0) {
+      const subResults = await Promise.all(subDirPromises);
+      for (const subResult of subResults) {
+        results.push(...subResult);
       }
     }
   } catch {
@@ -311,17 +351,28 @@ export async function executeTool(toolName: string, args: Record<string, unknown
         const results: Array<{ file: string; matches: Array<{ line: number; content: string }> }> = [];
         let totalResults = 0;
 
-        for (const file of files) {
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < files.length; i += BATCH_SIZE) {
           if (totalResults >= maxResults) break;
 
-          const filePath = resolve(fullPath, file);
-          const matches = await searchInFile(filePath, query, caseSensitive);
-          if (matches.length > 0) {
-            results.push({
-              file: join(searchPath, file),
-              matches: matches.slice(0, maxResults - totalResults)
-            });
-            totalResults += matches.length;
+          const batch = files.slice(i, i + BATCH_SIZE);
+          const batchResults = await Promise.all(
+            batch.map(async (file) => {
+              const filePath = resolve(fullPath, file);
+              const matches = await searchInFile(filePath, query, caseSensitive);
+              return { file: join(searchPath, file), matches };
+            })
+          );
+
+          for (const { file, matches } of batchResults) {
+            if (totalResults >= maxResults) break;
+            if (matches.length > 0) {
+              results.push({
+                file,
+                matches: matches.slice(0, maxResults - totalResults)
+              });
+              totalResults += matches.length;
+            }
           }
         }
 
