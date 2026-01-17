@@ -24,6 +24,29 @@ function renderToolText(content: string, paragraphIndex: number, indent: number)
       );
     }
   }
+
+  const isDiffLine = content.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
+  if (isDiffLine) {
+    const [, prefix, lineNum, contentPart] = isDiffLine;
+    const isAdded = prefix === '+';
+    const isRemoved = prefix === '-';
+
+    return (
+      <box flexDirection="row">
+        <box backgroundColor={isAdded ? "#0d2b0d" : isRemoved ? "#2b0d0d" : "transparent"}>
+          <text fg="#ffffff">
+            {prefix}{lineNum?.padStart(4) || ''} |{' '}
+          </text>
+        </box>
+        <box flexGrow={1} backgroundColor={isAdded ? "#1a3a1a" : isRemoved ? "#3a1a1a" : "transparent"}>
+          <text fg="#ffffff">
+            {contentPart || ''}
+          </text>
+        </box>
+      </box>
+    );
+  }
+
   return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
 }
 
@@ -55,6 +78,7 @@ export function ChatPage({
   const maxWidth = Math.max(20, terminalWidth - 6);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
+  const [, setTimerTick] = useState(0);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -63,6 +87,16 @@ export function ChatPage({
   useEffect(() => {
     return subscribeApproval(setApprovalRequest);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const hasRunning = messages.some(m => m.isRunning);
+      if (hasRunning) {
+        setTimerTick(tick => tick + 1);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [messages]);
 
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
@@ -87,6 +121,8 @@ export function ChatPage({
     visualLines: number;
     blendDuration?: number;
     blendWord?: string;
+    isRunning?: boolean;
+    runningStartTime?: number;
   }
 
   const allItems: RenderItem[] = [];
@@ -140,7 +176,9 @@ export function ChatPage({
             paragraphIndex: i,
             success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
             isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
-            visualLines: 1
+            visualLines: 1,
+            isRunning: message.isRunning,
+            runningStartTime: message.runningStartTime
           });
         } else {
           const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
@@ -158,12 +196,31 @@ export function ChatPage({
               paragraphIndex: i,
               success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
               isSpacer: false,
-              visualLines: 1
+              visualLines: 1,
+              isRunning: message.isRunning,
+              runningStartTime: message.runningStartTime
             });
           }
           isFirstContent = false;
         }
       }
+    }
+
+    if (message.isRunning && message.runningStartTime && messageRole === 'tool') {
+      allItems.push({
+        key: `${messageKey}-running`,
+        type: 'line',
+        content: '',
+        role: messageRole,
+        isFirst: false,
+        indent: 2,
+        paragraphIndex: 1,
+        success: message.success,
+        isSpacer: false,
+        visualLines: 1,
+        isRunning: true,
+        runningStartTime: message.runningStartTime
+      });
     }
 
     if (message.responseDuration && messageRole === 'assistant' && message.responseDuration > 60000) {
@@ -190,13 +247,30 @@ export function ChatPage({
   }
 
   if (questionRequest) {
+    const questionPanelLines = Math.max(6, 5 + questionRequest.options.length);
+    const currentTotalLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
+    const linesFromBottom = currentTotalLines % viewportHeight;
+    const spaceNeeded = viewportHeight - linesFromBottom;
+
+    if (linesFromBottom > 0 && questionPanelLines + 2 > spaceNeeded) {
+      allItems.push({
+        key: `question-${questionRequest.id}-pagebreak`,
+        type: 'line',
+        content: '',
+        role: 'assistant',
+        isFirst: false,
+        isSpacer: true,
+        visualLines: spaceNeeded,
+      });
+    }
+
     allItems.push({
       key: `question-${questionRequest.id}`,
       type: 'question',
       role: 'assistant',
       isFirst: true,
       questionRequest,
-      visualLines: Math.max(6, 5 + questionRequest.options.length),
+      visualLines: questionPanelLines,
     });
     allItems.push({
       key: `question-${questionRequest.id}-spacer`,
@@ -211,13 +285,31 @@ export function ChatPage({
 
   if (approvalRequest) {
     const previewLines = approvalRequest.preview.content.split('\n').length;
+    const maxVisibleLines = Math.min(previewLines, viewportHeight - 10);
+    const approvalPanelLines = Math.max(8, 6 + maxVisibleLines);
+    const currentTotalLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
+    const linesFromBottom = currentTotalLines % viewportHeight;
+    const spaceNeeded = viewportHeight - linesFromBottom;
+
+    if (linesFromBottom > 0 && approvalPanelLines + 2 > spaceNeeded) {
+      allItems.push({
+        key: `approval-${approvalRequest.id}-pagebreak`,
+        type: 'line',
+        content: '',
+        role: 'assistant',
+        isFirst: false,
+        isSpacer: true,
+        visualLines: spaceNeeded,
+      });
+    }
+
     allItems.push({
       key: `approval-${approvalRequest.id}`,
       type: 'approval',
       role: 'assistant',
       isFirst: true,
       approvalRequest,
-      visualLines: Math.max(8, 6 + Math.min(previewLines, 15)),
+      visualLines: approvalPanelLines,
     });
     allItems.push({
       key: `approval-${approvalRequest.id}-spacer`,
@@ -317,19 +409,25 @@ export function ChatPage({
           const showSlashBar = item.role === "slash" && item.isSpacer === false;
           const showToolBackground = item.role === "tool" && item.isSpacer === false;
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;
+          const isRunningTool = item.isRunning && item.runningStartTime;
+          const runningBackground = isRunningTool ? "#2a2a2a" : (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent");
+
           return (
             <box
               key={item.key}
               flexDirection="row"
               width="100%"
-              backgroundColor={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"}
-              paddingRight={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? 1 : 0}
+              backgroundColor={runningBackground}
+              paddingRight={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar || isRunningTool) ? 1 : 0}
             >
               {item.role === "user" && item.content && (
                 <text fg="#ffca38">▎ </text>
               )}
-              {showToolBar && (
+              {showToolBar && !isRunningTool && (
                 <text fg={item.success ? "#38ff65" : "#ff3838"}>▎ </text>
+              )}
+              {showToolBar && isRunningTool && (
+                <text fg="#808080">▎ </text>
               )}
               {showSlashBar && (
                 <text fg="white">▎ </text>
@@ -338,7 +436,11 @@ export function ChatPage({
                 <text fg="#ff3838">▎ </text>
               )}
               {item.role === "tool" ? (
-                renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0)
+                isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
+                  <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
+                ) : (
+                  renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0)
+                )
               ) : item.role === "user" || item.role === "slash" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.segments && item.segments.length > 0 ? (

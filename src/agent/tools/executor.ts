@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
+import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 
 const execAsync = promisify(exec);
 
@@ -12,6 +13,7 @@ export interface ToolResult {
   result?: string;
   error?: string;
   userMessage?: string;
+  diff?: string[];
 }
 
 const pathValidationCache = new Map<string, boolean>();
@@ -202,10 +204,27 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
     case 'write': {
       const path = args.path as string;
       const content = typeof args.content === 'string' ? args.content : '';
+      const fullPath = resolve(workspace, path);
+
+      if (!content || content.trim() === '') {
+        return {
+          title: `Write (${path})`,
+          content: 'No new content in the file',
+        };
+      }
+
+      let oldContent = '';
+      try {
+        oldContent = await readFile(fullPath, 'utf-8');
+      } catch {
+      }
+
+      const diff = generateDiff(oldContent, content);
+      const diffLines = formatDiffForDisplay(diff);
 
       return {
         title: `Write (${path})`,
-        content: content.length > 500 ? `${content.slice(0, 500)}...` : content,
+        content: diffLines.join('\n'),
       };
     }
 
@@ -215,18 +234,59 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
       const newContent = args.new_content as string;
       const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
 
+      const oldLines = oldContent.split('\n');
+      const newLines = newContent.split('\n');
+
+      const formattedLines: string[] = [];
+
+      let startLineNumber = 1;
+      try {
+        const fullPath = resolve(workspace, path);
+        const fileContent = await readFile(fullPath, 'utf-8');
+        const fileLines = fileContent.split('\n');
+
+        let occurrenceCount = 0;
+        for (let i = 0; i <= fileLines.length - oldLines.length; i++) {
+          let match = true;
+          for (let j = 0; j < oldLines.length; j++) {
+            if (fileLines[i + j] !== oldLines[j]) {
+              match = false;
+              break;
+            }
+          }
+          if (match) {
+            occurrenceCount++;
+            if (occurrenceCount === occurrence) {
+              startLineNumber = i + 1;
+              break;
+            }
+          }
+        }
+      } catch {
+      }
+
+      for (let i = 0; i < oldLines.length; i++) {
+        formattedLines.push(`-${String(startLineNumber + i).padStart(4)} | ${oldLines[i] ?? ''}`);
+      }
+
+      for (let i = 0; i < newLines.length; i++) {
+        formattedLines.push(`+${String(startLineNumber + i).padStart(4)} | ${newLines[i] ?? ''}`);
+      }
+
       return {
         title: `Edit (${path})`,
-        content: `--- OLD (occurrence ${occurrence})\n${oldContent}\n\n+++ NEW\n${newContent}`,
+        content: formattedLines.join('\n'),
       };
     }
 
     case 'bash': {
-      const command = args.command as string;
+      let command = args.command as string;
+
+      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
 
       return {
-        title: `Command (${command})`,
-        content: command,
+        title: `Command (${cleanCommand})`,
+        content: cleanCommand,
       };
     }
 
@@ -338,6 +398,12 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         await mkdir(dirname(fullPath), { recursive: true });
 
+        let oldContent = '';
+        try {
+          oldContent = await readFile(fullPath, 'utf-8');
+        } catch {
+        }
+
         if (append) {
           await appendFile(fullPath, content, 'utf-8');
           return {
@@ -346,9 +412,21 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         } else {
           await writeFile(fullPath, content, 'utf-8');
+
+          if (!content || content.trim() === '') {
+            return {
+              success: true,
+              result: `No new content in the file`,
+            };
+          }
+
+          const diff = generateDiff(oldContent, content);
+          const diffLines = formatDiffForDisplay(diff);
+
           return {
             success: true,
-            result: `File written successfully: ${path}`
+            result: `File written successfully: ${path}`,
+            diff: diffLines,
           };
         }
       }
@@ -418,21 +496,78 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       }
 
       case 'bash': {
-        const command = args.command as string;
-        const { stdout, stderr } = await execAsync(command, {
-          cwd: workspace,
-          timeout: 30000
-        });
+        let command = args.command as string;
+        let timeout = 30000;
+
+        const timeoutMatch = command.match(/\s+--timeout\s+(\d+)$/);
+        if (timeoutMatch) {
+          timeout = Math.min(parseInt(timeoutMatch[1] || '30000', 10), 90000);
+          command = command.replace(/\s+--timeout\s+\d+$/, '');
+        }
+
+        try {
+          const { stdout, stderr } = await execAsync(command, {
+            cwd: workspace,
+            timeout
+          });
+
+          const output = (stdout || '') + (stderr || '');
+          return {
+            success: true,
+            result: output || 'Command executed with no output'
+          };
+        } catch (error: unknown) {
+          const execError = error as { stdout?: string; stderr?: string; message?: string; code?: number };
+          const errorMessage = execError.message || String(error);
+
+          if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
+            const partialOutput = (execError.stdout || '') + (execError.stderr || '');
+            const output = partialOutput
+              ? `Command output (timed out after ${timeout}ms):\n${partialOutput}\n\n[Process continues running in background]`
+              : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
+
+            return {
+              success: true,
+              result: output
+            };
+          }
+
+          const output = (execError.stdout || '') + (execError.stderr || '');
+          const exitCode = execError.code;
+          const fullOutput = output
+            ? `Command exited with code ${exitCode ?? 'unknown'}:\n${output}`
+            : `Command failed: ${errorMessage}`;
+
+          return {
+            success: true,
+            result: fullOutput
+          };
+        }
+      }
+
+      case 'glob': {
+        const pattern = args.pattern as string;
+        const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
+        const fullPath = resolve(workspace, searchPath);
+
+        if (!validatePath(fullPath, workspace)) {
+          return {
+            success: false,
+            error: 'Access denied: path is outside workspace'
+          };
+        }
+
+        const files = await findFilesByPattern(pattern, fullPath);
 
         return {
           success: true,
-          result: stdout || stderr || 'Command executed successfully'
+          result: JSON.stringify(files, null, 2)
         };
       }
 
       case 'grep': {
-        const filePattern = args.file_pattern as string;
-        const query = args.query === null ? undefined : (args.query as string | undefined);
+        const pattern = args.pattern as string;
+        const query = args.query as string;
         const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
         const caseSensitive = ((args.case_sensitive === null ? undefined : (args.case_sensitive as boolean | undefined)) ?? false);
         const maxResults = ((args.max_results === null ? undefined : (args.max_results as number | undefined)) ?? 100);
@@ -445,14 +580,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         }
 
-        const files = await findFilesByPattern(filePattern, fullPath);
-
-        if (!query) {
-          return {
-            success: true,
-            result: JSON.stringify(files, null, 2)
-          };
-        }
+        const files = await findFilesByPattern(pattern, fullPath);
 
         const results: Array<{ file: string; matches: Array<{ line: number; content: string }> }> = [];
         let totalResults = 0;
@@ -502,7 +630,28 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         }
 
-        const content = await readFile(fullPath, 'utf-8');
+        await mkdir(dirname(fullPath), { recursive: true });
+
+        let content = '';
+        try {
+          content = await readFile(fullPath, 'utf-8');
+        } catch {
+          content = '';
+        }
+
+        if (oldContent === '' && content === '') {
+          await writeFile(fullPath, newContent, 'utf-8');
+
+          const diff = generateDiff('', newContent);
+          const diffLines = formatDiffForDisplay(diff);
+
+          return {
+            success: true,
+            result: `File created and edited successfully: ${path}`,
+            diff: diffLines,
+          };
+        }
+
         const parts = content.split(oldContent);
 
         if (parts.length < occurrence + 1) {
@@ -518,9 +667,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         await writeFile(fullPath, updatedContent, 'utf-8');
 
+        const diff = generateDiff(content, updatedContent);
+        const diffLines = formatDiffForDisplay(diff);
+
         return {
           success: true,
-          result: `File edited successfully: ${path}`
+          result: `File edited successfully: ${path}`,
+          diff: diffLines,
         };
       }
 

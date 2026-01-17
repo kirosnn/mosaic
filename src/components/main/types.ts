@@ -37,6 +37,8 @@ export interface Message {
   responseDuration?: number;
   blendWord?: string;
   thinkingContent?: string;
+  isRunning?: boolean;
+  runningStartTime?: number;
 }
 
 export interface MainProps {

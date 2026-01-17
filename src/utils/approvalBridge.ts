@@ -15,10 +15,17 @@ export interface ApprovalResponse {
   customResponse?: string;
 }
 
+export interface ApprovalAccepted {
+  toolName: 'write' | 'edit' | 'bash';
+  args: Record<string, unknown>;
+}
+
 type ApprovalListener = (request: ApprovalRequest | null) => void;
+type ApprovalAcceptedListener = (accepted: ApprovalAccepted) => void;
 
 let currentRequest: ApprovalRequest | null = null;
 let listeners = new Set<ApprovalListener>();
+let acceptedListeners = new Set<ApprovalAcceptedListener>();
 let pendingResolve: ((response: ApprovalResponse) => void) | null = null;
 
 function notify(): void {
@@ -37,6 +44,19 @@ export function subscribeApproval(listener: ApprovalListener): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+export function subscribeApprovalAccepted(listener: ApprovalAcceptedListener): () => void {
+  acceptedListeners.add(listener);
+  return () => {
+    acceptedListeners.delete(listener);
+  };
+}
+
+function notifyApprovalAccepted(toolName: 'write' | 'edit' | 'bash', args: Record<string, unknown>): void {
+  for (const listener of acceptedListeners) {
+    listener({ toolName, args });
+  }
 }
 
 export function getCurrentApproval(): ApprovalRequest | null {
@@ -79,8 +99,16 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
   };
 
   const resolve = pendingResolve;
+  const toolName = currentRequest.toolName;
+  const args = currentRequest.args;
+
   pendingResolve = null;
   currentRequest = null;
   notify();
+
+  if (approved) {
+    notifyApprovalAccepted(toolName, args);
+  }
+
   resolve(response);
 }

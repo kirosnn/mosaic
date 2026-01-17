@@ -27,26 +27,48 @@ FILE & DIRECTORY OPERATIONS:
    - Parameters: path (string), recursive (boolean, optional), filter (string, optional), include_hidden (boolean, optional)
 
 SEARCH & DISCOVERY:
-5. grep: Universal search tool - find files by pattern AND/OR search text content
-   - REQUIRED: file_pattern (string) - Glob pattern to match files (e.g., "*.ts", "**/*.tsx", "src/**/*.js")
-   - OPTIONAL: query (string) - Text content to search for. If omitted, only returns matching file paths.
+5. glob: Fast file pattern matching
+   - Find files matching a glob pattern
+   - REQUIRED: pattern (string) - Glob pattern to match files (e.g., "*.ts", "**/*.tsx", "src/**/*.js")
    - OPTIONAL: path (string) - Directory to search in (default: workspace root)
-   - OPTIONAL: case_sensitive (boolean) - Case-sensitive search (default: false, only used with query)
-   - OPTIONAL: max_results (number) - Maximum results (default: 100, only used with query)
 
    Examples:
-   - Find all TypeScript files: grep(file_pattern="**/*.ts")
-   - Find files AND search content: grep(file_pattern="**/*.ts", query="interface User")
-   - Search in specific directory: grep(file_pattern="*.js", query="console.log", path="src")
+   - Find all TypeScript files: glob(pattern="**/*.ts")
+   - Find React components: glob(pattern="**/*.tsx")
+   - Search in specific directory: glob(pattern="*.js", path="src")
+
+6. grep: Search for text content within files
+   - Search for text within files matching a glob pattern
+   - REQUIRED: pattern (string) - Glob pattern to match files (e.g., "*.ts", "**/*.tsx")
+   - REQUIRED: query (string) - Text content to search for
+   - OPTIONAL: path (string) - Directory to search in (default: workspace root)
+   - OPTIONAL: case_sensitive (boolean) - Case-sensitive search (default: false)
+   - OPTIONAL: max_results (number) - Maximum results (default: 100)
+
+   Examples:
+   - Find interface in TypeScript files: grep(pattern="**/*.ts", query="interface User")
+   - Search in specific directory: grep(pattern="*.js", query="console.log", path="src")
+   - Case-sensitive search: grep(pattern="**/*.ts", query="UserModel", case_sensitive=true)
 
 COMMAND EXECUTION:
-6. bash: Execute a shell command
+7. bash: Execute a shell command
    - Use this to run build tools, tests, git commands, or other CLI tools
-   - For commands that might take a long time or hang (e.g., in the CLI), always set an appropriate timeout
    - Parameters: command (string)
+   - CRITICAL: You MUST add --timeout <ms> at the END of commands that might hang:
+     * Dev servers: ALWAYS add --timeout 5000
+       Example: bash(command="npm run dev --timeout 5000")
+     * Build commands: ALWAYS add --timeout 120000
+       Example: bash(command="npm run build --timeout 120000")
+     * Test runners: ALWAYS add --timeout 60000
+       Example: bash(command="pytest tests/ --timeout 60000")
+     * Package installs: ALWAYS add --timeout 120000
+       Example: bash(command="npm install --timeout 120000")
+     * Interactive CLIs: ALWAYS add --timeout 5000 or avoid entirely
+       Example: bash(command="npx create-react-app myapp --timeout 5000")
+   - Quick commands (ls, cat, git status, echo): No --timeout needed (default: 30s)
 
 USER INTERACTION:
-7. question: Ask the user a question with predefined options
+8. question: Ask the user a question with predefined options
    - CRITICAL: This is the ONLY way to ask the user questions. NEVER ask questions in plain text.
    - MANDATORY usage scenarios:
      * When you need user to pick between choices
@@ -66,7 +88,8 @@ USER INTERACTION:
 
 TOOL USAGE GUIDELINES:
 
-- Use grep to find files by pattern, or to find files AND search their content
+- Use glob to find files by pattern (fast file discovery)
+- Use grep to search for text content within files
 - Use edit for small changes to avoid rewriting entire files
 - Always use read before modifying files to understand the current state
 - When writing files, preserve existing code structure and style
@@ -79,7 +102,7 @@ ERRORS:
 
 WORKFLOW BEST PRACTICES:
 
-1. Discover: Use grep and list to find relevant files
+1. Discover: Use glob, grep, and list to find relevant files
 2. Understand: Use read to examine the current state
 3. Plan: Think through modifications before acting
 4. Execute: Use edit for small changes, write for new/complete rewrites

@@ -104,7 +104,8 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      return command ? `${displayName} (${command})` : displayName;
+      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
+      return cleanCommand ? `${displayName} (${cleanCommand})` : displayName;
     }
     default:
       return displayName;
@@ -128,7 +129,8 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      return { name: displayName, info: command || null };
+      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
+      return { name: displayName, info: cleanCommand || null };
     }
     default:
       return { name: displayName, info: null };
@@ -231,10 +233,28 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
 
     case 'write': {
       const append = args.append === true;
-      return append ? ['Appended'] : ['Done'];
+      if (append) return ['Appended'];
+
+      if (result && typeof result === 'object') {
+        const obj = result as Record<string, unknown>;
+        const diff = obj.diff;
+        if (Array.isArray(diff) && diff.length > 0) {
+          return diff as string[];
+        }
+      }
+
+      return ['Done'];
     }
 
     case 'edit': {
+      if (result && typeof result === 'object') {
+        const obj = result as Record<string, unknown>;
+        const diff = obj.diff;
+        if (Array.isArray(diff) && diff.length > 0) {
+          return diff as string[];
+        }
+      }
+
       return ['Edited'];
     }
 

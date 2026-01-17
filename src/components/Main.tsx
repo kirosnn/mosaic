@@ -3,11 +3,12 @@ import { useKeyboard } from "@opentui/react";
 import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage } from '../utils/toolFormatting';
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
+import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
@@ -61,6 +62,27 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
+  }, []);
+
+  useEffect(() => {
+    return subscribeApprovalAccepted((accepted) => {
+      const { name: toolDisplayName, info: toolInfo } = parseToolHeader(accepted.toolName, accepted.args);
+      const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+
+      setMessages((prev: Message[]) => {
+        const newMessages = [...prev];
+        newMessages.push({
+          id: createId(),
+          role: "tool",
+          content: runningContent,
+          toolName: accepted.toolName,
+          success: true,
+          isRunning: true,
+          runningStartTime: Date.now()
+        });
+        return newMessages;
+      });
+    });
   }, []);
 
   useEffect(() => {
@@ -245,7 +267,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               .map((m) => ({ role: m.role, content: m.content }));
             let assistantChunk = '';
             let thinkingChunk = '';
-            const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+            const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
             let assistantMessageId: string | null = null;
             let streamHadError = false;
 
@@ -301,13 +323,43 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               } else if (event.type === 'step-start') {
                 stepCount++;
               } else if (event.type === 'tool-call-end') {
-                pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
                 totalChars += JSON.stringify(event.args).length;
                 setCurrentTokens(estimateTokens());
+
+                const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
+                let runningMessageId: string | undefined;
+
+                if (!needsApproval) {
+                  runningMessageId = createId();
+                  const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
+                  const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+
+                  setMessages((prev: Message[]) => {
+                    const newMessages = [...prev];
+                    newMessages.push({
+                      id: runningMessageId!,
+                      role: "tool",
+                      content: runningContent,
+                      toolName: event.toolName,
+                      success: true,
+                      isRunning: true,
+                      runningStartTime: Date.now()
+                    });
+                    return newMessages;
+                  });
+                }
+
+                pendingToolCalls.set(event.toolCallId, {
+                  toolName: event.toolName,
+                  args: event.args,
+                  messageId: runningMessageId
+                });
+
               } else if (event.type === 'tool-result') {
                 const pending = pendingToolCalls.get(event.toolCallId);
                 const toolName = pending?.toolName ?? event.toolName;
                 const toolArgs = pending?.args ?? {};
+                const runningMessageId = pending?.messageId;
                 pendingToolCalls.delete(event.toolCallId);
                 const { content: toolContent, success } = formatToolMessage(
                   toolName,
@@ -339,6 +391,19 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
                 setMessages((prev: Message[]) => {
                   const newMessages = [...prev];
+                  if (runningMessageId) {
+                    const runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
+                    if (runningIndex !== -1) {
+                      newMessages[runningIndex] = {
+                        ...newMessages[runningIndex]!,
+                        content: toolContent,
+                        success,
+                        isRunning: false,
+                        runningStartTime: undefined
+                      };
+                      return newMessages;
+                    }
+                  }
                   newMessages.push({
                     id: createId(),
                     role: "tool",
@@ -574,7 +639,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({ role: m.role, content: m.content }));
       let assistantChunk = '';
-      const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+      const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
       let assistantMessageId: string | null = null;
       let streamHadError = false;
 
@@ -606,9 +671,15 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         } else if (event.type === 'step-start') {
           stepCount++;
         } else if (event.type === 'tool-call-end') {
-          pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
           totalChars += JSON.stringify(event.args).length;
           setCurrentTokens(estimateTokens());
+
+          pendingToolCalls.set(event.toolCallId, {
+            toolName: event.toolName,
+            args: event.args,
+            messageId: undefined
+          });
+
         } else if (event.type === 'tool-result') {
           const pending = pendingToolCalls.get(event.toolCallId);
           const toolName = pending?.toolName ?? event.toolName;
@@ -644,6 +715,19 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
+            const runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+
+            if (runningIndex !== -1) {
+              newMessages[runningIndex] = {
+                ...newMessages[runningIndex]!,
+                content: toolContent,
+                success,
+                isRunning: false,
+                runningStartTime: undefined
+              };
+              return newMessages;
+            }
+
             newMessages.push({
               id: createId(),
               role: "tool",

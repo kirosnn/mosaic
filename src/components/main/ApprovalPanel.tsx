@@ -12,14 +12,30 @@ interface ApprovalPanelProps {
 
 export function ApprovalPanel({ request, disabled = false, onRespond }: ApprovalPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const allOptions = ['Yes', 'No'];
 
   useEffect(() => {
     setSelectedIndex(0);
+    setScrollOffset(0);
   }, [request.id]);
+
+  const previewLines = request.preview.content.split('\n');
+  const maxVisiblePreviewLines = 15;
+  const canScroll = previewLines.length > maxVisiblePreviewLines;
 
   useKeyboard((key) => {
     if (disabled) return;
+
+    if ((key.name === 'up' || key.name === 'k') && key.shift && canScroll) {
+      setScrollOffset(prev => Math.max(0, prev - 1));
+      return;
+    }
+
+    if ((key.name === 'down' || key.name === 'j') && key.shift && canScroll) {
+      setScrollOffset(prev => Math.min(previewLines.length - maxVisiblePreviewLines, prev + 1));
+      return;
+    }
 
     if (key.name === 'up' || key.name === 'k') {
       setSelectedIndex(prev => (prev === 0 ? allOptions.length - 1 : prev - 1));
@@ -72,12 +88,48 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
         paddingRight={1}
         paddingBottom={1}
       >
-        {request.preview.content.split('\n').map((line, index) => (
-          <text key={`preview-line-${index}`} fg={"#ffffff"}>{line || ' '}</text>
-        ))}
+        {previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).map((line, displayIndex) => {
+          const index = scrollOffset + displayIndex;
+          const isDiffLine = line.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
+
+          if (isDiffLine) {
+            const [, prefix, lineNum, content] = isDiffLine;
+            const isAdded = prefix === '+';
+            const isRemoved = prefix === '-';
+
+            return (
+              <box key={`preview-line-${index}`} flexDirection="row">
+                <box backgroundColor={isAdded ? "#0d2b0d" : isRemoved ? "#2b0d0d" : "transparent"}>
+                  <text fg="#ffffff">
+                    {prefix}{lineNum?.padStart(4) || ''} |{' '}
+                  </text>
+                </box>
+                <box flexGrow={1} backgroundColor={isAdded ? "#1a3a1a" : isRemoved ? "#3a1a1a" : "transparent"}>
+                  <text fg="#ffffff">
+                    {content || ''}
+                  </text>
+                </box>
+              </box>
+            );
+          }
+
+          return (
+            <text key={`preview-line-${index}`} fg={"#ffffff"}>
+              {line || ' '}
+            </text>
+          );
+        })}
+        {canScroll && (
+          <text fg="#808080" attributes={TextAttributes.DIM}>
+            {scrollOffset > 0 ? '↑ ' : '  '}
+            Line {scrollOffset + 1}-{Math.min(scrollOffset + maxVisiblePreviewLines, previewLines.length)} of {previewLines.length}
+            {scrollOffset + maxVisiblePreviewLines < previewLines.length ? ' ↓' : ''}
+            {' (Shift+↑/↓ to scroll)'}
+          </text>
+        )}
       </box>
 
-      <box flexDirection="column" marginBottom={1}>
+      <box flexDirection="column">
         {allOptions.map((option, index) => {
           const selected = index === selectedIndex;
 
@@ -99,7 +151,10 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
           );
         })}
       </box>
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} />
+
+      <box flexDirection="row" paddingLeft={1} >
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="> Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} />
+      </box>
     </box>
   );
 }
