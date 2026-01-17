@@ -8,6 +8,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   edit: 'Edit',
   list: 'List',
   create_directory: 'Mkdir',
+  glob: 'Glob',
   grep: 'Grep',
   bash: 'Command',
   question: 'Question',
@@ -44,21 +45,16 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     case 'write':
     case 'edit':
     case 'list':
-    case 'create_directory': {
+    case 'create_directory':
+    case 'glob':
+    case 'grep':
+    case 'bash': {
       return null;
     }
 
     case 'question': {
       const prompt = typeof args.prompt === 'string' ? args.prompt : '';
       return prompt ? `prompt: "${prompt}"` : null;
-    }
-
-    case 'grep': {
-      return null;
-    }
-
-    case 'bash': {
-      return null;
     }
 
     default: {
@@ -98,6 +94,10 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     case 'list':
     case 'create_directory':
       return path ? `${displayName} (${path})` : displayName;
+    case 'glob': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      return pattern ? `${displayName} (${pattern})` : displayName;
+    }
     case 'grep': {
       const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
       return pattern ? `${displayName} (pattern: ${pattern})` : displayName;
@@ -123,6 +123,10 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
     case 'list':
     case 'create_directory':
       return { name: displayName, info: path || null };
+    case 'glob': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      return { name: displayName, info: pattern || null };
+    }
     case 'grep': {
       const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
       return { name: displayName, info: pattern ? `pattern: ${pattern}` : null };
@@ -277,6 +281,29 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
     case 'list': {
       const treeLines = formatListTree(result);
       return treeLines.length > 0 ? treeLines : ['(empty)'];
+    }
+
+    case 'glob': {
+      if (typeof result !== 'string') {
+        return ['Error: result is not a string'];
+      }
+
+      const trimmed = result.trim();
+      if (!trimmed) return ['No results (empty response)'];
+      if (trimmed === '[]') return ['No results'];
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!Array.isArray(parsed)) {
+          return [`Error: result is not an array (${typeof parsed})`];
+        }
+        if (parsed.length === 0) {
+          return ['No results'];
+        }
+        return parsed.map((file: string) => `  ${file}`);
+      } catch (error) {
+        return [`Parse error: ${error instanceof Error ? error.message : 'unknown'}`, `Raw result: ${result.substring(0, 200)}`];
+      }
     }
 
     case 'grep': {

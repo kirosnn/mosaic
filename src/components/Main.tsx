@@ -67,23 +67,26 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     return subscribeApprovalAccepted((accepted) => {
       const isBashTool = accepted.toolName === 'bash';
-      const { name: toolDisplayName, info: toolInfo } = parseToolHeader(accepted.toolName, accepted.args);
-      const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
-      setMessages((prev: Message[]) => {
-        const newMessages = [...prev];
-        newMessages.push({
-          id: createId(),
-          role: "tool",
-          content: runningContent,
-          toolName: accepted.toolName,
-          toolArgs: accepted.args,
-          success: true,
-          isRunning: isBashTool,
-          runningStartTime: isBashTool ? Date.now() : undefined
+      if (isBashTool) {
+        const { name: toolDisplayName, info: toolInfo } = parseToolHeader(accepted.toolName, accepted.args);
+        const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          newMessages.push({
+            id: createId(),
+            role: "tool",
+            content: runningContent,
+            toolName: accepted.toolName,
+            toolArgs: accepted.args,
+            success: true,
+            isRunning: true,
+            runningStartTime: Date.now()
+          });
+          return newMessages;
         });
-        return newMessages;
-      });
+      }
     });
   }, []);
 
