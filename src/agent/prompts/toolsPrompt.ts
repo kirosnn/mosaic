@@ -42,6 +42,7 @@ SEARCH & DISCOVERY:
 COMMAND EXECUTION:
 6. bash: Execute a shell command
    - Use this to run build tools, tests, git commands, or other CLI tools
+   - For commands that might take a long time or hang (e.g., in the CLI), always set an appropriate timeout
    - Parameters: command (string)
 
 USER INTERACTION:
