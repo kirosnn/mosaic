@@ -66,6 +66,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     return subscribeApprovalAccepted((accepted) => {
+      const isBashTool = accepted.toolName === 'bash';
       const { name: toolDisplayName, info: toolInfo } = parseToolHeader(accepted.toolName, accepted.args);
       const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
@@ -76,9 +77,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           role: "tool",
           content: runningContent,
           toolName: accepted.toolName,
+          toolArgs: accepted.args,
           success: true,
-          isRunning: true,
-          runningStartTime: Date.now()
+          isRunning: isBashTool,
+          runningStartTime: isBashTool ? Date.now() : undefined
         });
         return newMessages;
       });
@@ -327,6 +329,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 setCurrentTokens(estimateTokens());
 
                 const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
+                const isBashTool = event.toolName === 'bash';
                 let runningMessageId: string | undefined;
 
                 if (!needsApproval) {
@@ -341,9 +344,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                       role: "tool",
                       content: runningContent,
                       toolName: event.toolName,
+                      toolArgs: event.args,
                       success: true,
-                      isRunning: true,
-                      runningStartTime: Date.now()
+                      isRunning: isBashTool,
+                      runningStartTime: isBashTool ? Date.now() : undefined
                     });
                     return newMessages;
                   });
@@ -397,9 +401,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                       newMessages[runningIndex] = {
                         ...newMessages[runningIndex]!,
                         content: toolContent,
+                        toolArgs: args,
+                        toolResult: event.result,
                         success,
                         isRunning: false,
-                        runningStartTime: undefined
+                        runningStartTime: undefined,
+                        timestamp: Date.now()
                       };
                       return newMessages;
                     }
@@ -409,7 +416,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                     role: "tool",
                     content: toolContent,
                     toolName,
-                    success: success
+                    toolArgs: args,
+                    toolResult: event.result,
+                    success: success,
+                    timestamp: Date.now()
                   });
                   return newMessages;
                 });

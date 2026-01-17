@@ -2,7 +2,7 @@ import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import type { Command } from './types';
 
-const INIT_PROMPT = `Create a MOSAIC.md file in the root of the current workspace.
+const INIT_PROMPT = `Analyze the codebase and create or update the MOSAIC.md file in the root of the current workspace.
 
 IMPORTANT: MOSAIC.md is NOT a README. It's a specialized context file that helps AI agents (like me) understand this project better when working in this workspace in the future.
 
@@ -20,13 +20,31 @@ First, analyze the existing codebase:
 - Understand the project structure and organization
 - Look for existing documentation or comments
 
-Then create a comprehensive MOSAIC.md file that will serve as a contextual guide for AI agents working in this workspace. Make it clear, concise, and practical. Focus on what an AI agent needs to know to be effective in this codebase.
+**If MOSAIC.md already exists:**
+- Read the existing MOSAIC.md file first
+- Analyze if any sections need updates based on current codebase state
+- Add any missing architectural patterns, new tools, or important workflows discovered
+- Update outdated information (dependencies versions, file paths, deprecated patterns)
+- Improve clarity and add details where needed
+- Keep the existing structure and relevant information
+- DO NOT recreate the file from scratch - use the edit tool to make targeted improvements
+
+**If MOSAIC.md does not exist:**
+- Create a comprehensive MOSAIC.md file that will serve as a contextual guide for AI agents working in this workspace
+
+Even if the file seems complete, always look for potential improvements:
+- Are there new features or patterns in the code not documented?
+- Are all critical workflows explained?
+- Could any section be clearer or more detailed?
+- Are there undocumented conventions or best practices?
+
+Make it clear, concise, and practical. Focus on what an AI agent needs to know to be effective in this codebase.
 
 DO NOT create a .mosaic directory - it has already been created automatically.`;
 
 export const initCommand: Command = {
   name: 'init',
-  description: 'Initialize the current workspace with Mosaic configuration (creates MOSAIC.md and .mosaic folder)',
+  description: 'Initialize the current workspace with Mosaic configuration (creates or updates MOSAIC.md and .mosaic folder)',
   usage: '/init',
   aliases: ['i'],
   execute: async (): Promise<{ success: boolean; content: string; shouldAddToHistory?: boolean }> => {

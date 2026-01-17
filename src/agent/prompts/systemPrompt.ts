@@ -85,10 +85,21 @@ export function processSystemPrompt(prompt: string, includeTools: boolean = true
   if (existsSync(mosaicMdPath)) {
     try {
       const mosaicContent = readFileSync(mosaicMdPath, 'utf-8');
-      processed = `${processed}\n\nPROJECT CONTEXT:\nThe following is the MOSAIC.md file for this workspace. It contains important context about this project that will help you understand the codebase better:\n\n${mosaicContent}`;
+      processed = `${processed}\n\nPROJECT CONTEXT (MOSAIC.md):
+IMPORTANT: A MOSAIC.md file exists in this workspace. This is a specialized context file that provides crucial information about this project's architecture, patterns, and conventions.
+
+Read and understand this context BEFORE making changes to the codebase. This will help you:
+- Understand the project structure and architectural decisions
+- Follow the correct coding standards and conventions
+- Know where different types of files should be located
+- Use the right patterns and tools for this specific project
+
+${mosaicContent}`;
     } catch (error) {
       console.error('Failed to read MOSAIC.md:', error);
     }
+  } else {
+    processed = `${processed}\n\nNOTE: No MOSAIC.md file found in this workspace. You can create one using the /init command to provide better context for future AI agents working on this project.`;
   }
 
   if (includeTools) {
