@@ -280,7 +280,7 @@ export function ChatPage({
     const linesFromBottom = currentTotalLines % viewportHeight;
     const spaceNeeded = viewportHeight - linesFromBottom;
 
-    if (linesFromBottom > 0 && approvalPanelLines + 2 > spaceNeeded) {
+    if (linesFromBottom > 0) {
       allItems.push({
         key: `approval-${approvalRequest.id}-pagebreak`,
         type: 'line',
