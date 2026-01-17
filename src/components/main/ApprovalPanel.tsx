@@ -99,10 +99,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
           );
         })}
       </box>
-
-      <box flexDirection="row">
         <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} />
-      </box>
     </box>
   );
 }
