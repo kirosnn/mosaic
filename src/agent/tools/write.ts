@@ -16,6 +16,6 @@ export const write: CoreTool = tool({
         ? { error: result.error, userMessage: result.userMessage }
         : { error: result.error };
     }
-    return result.result;
+    return result;
   },
 });

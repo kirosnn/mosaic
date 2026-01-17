@@ -238,24 +238,36 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
       if (result && typeof result === 'object') {
         const obj = result as Record<string, unknown>;
         const diff = obj.diff;
-        if (Array.isArray(diff) && diff.length > 0) {
+        if (Array.isArray(diff)) {
+          if (diff.length === 0) return ['No changes'];
+          const maxLines = 10;
+          if (diff.length > maxLines) {
+            const visibleDiff = diff.slice(0, maxLines);
+            const remaining = diff.length - maxLines;
+            return [...visibleDiff, `(${remaining} more lines)`];
+          }
           return diff as string[];
         }
       }
 
-      return ['Done'];
+      const resultStr = typeof result === 'string' ? result : '';
+      const lineCount = getLineCount(resultStr);
+      return lineCount > 0 ? [`Wrote ${lineCount} lines`] : ['Done'];
     }
 
     case 'edit': {
       if (result && typeof result === 'object') {
         const obj = result as Record<string, unknown>;
         const diff = obj.diff;
-        if (Array.isArray(diff) && diff.length > 0) {
+        if (Array.isArray(diff)) {
+          if (diff.length === 0) return ['No changes'];
           return diff as string[];
         }
       }
 
-      return ['Edited'];
+      const resultStr = typeof result === 'string' ? result : '';
+      const lineCount = getLineCount(resultStr);
+      return lineCount > 0 ? [`Edited ${lineCount} lines`] : ['Edited'];
     }
 
     case 'create_directory': {
@@ -306,6 +318,11 @@ export function formatToolContent(
 
   const bodyLines = formatToolBodyLines(toolName, args, result);
   for (const line of bodyLines) lines.push(line);
+
+  const skipTruncate = toolName === 'write' || toolName === 'edit';
+  if (skipTruncate) {
+    return lines.join('\n');
+  }
 
   return truncateLines(lines, options?.maxLines).join('\n');
 }

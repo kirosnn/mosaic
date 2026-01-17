@@ -28,22 +28,11 @@ function renderToolText(content: string, paragraphIndex: number, indent: number)
   const isDiffLine = content.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
   if (isDiffLine) {
     const [, prefix, lineNum, contentPart] = isDiffLine;
-    const isAdded = prefix === '+';
-    const isRemoved = prefix === '-';
 
     return (
-      <box flexDirection="row">
-        <box backgroundColor={isAdded ? "#0d2b0d" : isRemoved ? "#2b0d0d" : "transparent"}>
-          <text fg="#ffffff">
-            {prefix}{lineNum?.padStart(4) || ''} |{' '}
-          </text>
-        </box>
-        <box flexGrow={1} backgroundColor={isAdded ? "#1a3a1a" : isRemoved ? "#3a1a1a" : "transparent"}>
-          <text fg="#ffffff">
-            {contentPart || ''}
-          </text>
-        </box>
-      </box>
+      <text fg="#ffffff">
+        {' '}{prefix}{lineNum?.padStart(4) || ''} | {contentPart || ''}
+      </text>
     );
   }
 
@@ -410,7 +399,14 @@ export function ChatPage({
           const showToolBackground = item.role === "tool" && item.isSpacer === false;
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;
           const isRunningTool = item.isRunning && item.runningStartTime;
-          const runningBackground = isRunningTool ? "#2a2a2a" : (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent");
+
+          const isDiffLine = item.content?.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
+          const diffLinePrefix = isDiffLine ? isDiffLine[1] : null;
+          const isAddedLine = diffLinePrefix === '+';
+          const isRemovedLine = diffLinePrefix === '-';
+          const diffBackground = isAddedLine ? "#1a3a1a" : isRemovedLine ? "#3a1a1a" : null;
+
+          const runningBackground = isRunningTool ? "#2a2a2a" : (diffBackground || (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"));
 
           return (
             <box
@@ -424,7 +420,7 @@ export function ChatPage({
                 <text fg="#ffca38">▎ </text>
               )}
               {showToolBar && !isRunningTool && (
-                <text fg={item.success ? "#38ff65" : "#ff3838"}>▎ </text>
+                <text fg={item.success ? "#1a3a1a" : "#3a1a1a"}>▎ </text>
               )}
               {showToolBar && isRunningTool && (
                 <text fg="#808080">▎ </text>

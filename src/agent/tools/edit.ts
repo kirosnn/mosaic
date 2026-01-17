@@ -18,6 +18,6 @@ export const edit: CoreTool = tool({
         ? { error: errorMessage, userMessage: result.userMessage }
         : { error: errorMessage };
     }
-    return result.result;
+    return result;
   },
 });
