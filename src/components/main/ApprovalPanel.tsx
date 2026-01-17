@@ -10,18 +10,6 @@ interface ApprovalPanelProps {
   onRespond: (approved: boolean, customResponse?: string) => void;
 }
 
-const TOOL_COLORS = {
-  write: '#4ade80',
-  edit: '#60a5fa',
-  bash: '#f87171',
-} as const;
-
-const TOOL_LABELS = {
-  write: 'Write File',
-  edit: 'Edit File',
-  bash: 'Execute Command',
-} as const;
-
 export function ApprovalPanel({ request, disabled = false, onRespond }: ApprovalPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const allOptions = ['Yes', 'No'];
@@ -60,46 +48,50 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
     onRespond(false, text);
   };
 
-  const toolColor = TOOL_COLORS[request.toolName];
-  const toolLabel = TOOL_LABELS[request.toolName];
+
+  const titleMatch = request.preview.title.match(/^(.+?)\s*\((.+)\)$/);
+  const toolName = titleMatch ? titleMatch[1] : request.preview.title;
+  const toolInfo = titleMatch ? titleMatch[2] : null;
 
   return (
     <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
       <box flexDirection="row" marginBottom={1}>
-        <text fg={toolColor} attributes={TextAttributes.BOLD}>
-          {request.preview.title}
-        </text>
+        <text fg={"#ffffff"}>{toolName}</text>
+        {toolInfo && (
+          <>
+            <text fg={"#ffffff"}> </text>
+            <text fg={"#ffffff"} attributes={TextAttributes.DIM}>({toolInfo})</text>
+          </>
+        )}
       </box>
 
       <box
         flexDirection="column"
         marginBottom={1}
-        backgroundColor="#0a0a0a"
         paddingLeft={1}
         paddingRight={1}
-        paddingTop={1}
         paddingBottom={1}
       >
-        <text attributes={TextAttributes.DIM}>{request.preview.content}</text>
+        {request.preview.content.split('\n').map((line, index) => (
+          <text key={`preview-line-${index}`} fg={"#ffffff"}>{line || ' '}</text>
+        ))}
       </box>
 
       <box flexDirection="column" marginBottom={1}>
         {allOptions.map((option, index) => {
           const selected = index === selectedIndex;
-          const isApprove = index === 0;
-          const color = isApprove ? '#4ade80' : '#f87171';
 
           return (
             <box
               key={`${request.id}-${index}`}
               flexDirection="row"
-              backgroundColor={selected ? '#2a2a2a' : 'transparent'}
+              backgroundColor='transparent'
               paddingLeft={1}
               paddingRight={1}
             >
               <text
-                fg={selected ? color : 'white'}
-                attributes={selected ? TextAttributes.BOLD : TextAttributes.NONE}
+                fg='white'
+                attributes={selected ? TextAttributes.NONE : TextAttributes.DIM}
               >
                 {selected ? '> ' : '  '}{option}
               </text>
@@ -109,7 +101,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
       </box>
 
       <box flexDirection="row">
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what to do instead and press Enter" focused={!disabled} />
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} />
       </box>
     </box>
   );

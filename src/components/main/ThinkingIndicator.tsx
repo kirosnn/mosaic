@@ -22,7 +22,7 @@ export function shouldShowThinkingIndicator({ isProcessing, hasQuestion }: Think
 }
 
 export function getBottomReservedLinesForInputBar(props: ThinkingIndicatorProps): number {
-    return getInputBarBaseLines() + (shouldShowThinkingIndicator(props) ? 2 : 0);
+    return getInputBarBaseLines() + (shouldShowThinkingIndicator(props) ? 2 : 0) + 2;
 }
 
 export function formatElapsedTime(ms: number | null | undefined, fromStartTime: boolean = true): string {

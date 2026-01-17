@@ -104,17 +104,41 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     case 'edit':
     case 'list':
     case 'create_directory':
-      return path ? `${displayName} \u001b[2m(${path})\u001b[0m` : displayName;
+      return path ? `${displayName} (${path})` : displayName;
     case 'grep': {
-      const grepPath = typeof args.path === 'string' ? args.path : '.';
-      return grepPath !== '.' ? `${displayName} \u001b[2m(${grepPath})\u001b[0m` : displayName;
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      return pattern ? `${displayName} (${pattern})` : displayName;
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      return command ? `${displayName} \u001b[2m(${command})\u001b[0m` : displayName;
+      return command ? `${displayName} (${command})` : displayName;
     }
     default:
       return displayName;
+  }
+}
+
+export function parseToolHeader(toolName: string, args: Record<string, unknown>): { name: string; info: string | null } {
+  const displayName = getToolDisplayName(toolName);
+  const path = typeof args.path === 'string' ? args.path : '';
+
+  switch (toolName) {
+    case 'read':
+    case 'write':
+    case 'edit':
+    case 'list':
+    case 'create_directory':
+      return { name: displayName, info: path || null };
+    case 'grep': {
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      return { name: displayName, info: pattern || null };
+    }
+    case 'bash': {
+      const command = typeof args.command === 'string' ? args.command : '';
+      return { name: displayName, info: command || null };
+    }
+    default:
+      return { name: displayName, info: null };
   }
 }
 
@@ -300,4 +324,8 @@ export function getToolWrapTarget(paragraph: string, paragraphIndex: number): st
 
 export function getToolWrapWidth(maxWidth: number, paragraphIndex: number): number {
   return Math.max(1, maxWidth - getToolParagraphIndent(paragraphIndex));
+}
+
+export function formatErrorMessage(errorType: 'API' | 'Mosaic' | 'Tool', errorMessage: string): string {
+  return `${errorType} Error\n${errorMessage}`;
 }

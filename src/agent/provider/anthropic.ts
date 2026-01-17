@@ -8,17 +8,25 @@ export class AnthropicProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
+    const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
     const anthropic = createAnthropic({
-      apiKey: config.apiKey,
+      apiKey: cleanApiKey,
     });
 
     const result = streamText({
-      model: anthropic(config.model),
+      model: anthropic(cleanModel),
       messages: messages,
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
+      experimental_providerMetadata: {
+        anthropic: {
+          thinkingBudgetTokens: 10000,
+        },
+      },
     });
 
     try {

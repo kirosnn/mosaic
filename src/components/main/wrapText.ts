@@ -1,5 +1,6 @@
 export const wrapText = (text: string, maxWidth: number): string[] => {
   if (!text) return [''];
+  if (maxWidth <= 0) return [text];
   if (text.length <= maxWidth) return [text];
 
   const lines: string[] = [];

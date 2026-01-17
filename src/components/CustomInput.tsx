@@ -15,9 +15,10 @@ interface CustomInputProps {
   password?: boolean
   focused?: boolean
   pasteRequestId?: number
+  disableHistory?: boolean
 }
 
-export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0 }: CustomInputProps) {
+export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false }: CustomInputProps) {
   const [value, setValue] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
@@ -168,6 +169,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         return
       }
 
+      if (disableHistory) return
+
       desiredCursorColRef.current = null
       if (inputHistory.length === 0) return
 
@@ -195,6 +198,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setCursorPosition(Math.min(value.length, newDisplayPos))
         return
       }
+
+      if (disableHistory) return
 
       desiredCursorColRef.current = null
       if (historyIndex === -1) return

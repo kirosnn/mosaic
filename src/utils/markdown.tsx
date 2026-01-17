@@ -83,11 +83,7 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
       return <text key={key} fg="white" attributes={TextAttributes.DIM}>{segment.content}</text>;
 
     case 'code':
-      return (
-        <box key={key} backgroundColor="#2a2a2a" paddingLeft={1} paddingRight={1}>
-          <text fg="white">{segment.content}</text>
-        </box>
-      );
+      return <text key={key} fg="#ffdd80">{` ${segment.content} `}</text>;
 
     case 'heading':
       return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;

@@ -8,17 +8,27 @@ export class GoogleProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
+    const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
     const google = createGoogleGenerativeAI({
-      apiKey: config.apiKey,
+      apiKey: cleanApiKey,
     });
 
     const result = streamText({
-      model: google(config.model),
+      model: google(cleanModel),
       messages: messages,
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
+      providerOptions: {
+        google: {
+          thinkingConfig: {
+            style: 'THINKING_STYLE_DETAILED',
+          },
+        },
+      },
     });
 
     try {

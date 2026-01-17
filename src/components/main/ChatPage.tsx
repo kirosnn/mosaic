@@ -11,6 +11,22 @@ import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, getInputAreaTotalLines, formatElapsedTime } from "./ThinkingIndicator";
 
+function renderToolText(content: string, paragraphIndex: number, indent: number) {
+  if (paragraphIndex === 0) {
+    const match = content.match(/^(.+?)\s*\((.+)\)$/);
+    if (match) {
+      const [, toolName, toolInfo] = match;
+      return (
+        <>
+          <text fg="white">{toolName}</text>
+          <text fg="white" attributes={TextAttributes.DIM}> ({toolInfo})</text>
+        </>
+      );
+    }
+  }
+  return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
+}
+
 interface ChatPageProps {
   messages: Message[];
   isProcessing: boolean;
@@ -61,6 +77,7 @@ export function ChatPage({
     role: "user" | "assistant" | "tool" | "slash";
     isFirst: boolean;
     indent?: number;
+    paragraphIndex?: number;
     segments?: import("../../utils/markdown").MarkdownSegment[];
     success?: boolean;
     isError?: boolean;
@@ -120,6 +137,7 @@ export function ChatPage({
             role: messageRole,
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
+            paragraphIndex: i,
             success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
             isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
             visualLines: 1
@@ -137,6 +155,7 @@ export function ChatPage({
               role: messageRole,
               isFirst: isFirstContent && i === 0 && j === 0,
               indent,
+              paragraphIndex: i,
               success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
               isSpacer: false,
               visualLines: 1
@@ -318,7 +337,9 @@ export function ChatPage({
               {showErrorBar && (
                 <text fg="#ff3838">▎ </text>
               )}
-              {item.role === "user" || item.role === "tool" || item.role === "slash" ? (
+              {item.role === "tool" ? (
+                renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0)
+              ) : item.role === "user" || item.role === "slash" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.segments && item.segments.length > 0 ? (
                 <>

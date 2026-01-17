@@ -88,13 +88,13 @@ async function ollamaVersion(ollamaClient: Ollama): Promise<unknown> {
   }
 
   const host = String((ollamaClient as any)?.host ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
-  const headers = (ollamaClient as any)?.headers ?? undefined;
+  const headers = (ollamaClient as any)?.headers ?? {};
 
   const res = await fetch(`${host}/api/version`, {
     headers,
   } as any);
   if (!res.ok) {
-    throw new Error(`Ollama version failed with status ${res.status}`);
+    throw new Error(`Ollama server not reachable (status ${res.status})`);
   }
   return res.json();
 }
@@ -118,8 +118,19 @@ async function ensureOllamaReachableCloud(ollamaClient: Ollama): Promise<void> {
 
 async function hasLocalModel(ollamaClient: Ollama, model: string): Promise<boolean> {
   try {
-    const list = await ollamaClient.list();
-    const models = ((list as any)?.models ?? []) as Array<Record<string, any>>;
+    const host = String((ollamaClient as any)?.host ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const headers = (ollamaClient as any)?.headers ?? {};
+
+    const res = await fetch(`${host}/api/tags`, {
+      headers,
+    } as any);
+
+    if (!res.ok) {
+      return false;
+    }
+
+    const data = await res.json();
+    const models = ((data as any)?.models ?? []) as Array<Record<string, any>>;
     return models.some((m) => m?.name === model || m?.model === model);
   } catch {
     return false;
@@ -131,22 +142,50 @@ async function ensureOllamaModelAvailable(ollamaClient: Ollama, model: string): 
   if (existing) return existing;
 
   const p = (async () => {
-    let alreadyPresent = false;
-
-    try {
-      const list = await ollamaClient.list();
-      const models = ((list as any)?.models ?? []) as Array<Record<string, any>>;
-      alreadyPresent = models.some((m) => m?.name === model || m?.model === model);
-    } catch {
-      alreadyPresent = false;
-    }
-
+    const alreadyPresent = await hasLocalModel(ollamaClient, model);
     if (alreadyPresent) return;
 
-    const pullResponse: any = await ollamaClient.pull({ model, stream: true } as any);
-    if (pullResponse && typeof pullResponse === 'object' && Symbol.asyncIterator in pullResponse) {
-      for await (const _ of pullResponse as AsyncGenerator<any>) {
-        // drain
+    const host = String((ollamaClient as any)?.host ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const headers = (ollamaClient as any)?.headers ?? {};
+
+    const res = await fetch(`${host}/api/pull`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        stream: true,
+      }),
+    } as any);
+
+    if (!res.ok) {
+      throw new Error(`Failed to pull model ${model} (status ${res.status})`);
+    }
+
+    if (res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(Boolean);
+
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if (data.error) {
+              throw new Error(data.error);
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
       }
     }
   })();
@@ -250,8 +289,6 @@ export async function checkAndStartOllama(): Promise<{ running: boolean; started
 
   try {
     await ensureOllamaServe();
-
-    // Wait and verify it's running
     await retry(() => ollamaVersion(ollamaClient), 6, 350);
     return { running: true, started: true };
   } catch (e) {
@@ -269,7 +306,8 @@ export class OllamaProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
-    const apiKey = config.apiKey;
+    const apiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
 
     if (options?.abortSignal?.aborted) {
       return;
@@ -278,9 +316,9 @@ export class OllamaProvider implements Provider {
     let ollamaClient: Ollama;
     let requestModel: string;
 
-    if (isCloudModel(config.model) && apiKey) {
+    if (isCloudModel(cleanModel) && apiKey) {
       ollamaClient = createCloudOllamaClient(apiKey);
-      requestModel = normalizeCloudModelName(config.model);
+      requestModel = normalizeCloudModelName(cleanModel);
       try {
         await ensureOllamaReachableCloud(ollamaClient);
       } catch (cloudError) {
@@ -294,18 +332,18 @@ export class OllamaProvider implements Provider {
       }
     } else {
       ollamaClient = createLocalOllamaClient(apiKey);
-      requestModel = config.model;
+      requestModel = cleanModel;
 
       try {
         await ensureOllamaReachableLocal(ollamaClient, apiKey);
 
-        const present = await hasLocalModel(ollamaClient, config.model);
+        const present = await hasLocalModel(ollamaClient, cleanModel);
         if (!present) {
-          await ensureOllamaModelAvailable(ollamaClient, config.model);
+          await ensureOllamaModelAvailable(ollamaClient, cleanModel);
         }
       } catch (localError) {
         if (apiKey) {
-          requestModel = normalizeCloudModelName(config.model);
+          requestModel = normalizeCloudModelName(cleanModel);
           ollamaClient = createCloudOllamaClient(apiKey);
 
           try {
@@ -320,7 +358,7 @@ export class OllamaProvider implements Provider {
             return;
           }
         } else {
-          const hint = isCloudModel(config.model)
+          const hint = isCloudModel(cleanModel)
             ? ' If this is a cloud model, run `ollama signin` then `ollama pull <model>` locally.'
             : '';
           yield {

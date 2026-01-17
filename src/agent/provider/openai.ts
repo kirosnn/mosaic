@@ -8,8 +8,11 @@ export class OpenAIProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
+    const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
     const openai = createOpenAI({
-      apiKey: config.apiKey,
+      apiKey: cleanApiKey,
     });
 
     type OpenAIEndpoint = 'responses' | 'chat' | 'completion';
@@ -17,11 +20,11 @@ export class OpenAIProvider implements Provider {
     const pickModel = (endpoint: OpenAIEndpoint) => {
       switch (endpoint) {
         case 'responses':
-          return openai.responses(config.model);
+          return openai.responses(cleanModel);
         case 'chat':
-          return openai.chat(config.model);
+          return openai.chat(cleanModel);
         case 'completion':
-          return openai.completion(config.model);
+          return openai.completion(cleanModel);
       }
     };
 
@@ -39,6 +42,7 @@ export class OpenAIProvider implements Provider {
         providerOptions: {
           openai: {
             strictJsonSchema,
+            reasoningEffort: 'medium',
           },
         },
       });

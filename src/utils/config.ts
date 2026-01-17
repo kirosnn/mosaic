@@ -207,8 +207,14 @@ export function getModelById(providerId: string, modelId: string): AIModel | und
 }
 
 export function modelRequiresApiKey(providerId: string, modelId: string): boolean {
+  const provider = getProviderById(providerId);
   const model = getModelById(providerId, modelId);
-  return model?.requiresApiKey === true;
+
+  if (model?.requiresApiKey !== undefined) {
+    return model.requiresApiKey === true;
+  }
+
+  return provider?.requiresApiKey === true;
 }
 
 export function addCustomProvider(provider: CustomProvider): void {

@@ -100,42 +100,42 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
   };
 
   const handleApiKeySubmit = (value: string) => {
-    setApiKey(value);
+    setApiKey(value.trim().replace(/[\r\n]+/g, ''));
     setStep('confirm');
   };
 
   const handleCustomNameSubmit = (value: string) => {
-    setCustomName(value);
+    setCustomName(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-description');
   };
 
   const handleCustomDescriptionSubmit = (value: string) => {
-    setCustomDescription(value);
+    setCustomDescription(value.trim().replace(/[\r\n]+/g, ' '));
     setStep('custom-baseurl');
   };
 
   const handleCustomBaseUrlSubmit = (value: string) => {
-    setCustomBaseUrl(value);
+    setCustomBaseUrl(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-apikey-required');
   };
 
   const handleCustomModelNameSubmit = (value: string) => {
-    setTempModelName(value);
+    setTempModelName(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-model-id');
   };
 
   const handleCustomModelIdSubmit = (value: string) => {
-    setTempModelId(value);
+    setTempModelId(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-model-description');
   };
 
   const handleCustomModelDescriptionSubmit = (value: string) => {
-    setTempModelDescription(value);
+    setTempModelDescription(value.trim().replace(/[\r\n]+/g, ' '));
 
     const newModel: AIModel = {
-      id: tempModelId,
-      name: tempModelName,
-      description: value
+      id: tempModelId.trim().replace(/[\r\n]+/g, ''),
+      name: tempModelName.trim().replace(/[\r\n]+/g, ''),
+      description: value.trim().replace(/[\r\n]+/g, ' ')
     };
     setCustomModels([...customModels, newModel]);
 
@@ -147,20 +147,20 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
   };
 
   const handleCustomModelNameExistingSubmit = (value: string) => {
-    setTempModelName(value);
+    setTempModelName(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-model-id-existing');
   };
 
   const handleCustomModelIdExistingSubmit = (value: string) => {
-    setTempModelId(value);
+    setTempModelId(value.trim().replace(/[\r\n]+/g, ''));
     setStep('custom-model-description-existing');
   };
 
   const handleCustomModelDescriptionExistingSubmit = (value: string) => {
     const newModel: AIModel = {
-      id: tempModelId,
-      name: tempModelName,
-      description: value
+      id: tempModelId.trim().replace(/[\r\n]+/g, ''),
+      name: tempModelName.trim().replace(/[\r\n]+/g, ''),
+      description: value.trim().replace(/[\r\n]+/g, ' ')
     };
 
     addCustomModel(selectedProvider, newModel);
@@ -173,12 +173,13 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
   };
 
   const finalizeCustomProvider = () => {
-    const customProviderId = customName.toLowerCase().replace(/\s+/g, '-');
+    const cleanedName = customName.trim().replace(/[\r\n]+/g, '');
+    const customProviderId = cleanedName.toLowerCase().replace(/\s+/g, '-');
     const newProvider: CustomProvider = {
       id: customProviderId,
-      name: customName,
-      description: customDescription,
-      baseUrl: customBaseUrl,
+      name: cleanedName,
+      description: customDescription.trim().replace(/[\r\n]+/g, ' '),
+      baseUrl: customBaseUrl.trim().replace(/[\r\n]+/g, ''),
       requiresApiKey: customRequiresApiKey,
       models: customModels,
       isCustom: true

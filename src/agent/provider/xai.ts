@@ -8,17 +8,25 @@ export class XaiProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
+    const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
     const xai = createXai({
-      apiKey: config.apiKey,
+      apiKey: cleanApiKey,
     });
 
     const result = streamText({
-      model: xai(config.model),
+      model: xai(cleanModel),
       messages: messages,
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
+      providerOptions: {
+        xai: {
+          reasoningEffort: 'high',
+        },
+      },
     });
 
     try {

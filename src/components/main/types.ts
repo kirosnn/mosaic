@@ -36,6 +36,7 @@ export interface Message {
   isError?: boolean;
   responseDuration?: number;
   blendWord?: string;
+  thinkingContent?: string;
 }
 
 export interface MainProps {

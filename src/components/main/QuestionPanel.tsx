@@ -57,7 +57,9 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
       </box>
 
       <box flexDirection="column" marginBottom={1}>
-        <text attributes={TextAttributes.BOLD}>{request.prompt}</text>
+        {request.prompt.split('\n').map((line, index) => (
+          <text key={`prompt-line-${index}`} attributes={TextAttributes.BOLD}>{line || ' '}</text>
+        ))}
       </box>
 
       <box flexDirection="column" marginBottom={1}>
@@ -76,7 +78,7 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
       </box>
 
       <box flexDirection="row">
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} />
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} disableHistory={true} />
       </box>
     </box>
   );

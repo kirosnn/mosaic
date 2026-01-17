@@ -20,7 +20,7 @@ export function CommandModal() {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor="#0a0a0a">
+    <box position="absolute" top={0} left={0} right={0} bottom={0}>
       <box width="100%" height="100%" justifyContent="center" alignItems="center">
         <box flexDirection="column" width="80%" height="80%" backgroundColor="#1a1a1a" padding={2}>
           <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">

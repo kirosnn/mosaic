@@ -8,17 +8,20 @@ export class MistralProvider implements Provider {
     config: ProviderConfig,
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
+    const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
+    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
     const mistral = createMistral({
-      apiKey: config.apiKey,
+      apiKey: cleanApiKey,
     });
 
     const result = streamText({
-      model: mistral(config.model),
+      model: mistral(cleanModel),
       messages: messages,
       system: config.systemPrompt,
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
-      abortSignal: options?.abortSignal,
+      abortSignal: options?.abortSignal
     });
 
     try {
@@ -95,10 +98,10 @@ export class MistralProvider implements Provider {
                   : typeof err === 'string'
                     ? err
                     : 'Unknown error';
-            yield {
-              type: 'error',
-              error: msg,
-            };
+              yield {
+                type: 'error',
+                error: msg,
+              };
             }
             break;
         }

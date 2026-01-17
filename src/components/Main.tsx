@@ -3,7 +3,7 @@ import { useKeyboard } from "@opentui/react";
 import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage } from '../utils/toolFormatting';
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
@@ -40,18 +40,24 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const handleResize = () => {
       const newWidth = process.stdout.columns || 80;
       const newHeight = process.stdout.rows || 24;
+      const oldWidth = terminalWidth;
+      const oldHeight = terminalHeight;
+
       setTerminalWidth(newWidth);
       setTerminalHeight(newHeight);
-      setScrollOffset(prev => {
-        if (shouldAutoScroll.current) return 0;
-        return prev;
-      });
+
+      if (shouldAutoScroll.current) {
+        setScrollOffset(0);
+      } else if (oldHeight !== newHeight) {
+        const heightDiff = newHeight - oldHeight;
+        setScrollOffset(prev => Math.max(0, prev - heightDiff));
+      }
     };
     process.stdout.on('resize', handleResize);
     return () => {
       process.stdout.off('resize', handleResize);
     };
-  }, []);
+  }, [terminalWidth, terminalHeight]);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -71,6 +77,13 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     questionRequestRef.current = questionRequest;
+  }, [questionRequest]);
+
+  useEffect(() => {
+    if (questionRequest) {
+      shouldAutoScroll.current = true;
+      setScrollOffset(0);
+    }
   }, [questionRequest]);
 
   useEffect(() => {
@@ -189,7 +202,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 id: createId(),
                 role: "tool",
                 success: false,
-                content: "Generation aborted. \n↪ What should Mosaic do instead?"
+                content: "Request interrupted by user. \n↪ What should Mosaic do instead?"
               });
               return newMessages;
             });
@@ -223,12 +236,37 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
               .map((m) => ({ role: m.role, content: m.content }));
             let assistantChunk = '';
+            let thinkingChunk = '';
             const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
             let assistantMessageId: string | null = null;
             let streamHadError = false;
 
             for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
-              if (event.type === 'text-delta') {
+              if (event.type === 'reasoning-delta') {
+                thinkingChunk += event.content;
+                totalChars += event.content.length;
+                setCurrentTokens(estimateTokens());
+
+                if (assistantMessageId === null) {
+                  assistantMessageId = createId();
+                }
+
+                const currentMessageId = assistantMessageId;
+                setMessages((prev: Message[]) => {
+                  const newMessages = [...prev];
+                  const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+
+                  if (messageIndex === -1) {
+                    newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
+                  } else {
+                    newMessages[messageIndex] = {
+                      ...newMessages[messageIndex]!,
+                      thinkingContent: thinkingChunk
+                    };
+                  }
+                  return newMessages;
+                });
+              } else if (event.type === 'text-delta') {
                 assistantChunk += event.content;
                 totalChars += event.content.length;
                 setCurrentTokens(estimateTokens());
@@ -243,7 +281,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
 
                   if (messageIndex === -1) {
-                    newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk });
+                    newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk, thinkingContent: thinkingChunk });
                   } else {
                     newMessages[messageIndex] = {
                       ...newMessages[messageIndex]!,
@@ -317,7 +355,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   });
                 }
 
-                const errorContent = `API error: ${event.error}`;
+                const errorContent = formatErrorMessage('API', event.error);
                 conversationSteps.push({
                   type: 'assistant',
                   content: errorContent,
@@ -382,20 +420,21 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               return;
             }
             const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+            const errorContent = formatErrorMessage('Mosaic', errorMessage);
             setMessages((prev: Message[]) => {
               const newMessages = [...prev];
               if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
                 newMessages[newMessages.length - 1] = {
                   id: newMessages[newMessages.length - 1]!.id,
                   role: "assistant",
-                  content: `Mosaic error: ${errorMessage}`,
+                  content: errorContent,
                   isError: true
                 };
               } else {
                 newMessages.push({
                   id: createId(),
                   role: "assistant",
-                  content: `Mosaic error: ${errorMessage}`,
+                  content: errorContent,
                   isError: true
                 });
               }
@@ -611,7 +650,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             });
           }
 
-          const errorContent = `API error: ${event.error}`;
+          const errorContent = formatErrorMessage('API', event.error);
           conversationSteps.push({
             type: 'assistant',
             content: errorContent,
@@ -676,20 +715,21 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         return;
       }
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+      const errorContent = formatErrorMessage('Mosaic', errorMessage);
       setMessages((prev: Message[]) => {
         const newMessages = [...prev];
         if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
           newMessages[newMessages.length - 1] = {
             id: newMessages[newMessages.length - 1]!.id,
             role: "assistant",
-            content: `Mosaic error: ${errorMessage}`,
+            content: errorContent,
             isError: true
           };
         } else {
           newMessages.push({
             id: createId(),
             role: "assistant",
-            content: `Mosaic error: ${errorMessage}`,
+            content: errorContent,
             isError: true
           });
         }
