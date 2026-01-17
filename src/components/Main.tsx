@@ -185,8 +185,16 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const conversationSteps: ConversationStep[] = [];
           let totalTokens = { prompt: 0, completion: 0, total: 0 };
           let stepCount = 0;
-          const historyChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-          let totalChars = historyChars + result.content.length;
+          let totalChars = 0;
+          for (const m of messages) {
+            if (m.role === 'assistant') {
+              totalChars += m.content.length;
+              if (m.thinkingContent) totalChars += m.thinkingContent.length;
+            } else if (m.role === 'tool') {
+              totalChars += m.content.length;
+            }
+          }
+
           const estimateTokens = () => Math.ceil(totalChars / 4);
           setCurrentTokens(estimateTokens());
           const config = readConfig();
@@ -294,6 +302,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 stepCount++;
               } else if (event.type === 'tool-call-end') {
                 pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+                totalChars += JSON.stringify(event.args).length;
+                setCurrentTokens(estimateTokens());
               } else if (event.type === 'tool-result') {
                 const pending = pendingToolCalls.get(event.toolCallId);
                 const toolName = pending?.toolName ?? event.toolName;
@@ -505,8 +515,16 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const conversationSteps: ConversationStep[] = [];
     let totalTokens = { prompt: 0, completion: 0, total: 0 };
     let stepCount = 0;
-    const historyChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    let totalChars = historyChars + composedContent.length;
+    let totalChars = 0;
+    for (const m of messages) {
+      if (m.role === 'assistant') {
+        totalChars += m.content.length;
+        if (m.thinkingContent) totalChars += m.thinkingContent.length;
+      } else if (m.role === 'tool') {
+        totalChars += m.content.length;
+      }
+    }
+
     const estimateTokens = () => Math.ceil(totalChars / 4);
     setCurrentTokens(estimateTokens());
     const config = readConfig();
@@ -589,6 +607,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           stepCount++;
         } else if (event.type === 'tool-call-end') {
           pendingToolCalls.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+          totalChars += JSON.stringify(event.args).length;
+          setCurrentTokens(estimateTokens());
         } else if (event.type === 'tool-result') {
           const pending = pendingToolCalls.get(event.toolCallId);
           const toolName = pending?.toolName ?? event.toolName;

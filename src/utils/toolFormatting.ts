@@ -54,14 +54,7 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     }
 
     case 'grep': {
-      const parts: string[] = [];
-      const filePattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
-      if (filePattern) parts.push(`pattern: ${filePattern}`);
-
-      const query = typeof args.query === 'string' ? args.query : '';
-      if (query) parts.push(`query: "${query}"`);
-
-      return parts.length > 0 ? parts.join(', ') : null;
+      return null;
     }
 
     case 'bash': {
@@ -106,8 +99,8 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     case 'create_directory':
       return path ? `${displayName} (${path})` : displayName;
     case 'grep': {
-      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
-      return pattern ? `${displayName} (${pattern})` : displayName;
+      const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
+      return pattern ? `${displayName} (pattern: ${pattern})` : displayName;
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
@@ -130,8 +123,8 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
     case 'create_directory':
       return { name: displayName, info: path || null };
     case 'grep': {
-      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
-      return { name: displayName, info: pattern || null };
+      const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
+      return { name: displayName, info: pattern ? `pattern: ${pattern}` : null };
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
