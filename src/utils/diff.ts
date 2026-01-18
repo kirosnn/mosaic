@@ -110,3 +110,92 @@ export function formatDiffForDisplay(diff: DiffResult, maxLines = 0): string[] {
 
   return result;
 }
+
+export function formatWriteToolResult(result: unknown, isAppend: boolean): string[] {
+  if (isAppend) return ['Appended'];
+
+  if (result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    const diff = obj.diff;
+    if (Array.isArray(diff)) {
+      if (diff.length === 0) return ['No changes'];
+      const maxLines = 10;
+      if (diff.length > maxLines) {
+        const visibleDiff = diff.slice(0, maxLines);
+        const remaining = diff.length - maxLines;
+        return [...visibleDiff, `(${remaining} more lines)`];
+      }
+      return diff as string[];
+    }
+  }
+
+  const resultStr = typeof result === 'string' ? result : '';
+  const lineCount = resultStr ? resultStr.split('\n').length : 0;
+  return lineCount > 0 ? [`Wrote ${lineCount} lines`] : ['Done'];
+}
+
+export function formatEditToolResult(result: unknown): string[] {
+  if (result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    const diff = obj.diff;
+    if (Array.isArray(diff)) {
+      if (diff.length === 0) return ['No changes'];
+      return diff as string[];
+    }
+  }
+
+  const resultStr = typeof result === 'string' ? result : '';
+  const lineCount = resultStr ? resultStr.split('\n').length : 0;
+  return lineCount > 0 ? [`Edited ${lineCount} lines`] : ['Edited'];
+}
+
+export interface ParsedDiffLine {
+  isDiffLine: boolean;
+  prefix?: '+' | '-';
+  lineNumber?: string;
+  content?: string;
+  isAdded: boolean;
+  isRemoved: boolean;
+}
+
+export function parseDiffLine(line: string): ParsedDiffLine {
+  const match = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
+
+  if (!match) {
+    return {
+      isDiffLine: false,
+      isAdded: false,
+      isRemoved: false,
+    };
+  }
+
+  const [, prefix, lineNum, content] = match;
+  const isAdded = prefix === '+';
+  const isRemoved = prefix === '-';
+
+  return {
+    isDiffLine: true,
+    prefix: prefix as '+' | '-',
+    lineNumber: lineNum,
+    content,
+    isAdded,
+    isRemoved,
+  };
+}
+
+export function getDiffLineColors(parsed: ParsedDiffLine): {
+  labelBackground: string;
+  contentBackground: string;
+} {
+  if (!parsed.isDiffLine) {
+    return {
+      labelBackground: 'transparent',
+      contentBackground: 'transparent',
+    };
+  }
+
+  return {
+    labelBackground: parsed.isAdded ? '#0d2b0d' : parsed.isRemoved ? '#2b0d0d' : 'transparent',
+    contentBackground: parsed.isAdded ? '#1a3a1a' : parsed.isRemoved ? '#3a1a1a' : 'transparent',
+  };
+}

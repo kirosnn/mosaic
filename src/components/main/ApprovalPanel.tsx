@@ -3,6 +3,7 @@ import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { CustomInput } from '../CustomInput';
 import type { ApprovalRequest } from '../../utils/approvalBridge';
+import { renderDiffLine } from '../../utils/diffRendering';
 
 interface ApprovalPanelProps {
   request: ApprovalRequest;
@@ -90,34 +91,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
       >
         {previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).map((line, displayIndex) => {
           const index = scrollOffset + displayIndex;
-          const isDiffLine = line.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
-
-          if (isDiffLine) {
-            const [, prefix, lineNum, content] = isDiffLine;
-            const isAdded = prefix === '+';
-            const isRemoved = prefix === '-';
-
-            return (
-              <box key={`preview-line-${index}`} flexDirection="row">
-                <box backgroundColor={isAdded ? "#0d2b0d" : isRemoved ? "#2b0d0d" : "transparent"}>
-                  <text fg="#ffffff">
-                    {prefix}{lineNum?.padStart(4) || ''} |{' '}
-                  </text>
-                </box>
-                <box flexGrow={1} backgroundColor={isAdded ? "#1a3a1a" : isRemoved ? "#3a1a1a" : "transparent"}>
-                  <text fg="#ffffff">
-                    {content || ''}
-                  </text>
-                </box>
-              </box>
-            );
-          }
-
-          return (
-            <text key={`preview-line-${index}`} fg={"#ffffff"}>
-              {line || ' '}
-            </text>
-          );
+          return renderDiffLine(line, `preview-line-${index}`);
         })}
         {canScroll && (
           <text fg="#808080" attributes={TextAttributes.DIM}>

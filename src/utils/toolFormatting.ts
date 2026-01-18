@@ -1,3 +1,5 @@
+import { formatWriteToolResult, formatEditToolResult } from './diff';
+
 const TOOL_BODY_INDENT = 2;
 
 export const DEFAULT_MAX_TOOL_LINES = 10;
@@ -237,41 +239,11 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
 
     case 'write': {
       const append = args.append === true;
-      if (append) return ['Appended'];
-
-      if (result && typeof result === 'object') {
-        const obj = result as Record<string, unknown>;
-        const diff = obj.diff;
-        if (Array.isArray(diff)) {
-          if (diff.length === 0) return ['No changes'];
-          const maxLines = 10;
-          if (diff.length > maxLines) {
-            const visibleDiff = diff.slice(0, maxLines);
-            const remaining = diff.length - maxLines;
-            return [...visibleDiff, `(${remaining} more lines)`];
-          }
-          return diff as string[];
-        }
-      }
-
-      const resultStr = typeof result === 'string' ? result : '';
-      const lineCount = getLineCount(resultStr);
-      return lineCount > 0 ? [`Wrote ${lineCount} lines`] : ['Done'];
+      return formatWriteToolResult(result, append);
     }
 
     case 'edit': {
-      if (result && typeof result === 'object') {
-        const obj = result as Record<string, unknown>;
-        const diff = obj.diff;
-        if (Array.isArray(diff)) {
-          if (diff.length === 0) return ['No changes'];
-          return diff as string[];
-        }
-      }
-
-      const resultStr = typeof result === 'string' ? result : '';
-      const lineCount = getLineCount(resultStr);
-      return lineCount > 0 ? [`Edited ${lineCount} lines`] : ['Edited'];
+      return formatEditToolResult(result);
     }
 
     case 'create_directory': {

@@ -29,7 +29,7 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
   const shortcuts = activeTab === 0 ? shortcutsGeneral : shortcutsSetup;
 
   return (
-    <box position="absolute" top={0} left={0} right={0} bottom={0}>
+    <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor={"#0c0c0c"}>
       <box width="100%" height="100%" justifyContent="center" alignItems="center">
         <box flexDirection="column" width="80%" height="80%" backgroundColor="#1a1a1a" padding={2}>
           <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">

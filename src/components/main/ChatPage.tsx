@@ -10,6 +10,7 @@ import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, getInputAreaTotalLines, formatElapsedTime } from "./ThinkingIndicator";
+import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 
 function renderToolText(content: string, paragraphIndex: number, indent: number) {
   if (paragraphIndex === 0) {
@@ -25,15 +26,9 @@ function renderToolText(content: string, paragraphIndex: number, indent: number)
     }
   }
 
-  const isDiffLine = content.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
-  if (isDiffLine) {
-    const [, prefix, lineNum, contentPart] = isDiffLine;
-
-    return (
-      <text fg="#ffffff">
-        {' '}{prefix}{lineNum?.padStart(4) || ''} | {contentPart || ''}
-      </text>
-    );
+  const diffLineRender = renderInlineDiffLine(content);
+  if (diffLineRender) {
+    return diffLineRender;
   }
 
   return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
@@ -400,11 +395,7 @@ export function ChatPage({
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;
           const isRunningTool = item.isRunning && item.runningStartTime;
 
-          const isDiffLine = item.content?.match(/^([+-])\s*(\d+)\s*\|\s*(.*)$/);
-          const diffLinePrefix = isDiffLine ? isDiffLine[1] : null;
-          const isAddedLine = diffLinePrefix === '+';
-          const isRemovedLine = diffLinePrefix === '-';
-          const diffBackground = isAddedLine ? "#1a3a1a" : isRemovedLine ? "#3a1a1a" : null;
+          const diffBackground = getDiffLineBackground(item.content || '');
 
           const runningBackground = isRunningTool ? "#2a2a2a" : (diffBackground || (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"));
 
