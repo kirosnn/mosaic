@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
+import { captureFileSnapshot } from '../../utils/undoRedo';
 
 const execAsync = promisify(exec);
 
@@ -396,6 +397,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         }
 
+        captureFileSnapshot(path);
+
         await mkdir(dirname(fullPath), { recursive: true });
 
         let oldContent = '';
@@ -629,6 +632,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             error: 'Access denied: path is outside workspace'
           };
         }
+
+        captureFileSnapshot(path);
 
         await mkdir(dirname(fullPath), { recursive: true });
 

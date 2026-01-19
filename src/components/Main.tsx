@@ -9,6 +9,8 @@ import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
 import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
+import { subscribeUndoRedo } from "../utils/undoRedoBridge";
+import { initializeSession, saveState } from "../utils/undoRedo";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
@@ -35,6 +37,15 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     initializeCommands();
+    initializeSession();
+  }, []);
+
+  useEffect(() => {
+    return subscribeUndoRedo((state, action) => {
+      if (state) {
+        setMessages(state.messages);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -398,28 +409,34 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
                 setMessages((prev: Message[]) => {
                   const newMessages = [...prev];
+
+                  let runningIndex = -1;
                   if (runningMessageId) {
-                    const runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-                    if (runningIndex !== -1) {
-                      newMessages[runningIndex] = {
-                        ...newMessages[runningIndex]!,
-                        content: toolContent,
-                        toolArgs: args,
-                        toolResult: event.result,
-                        success,
-                        isRunning: false,
-                        runningStartTime: undefined,
-                        timestamp: Date.now()
-                      };
-                      return newMessages;
-                    }
+                    runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
+                  } else if (toolName === 'bash') {
+                    runningIndex = newMessages.findIndex(m => m.toolName === 'bash' && m.isRunning === true);
                   }
+
+                  if (runningIndex !== -1) {
+                    newMessages[runningIndex] = {
+                      ...newMessages[runningIndex]!,
+                      content: toolContent,
+                      toolArgs: toolArgs,
+                      toolResult: event.result,
+                      success,
+                      isRunning: false,
+                      runningStartTime: undefined,
+                      timestamp: Date.now()
+                    };
+                    return newMessages;
+                  }
+
                   newMessages.push({
                     id: createId(),
                     role: "tool",
                     content: toolContent,
                     toolName,
-                    toolArgs: args,
+                    toolArgs: toolArgs,
                     toolResult: event.result,
                     success: success,
                     timestamp: Date.now()
@@ -546,6 +563,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 return newMessages;
               });
             }
+            setMessages((currentMessages) => {
+              saveState(currentMessages);
+              return currentMessages;
+            });
             setIsProcessing(false);
             setProcessingStartTime(null);
           }
@@ -870,6 +891,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           return newMessages;
         });
       }
+      setMessages((currentMessages) => {
+        saveState(currentMessages);
+        return currentMessages;
+      });
       setIsProcessing(false);
       setProcessingStartTime(null);
     }

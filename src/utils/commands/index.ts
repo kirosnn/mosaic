@@ -3,6 +3,9 @@ import { commandRegistry } from './registry';
 import { echoCommand } from './echo';
 import { helpCommand } from './help';
 import { initCommand } from './init';
+import { undoCommand } from './undo';
+import { redoCommand } from './redo';
+import { sessionsCommand } from './sessions';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -57,4 +60,7 @@ export function initializeCommands(): void {
   commandRegistry.register(echoCommand);
   commandRegistry.register(helpCommand);
   commandRegistry.register(initCommand);
+  commandRegistry.register(undoCommand);
+  commandRegistry.register(redoCommand);
+  commandRegistry.register(sessionsCommand);
 }

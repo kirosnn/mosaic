@@ -23,6 +23,7 @@ export const THINKING_WORDS = [
     "Working",
     "Brewing",
     "Weaving",
+    "Revolutionizing"
 ];
 
 export interface Message {
@@ -32,6 +33,8 @@ export interface Message {
   displayContent?: string;
   content: string;
   toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: unknown;
   success?: boolean;
   isError?: boolean;
   responseDuration?: number;
@@ -39,6 +42,7 @@ export interface Message {
   thinkingContent?: string;
   isRunning?: boolean;
   runningStartTime?: number;
+  timestamp?: number;
 }
 
 export interface MainProps {

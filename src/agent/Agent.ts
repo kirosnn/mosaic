@@ -60,7 +60,7 @@ export class Agent {
       apiKey: userConfig.apiKey,
       systemPrompt,
       tools,
-      maxSteps: 30,
+      maxSteps: 60,
     };
 
     this.provider = this.createProvider(userConfig.provider);
