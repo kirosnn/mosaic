@@ -27,6 +27,7 @@ let currentRequest: ApprovalRequest | null = null;
 let listeners = new Set<ApprovalListener>();
 let acceptedListeners = new Set<ApprovalAcceptedListener>();
 let pendingResolve: ((response: ApprovalResponse) => void) | null = null;
+let pendingReject: ((reason?: any) => void) | null = null;
 
 function notify(): void {
   for (const listener of listeners) {
@@ -82,8 +83,9 @@ export async function requestApproval(
   currentRequest = request;
   notify();
 
-  const response = await new Promise<ApprovalResponse>((resolve) => {
+  const response = await new Promise<ApprovalResponse>((resolve, reject) => {
     pendingResolve = resolve;
+    pendingReject = reject;
   });
 
   return { approved: response.approved, customResponse: response.customResponse };
@@ -103,6 +105,7 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
   const args = currentRequest.args;
 
   pendingResolve = null;
+  pendingReject = null;
   currentRequest = null;
   notify();
 
@@ -111,4 +114,16 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
   }
 
   resolve(response);
+}
+
+export function cancelApproval(): void {
+  if (!currentRequest || !pendingReject) return;
+
+  const reject = pendingReject;
+  pendingResolve = null;
+  pendingReject = null;
+  currentRequest = null;
+  notify();
+
+  reject(new Error('Interrupted by user'));
 }

@@ -35,14 +35,40 @@ export const undoCommand: Command = {
 
     notifyUndoRedo(result.state, 'undo');
 
-    const methodUsed = result.state.useGit && result.state.gitCommitHash ? 'Git' : 'snapshots';
-    const details = result.state.gitCommitHash
-      ? `\n- Reverted to Git commit: ${result.state.gitCommitHash.slice(0, 7)}`
-      : `\n- Restored ${result.state.fileSnapshots.length} file(s)`;
+    const messageCountText = result.state.messages.length === 0 ? 'conversation cleared' : `${result.state.messages.length} message(s) restored`;
+
+    let details = '';
+
+    if (result.gitChanges && result.gitChanges.length > 0) {
+      const fileDetails = result.gitChanges.map(f => {
+        switch (f.status) {
+          case 'M': return `  • ${f.path} (reverted changes)`;
+          case 'A': return `  • ${f.path} (restored - was deleted)`;
+          case 'D': return `  • ${f.path} (deleted - was created)`;
+          case 'R': return `  • ${f.path} (renamed back)`;
+          default: return `  • ${f.path} (status: ${f.status})`;
+        }
+      }).join('\n');
+      details = `\n- Files affected (${result.gitChanges.length}):\n${fileDetails}`;
+    } else if (result.state.fileSnapshots.length > 0) {
+      const filesAffected = result.state.fileSnapshots.map(f => f.path).join(', ');
+      const fileDetails = result.state.fileSnapshots.map(f => {
+        if (!f.existed) {
+          return `  • ${f.path} (deleted - was created)`;
+        } else if (f.content === '') {
+          return `  • ${f.path} (restored - was deleted)`;
+        } else {
+          return `  • ${f.path} (restored)`;
+        }
+      }).join('\n');
+      details = `\n- Files affected (${result.state.fileSnapshots.length}):\n${fileDetails}`;
+    } else if (result.state.gitCommitHash) {
+      details = `\n- Files reverted via Git (commit: ${result.state.gitCommitHash.slice(0, 7)})`;
+    }
 
     return {
       success: true,
-      content: `Successfully undone last action (using ${methodUsed}).${details}\n- Restored ${result.state.messages.length} message(s)`,
+      content: `Undone last user message and all responses.${details}\n- ${messageCountText}`,
       shouldAddToHistory: false
     };
   }

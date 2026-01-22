@@ -6,6 +6,7 @@ import { initCommand } from './init';
 import { undoCommand } from './undo';
 import { redoCommand } from './redo';
 import { sessionsCommand } from './sessions';
+import { webCommand } from './web';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -63,4 +64,5 @@ export function initializeCommands(): void {
   commandRegistry.register(undoCommand);
   commandRegistry.register(redoCommand);
   commandRegistry.register(sessionsCommand);
+  commandRegistry.register(webCommand);
 }

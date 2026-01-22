@@ -6,8 +6,8 @@ export const sessionsCommand: Command = {
   description: 'Manage undo/redo sessions. List all sessions or switch to a specific session.',
   usage: '/sessions [list|switch <session-id>|delete <session-id>]',
   aliases: ['s'],
-  execute: async (args?: string): Promise<CommandResult> => {
-    const parts = args?.trim().split(/\s+/) || [];
+  execute: async (args: string[], _fullCommand: string): Promise<CommandResult> => {
+    const parts = args;
     const action = parts[0] || 'list';
 
     if (action === 'list') {

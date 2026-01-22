@@ -22,6 +22,7 @@ type QuestionListener = (request: QuestionRequest | null) => void;
 let currentRequest: QuestionRequest | null = null;
 let listeners = new Set<QuestionListener>();
 let pendingResolve: ((answer: QuestionAnswer) => void) | null = null;
+let pendingReject: ((reason?: any) => void) | null = null;
 
 function notify(): void {
   for (const listener of listeners) {
@@ -67,8 +68,9 @@ export async function askQuestion(prompt: string, options: QuestionOption[]): Pr
   currentRequest = request;
   notify();
 
-  const answer = await new Promise<QuestionAnswer>((resolve) => {
+  const answer = await new Promise<QuestionAnswer>((resolve, reject) => {
     pendingResolve = resolve;
+    pendingReject = reject;
   });
 
   return answer;
@@ -81,15 +83,15 @@ export function answerQuestion(index: number, customText?: string): void {
 
   const answer: QuestionAnswer = customText
     ? {
-        id: currentRequest.id,
-        index: currentRequest.options.length,
-        label: 'Custom response',
-        value: null,
-        customText,
-      }
+      id: currentRequest.id,
+      index: currentRequest.options.length,
+      label: 'Custom response',
+      value: null,
+      customText,
+    }
     : !option
-    ? undefined!
-    : {
+      ? undefined!
+      : {
         id: currentRequest.id,
         index,
         label: option.label,
@@ -101,7 +103,20 @@ export function answerQuestion(index: number, customText?: string): void {
 
   const resolve = pendingResolve;
   pendingResolve = null;
+  pendingReject = null;
   currentRequest = null;
   notify();
   resolve(answer);
+}
+
+export function cancelQuestion(): void {
+  if (!currentRequest || !pendingReject) return;
+
+  const reject = pendingReject;
+  pendingResolve = null;
+  pendingReject = null;
+  currentRequest = null;
+  notify();
+
+  reject(new Error('Interrupted by user'));
 }

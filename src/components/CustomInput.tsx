@@ -127,6 +127,17 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       return
     }
 
+    if (key.name === 'k' && (key.ctrl || key.meta || (key as any).alt)) {
+      setValue('')
+      setCursorPosition(0)
+      setHistoryIndex(-1)
+      setCurrentInput('')
+      pasteFlagRef.current = false
+      pastedContentRef.current = ''
+      desiredCursorColRef.current = null
+      return
+    }
+
     if (key.name === 'return') {
       const meta: InputSubmitMeta | undefined = pasteFlagRef.current
         ? { isPaste: true, pastedContent: pastedContentRef.current }

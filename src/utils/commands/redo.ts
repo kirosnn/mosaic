@@ -35,14 +35,39 @@ export const redoCommand: Command = {
 
     notifyUndoRedo(result.state, 'redo');
 
-    const methodUsed = result.state.useGit && result.state.gitCommitHash ? 'Git' : 'snapshots';
-    const details = result.state.gitCommitHash
-      ? `\n- Restored to Git commit: ${result.state.gitCommitHash.slice(0, 7)}`
-      : `\n- Restored ${result.state.fileSnapshots.length} file(s)`;
+    const messageCountText = result.state.messages.length === 0 ? 'conversation restored' : `${result.state.messages.length} message(s) restored`;
+
+    let details = '';
+
+    if (result.gitChanges && result.gitChanges.length > 0) {
+      const fileDetails = result.gitChanges.map(f => {
+        switch (f.status) {
+          case 'M': return `  • ${f.path} (changes reapplied)`;
+          case 'A': return `  • ${f.path} (created/restored)`;
+          case 'D': return `  • ${f.path} (deleted)`;
+          case 'R': return `  • ${f.path} (renamed)`;
+          default: return `  • ${f.path} (status: ${f.status})`;
+        }
+      }).join('\n');
+      details = `\n- Files affected (${result.gitChanges.length}):\n${fileDetails}`;
+    } else if (result.state.fileSnapshots.length > 0) {
+      const fileDetails = result.state.fileSnapshots.map(f => {
+        if (!f.existed) {
+          return `  • ${f.path} (recreated)`;
+        } else if (f.content === '') {
+          return `  • ${f.path} (deleted)`;
+        } else {
+          return `  • ${f.path} (restored)`;
+        }
+      }).join('\n');
+      details = `\n- Files affected (${result.state.fileSnapshots.length}):\n${fileDetails}`;
+    } else if (result.state.gitCommitHash) {
+      details = `\n- Files restored via Git (commit: ${result.state.gitCommitHash.slice(0, 7)})`;
+    }
 
     return {
       success: true,
-      content: `Successfully redone action (using ${methodUsed}).${details}\n- Restored ${result.state.messages.length} message(s)`,
+      content: `Redone: conversation and file changes restored.${details}\n- ${messageCountText}`,
       shouldAddToHistory: false
     };
   }

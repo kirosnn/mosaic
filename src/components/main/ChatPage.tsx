@@ -4,6 +4,8 @@ import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdow
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
 import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
+import { subscribeFileChanges } from "../../utils/fileChangesBridge";
+import type { FileChanges } from "../../utils/fileChangeTracker";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import { wrapText } from "./wrapText";
@@ -62,6 +64,7 @@ export function ChatPage({
   const maxWidth = Math.max(20, terminalWidth - 6);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
+  const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
   const [, setTimerTick] = useState(0);
 
   useEffect(() => {
@@ -70,6 +73,10 @@ export function ChatPage({
 
   useEffect(() => {
     return subscribeApproval(setApprovalRequest);
+  }, []);
+
+  useEffect(() => {
+    return subscribeFileChanges(setFileChanges);
   }, []);
 
   useEffect(() => {
@@ -469,7 +476,12 @@ export function ChatPage({
         </box>
       </box>
 
-      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="flex-end">
+      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
+        <box flexDirection="row" gap={1}>
+          <text>—</text>
+          <text fg="#4d8f29">+{fileChanges.linesAdded}</text>
+          <text fg="#d73a49">-{fileChanges.linesRemoved}</text>
+        </box>
         <text attributes={TextAttributes.DIM}>ctrl+o to see commands — ctrl+p to view shortcuts</text>
       </box>
 

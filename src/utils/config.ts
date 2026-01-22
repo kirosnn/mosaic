@@ -26,6 +26,11 @@ export interface CustomProvider extends AIProvider {
   isCustom: true;
 }
 
+export interface RecentProject {
+  path: string;
+  lastOpened: number;
+}
+
 export interface MosaicConfig {
   firstRun: boolean;
   version: string;
@@ -36,6 +41,7 @@ export interface MosaicConfig {
   customProviders?: CustomProvider[];
   customModels?: { [providerId: string]: AIModel[] };
   requireApprovals?: boolean;
+  recentProjects?: RecentProject[];
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -289,5 +295,48 @@ export function shouldRequireApprovals(): boolean {
 export function setRequireApprovals(require: boolean): void {
   const config = readConfig();
   config.requireApprovals = require;
+  writeConfig(config);
+}
+
+const MAX_RECENT_PROJECTS = 10;
+
+export function getRecentProjects(): RecentProject[] {
+  const config = readConfig();
+  return config.recentProjects || [];
+}
+
+export function addRecentProject(projectPath: string): void {
+  const config = readConfig();
+  const recentProjects = config.recentProjects || [];
+
+  const existingIndex = recentProjects.findIndex(p => p.path === projectPath);
+  if (existingIndex !== -1) {
+    recentProjects.splice(existingIndex, 1);
+  }
+
+  recentProjects.unshift({
+    path: projectPath,
+    lastOpened: Date.now()
+  });
+
+  if (recentProjects.length > MAX_RECENT_PROJECTS) {
+    recentProjects.pop();
+  }
+
+  config.recentProjects = recentProjects;
+  writeConfig(config);
+}
+
+export function removeRecentProject(projectPath: string): void {
+  const config = readConfig();
+  if (config.recentProjects) {
+    config.recentProjects = config.recentProjects.filter(p => p.path !== projectPath);
+    writeConfig(config);
+  }
+}
+
+export function clearRecentProjects(): void {
+  const config = readConfig();
+  config.recentProjects = [];
   writeConfig(config);
 }

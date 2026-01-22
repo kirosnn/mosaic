@@ -9,7 +9,7 @@ export const helpCommand: Command = {
   execute: (): { success: boolean; content: string } => {
     const commands = commandRegistry.getAll();
     const commandList = Array.from(commands.entries())
-      .filter(([name, cmd]) => name === cmd.name) // Only show primary names, not aliases
+      .filter(([name, cmd]) => name === cmd.name)
       .map(([name, cmd]) => {
         const usage = cmd.usage ? ` - ${cmd.usage}` : '';
         const aliases = cmd.aliases && cmd.aliases.length > 0 ? ` (aliases: ${cmd.aliases.join(', ')})` : '';

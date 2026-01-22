@@ -11,9 +11,38 @@ import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge
 import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
 import { subscribeUndoRedo } from "../utils/undoRedoBridge";
 import { initializeSession, saveState } from "../utils/undoRedo";
+import { resetFileChanges } from "../utils/fileChangeTracker";
+import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
+import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
+
+function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean } {
+  const trimmed = content.trimStart();
+
+  const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/s);
+  if (titleMatch) {
+    const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
+    const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/s, '');
+    return { title, cleanContent, isPending: false, noTitle: false };
+  }
+
+  if (alreadyResolved) {
+    return { title: null, cleanContent: content, isPending: false, noTitle: false };
+  }
+
+  const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
+  if (partialTitlePattern.test(trimmed) || (trimmed.startsWith('<title>') && !trimmed.includes('</title>'))) {
+    return { title: null, cleanContent: '', isPending: true, noTitle: false };
+  }
+
+  return { title: null, cleanContent: content, isPending: false, noTitle: true };
+}
+
+function setTerminalTitle(title: string) {
+  process.title = `⁘ ${title}`;
+}
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage }: MainProps) {
   const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage ? "chat" : "home");
@@ -25,6 +54,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
+  const [currentTitle, setCurrentTitle] = useState<string | null>(null);
+  const currentTitleRef = useRef<string | null>(null);
+  const titleExtractedRef = useRef(false);
   const shouldAutoScroll = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentPageRef = useRef(currentPage);
@@ -44,6 +76,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     return subscribeUndoRedo((state, action) => {
       if (state) {
         setMessages(state.messages);
+        resetFileChanges();
       }
     });
   }, []);
@@ -189,6 +222,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useKeyboard((key) => {
     if (key.name === 'escape') {
+      if (getCurrentQuestion()) {
+        cancelQuestion();
+      }
+      if (getCurrentApproval()) {
+        cancelApproval();
+      }
       abortControllerRef.current?.abort();
       return;
     }
@@ -205,6 +244,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (result) {
         if (result.shouldAddToHistory === true) {
           addInputToHistory(value.trim());
+
+          saveState(messages);
 
           const userMessage: Message = {
             id: createId(),
@@ -286,6 +327,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
             let assistantMessageId: string | null = null;
             let streamHadError = false;
+            titleExtractedRef.current = false;
 
             for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
               if (event.type === 'reasoning-delta') {
@@ -317,21 +359,35 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 totalChars += event.content.length;
                 setCurrentTokens(estimateTokens());
 
+                const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtractedRef.current);
+
+                if (title) {
+                  titleExtractedRef.current = true;
+                  currentTitleRef.current = title;
+                  setCurrentTitle(title);
+                  setTerminalTitle(title);
+                } else if (noTitle) {
+                  titleExtractedRef.current = true;
+                }
+
+                if (isPending) continue;
+
                 if (assistantMessageId === null) {
                   assistantMessageId = createId();
                 }
 
+                const displayContent = cleanContent;
                 const currentMessageId = assistantMessageId;
                 setMessages((prev: Message[]) => {
                   const newMessages = [...prev];
                   const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
 
                   if (messageIndex === -1) {
-                    newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk, thinkingContent: thinkingChunk });
+                    newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
                   } else {
                     newMessages[messageIndex] = {
                       ...newMessages[messageIndex]!,
-                      content: assistantChunk
+                      content: displayContent
                     };
                   }
                   return newMessages;
@@ -563,10 +619,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 return newMessages;
               });
             }
-            setMessages((currentMessages) => {
-              saveState(currentMessages);
-              return currentMessages;
-            });
             setIsProcessing(false);
             setProcessingStartTime(null);
           }
@@ -596,6 +648,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       : value;
 
     addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : value));
+
+    saveState(messages);
 
     const userMessage: Message = {
       id: createId(),
@@ -676,6 +730,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
       let assistantMessageId: string | null = null;
       let streamHadError = false;
+      titleExtractedRef.current = false;
 
       for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
         if (event.type === 'text-delta') {
@@ -683,21 +738,35 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           totalChars += event.content.length;
           setCurrentTokens(estimateTokens());
 
+          const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtractedRef.current);
+
+          if (title) {
+            titleExtractedRef.current = true;
+            currentTitleRef.current = title;
+            setCurrentTitle(title);
+            setTerminalTitle(title);
+          } else if (noTitle) {
+            titleExtractedRef.current = true;
+          }
+
+          if (isPending) continue;
+
           if (assistantMessageId === null) {
             assistantMessageId = createId();
           }
 
+          const displayContent = cleanContent;
           const currentMessageId = assistantMessageId;
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
             const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
 
             if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: assistantChunk });
+              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent });
             } else {
               newMessages[messageIndex] = {
                 ...newMessages[messageIndex]!,
-                content: assistantChunk
+                content: displayContent
               };
             }
             return newMessages;
@@ -891,10 +960,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           return newMessages;
         });
       }
-      setMessages((currentMessages) => {
-        saveState(currentMessages);
-        return currentMessages;
-      });
       setIsProcessing(false);
       setProcessingStartTime(null);
     }

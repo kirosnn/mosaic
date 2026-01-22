@@ -139,6 +139,13 @@ export function saveState(messages: Message[]): void {
       if (hash) {
         gitCommitHash = hash;
       }
+    } else {
+      try {
+        const currentHash = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: process.cwd() }).trim();
+        gitCommitHash = currentHash;
+      } catch {
+        gitCommitHash = undefined;
+      }
     }
   }
 
@@ -192,9 +199,127 @@ export function canRedo(): boolean {
   return getRedoCount(currentSessionId) > 0;
 }
 
-export function undo(): { state: UndoRedoState; success: boolean; error?: string } | null {
+
+function getUntrackedFiles(): string[] {
+  try {
+    const workspace = process.cwd();
+    const output = execSync('git ls-files --others --exclude-standard', { encoding: 'utf-8', cwd: workspace });
+    return output.trim().split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getFileSnapshot(filePath: string): FileSnapshot {
+  const workspace = process.cwd();
+  const fullPath = resolve(workspace, filePath);
+  let content = '';
+  let existed = false;
+
+  try {
+    if (existsSync(fullPath)) {
+      const fs = require('fs');
+      content = fs.readFileSync(fullPath, 'utf-8');
+      existed = true;
+    }
+  } catch {
+    existed = false;
+  }
+
+  return { path: filePath, content, existed };
+}
+
+function getGitChanges(targetHash: string): FileChange[] {
+  if (!isGitRepository()) {
+    return [];
+  }
+
+  try {
+    const workspace = process.cwd();
+    const diffOutput = execSync(`git diff --name-status HEAD ${targetHash}`, {
+      encoding: 'utf-8',
+      cwd: workspace
+    });
+
+    const changes = diffOutput
+      .trim()
+      .split('\n')
+      .filter(line => line.length > 0)
+      .map(line => {
+        const parts = line.split('\t');
+        const status = parts[0];
+        const pathParts = parts.slice(1);
+
+        if (!status) return null;
+
+        return {
+          status: status.charAt(0),
+          path: pathParts.join('\t')
+        };
+      })
+      .filter((item): item is FileChange => item !== null);
+
+    const untracked = getUntrackedFiles();
+    const untrackedChanges = untracked.map(path => ({
+      status: 'D',
+      path
+    }));
+
+    return [...changes, ...untrackedChanges];
+  } catch (error) {
+    console.error('Failed to get git changes:', error);
+    return [];
+  }
+}
+
+export interface FileChange {
+  path: string;
+  status: string;
+}
+
+export function undo(): { state: UndoRedoState; success: boolean; error?: string; currentState?: UndoRedoState; gitChanges?: FileChange[] } | null {
   if (!currentSessionId || !canUndo()) {
     return null;
+  }
+
+  const workspace = process.cwd();
+  const useGit = isGitRepository();
+
+  let currentStateForRedo: UndoRedoState;
+
+  try {
+    if (useGit) {
+      let currentHash: string | undefined;
+      try {
+        currentHash = execSync('git rev-parse HEAD', { encoding: 'utf-8', cwd: workspace }).trim();
+      } catch {
+        currentHash = undefined;
+      }
+
+      const untrackedFiles = getUntrackedFiles();
+      const untrackedSnapshots = untrackedFiles.map(f => getFileSnapshot(f));
+
+      currentStateForRedo = {
+        id: generateId(),
+        timestamp: Date.now(),
+        messages: [],
+        gitCommitHash: currentHash,
+        fileSnapshots: untrackedSnapshots,
+        useGit: true
+      };
+    } else {
+      currentStateForRedo = {
+        id: generateId(),
+        timestamp: Date.now(),
+        messages: [],
+        gitCommitHash: undefined,
+        fileSnapshots: pendingFileSnapshots.length > 0 ? JSON.parse(JSON.stringify(pendingFileSnapshots)) : [],
+        useGit: false
+      };
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    return { state: { id: '', timestamp: 0, messages: [], fileSnapshots: [], useGit: false }, success: false, error: errorMsg };
   }
 
   const state = popUndoState(currentSessionId);
@@ -202,10 +327,34 @@ export function undo(): { state: UndoRedoState; success: boolean; error?: string
     return null;
   }
 
+  let gitChanges: FileChange[] = [];
+
   try {
     if (state.useGit && state.gitCommitHash) {
-      const workspace = process.cwd();
-      execSync(`git reset --hard ${state.gitCommitHash}^`, { cwd: workspace, stdio: 'ignore' });
+      gitChanges = getGitChanges(state.gitCommitHash);
+
+      const filesToClean = getUntrackedFiles();
+
+      execSync(`git reset --hard ${state.gitCommitHash}`, { cwd: workspace, stdio: 'ignore' });
+      execSync('git clean -fd', { cwd: workspace, stdio: 'ignore' });
+      if (filesToClean.length > 0) {
+        const fs = require('fs');
+        for (const file of filesToClean) {
+          const fullPath = resolve(workspace, file);
+          if (existsSync(fullPath)) {
+            try {
+              const stat = fs.lstatSync(fullPath);
+              if (stat.isDirectory()) {
+                fs.rmSync(fullPath, { recursive: true, force: true });
+              } else {
+                fs.unlinkSync(fullPath);
+              }
+            } catch (cleanupError) {
+              console.error(`Failed to force delete ${file}:`, cleanupError);
+            }
+          }
+        }
+      }
     } else {
       const restoreResult = restoreFileSnapshots(state.fileSnapshots);
       if (!restoreResult.success) {
@@ -213,9 +362,9 @@ export function undo(): { state: UndoRedoState; success: boolean; error?: string
       }
     }
 
-    pushRedoState(currentSessionId, state);
+    pushRedoState(currentSessionId, currentStateForRedo);
 
-    return { state, success: true };
+    return { state, success: true, currentState: currentStateForRedo, gitChanges };
   } catch (error) {
     pushUndoState(currentSessionId, state);
 
@@ -224,7 +373,7 @@ export function undo(): { state: UndoRedoState; success: boolean; error?: string
   }
 }
 
-export function redo(): { state: UndoRedoState; success: boolean; error?: string } | null {
+export function redo(): { state: UndoRedoState; success: boolean; error?: string; gitChanges?: FileChange[] } | null {
   if (!currentSessionId || !canRedo()) {
     return null;
   }
@@ -234,10 +383,15 @@ export function redo(): { state: UndoRedoState; success: boolean; error?: string
     return null;
   }
 
+  let gitChanges: FileChange[] = [];
+
   try {
     if (state.useGit && state.gitCommitHash) {
       const workspace = process.cwd();
+      gitChanges = getGitChanges(state.gitCommitHash);
+
       execSync(`git reset --hard ${state.gitCommitHash}`, { cwd: workspace, stdio: 'ignore' });
+      restoreFileSnapshots(state.fileSnapshots);
     } else {
       const restoreResult = restoreFileSnapshots(state.fileSnapshots);
       if (!restoreResult.success) {
@@ -247,7 +401,7 @@ export function redo(): { state: UndoRedoState; success: boolean; error?: string
 
     pushUndoState(currentSessionId, state);
 
-    return { state, success: true };
+    return { state, success: true, gitChanges };
   } catch (error) {
     pushRedoState(currentSessionId, state);
 

@@ -1,7 +1,7 @@
 {
   "name": "mosaic-cli",
   "module": "src/index.tsx",
-  "version": "0.0.6.01",
+  "version": "0.0.6.03",
   "description": "The open source coding agent.",
   "type": "module",
   "bin": {
@@ -14,7 +14,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19.0.0"
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.3"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -31,6 +32,7 @@
     "better-sqlite3": "^12.6.0",
     "ollama": "^0.5.0",
     "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "zod": "^3.23.8"
   }
 }

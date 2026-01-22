@@ -1,11 +1,12 @@
 import { readFile, writeFile, readdir, appendFile, stat, mkdir } from 'fs/promises';
-import { join, resolve, dirname, extname } from 'path';
+import { join, resolve, dirname, extname, sep } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { captureFileSnapshot } from '../../utils/undoRedo';
+import { trackFileChange, trackFileCreated, trackFileDeleted } from '../../utils/fileChangeTracker';
 
 const execAsync = promisify(exec);
 
@@ -66,12 +67,16 @@ function matchGlob(filename: string, pattern: string): boolean {
   let regex = globPatternCache.get(pattern);
 
   if (!regex) {
-    const regexPattern = pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*\*/g, '<!DOUBLESTAR!>')
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+
+    let regexPattern = normalizedPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+
+    regexPattern = regexPattern
+      .replace(/\*\*\//g, '(?:(?:[^/]+/)*)')
+      .replace(/\/\*\*$/g, '(?:/.*)?')
+      .replace(/\*\*/g, '.*')
       .replace(/\*/g, '[^/]*')
-      .replace(/<!DOUBLESTAR!>/g, '.*')
-      .replace(/\?/g, '.');
+      .replace(/\?/g, '[^/]');
 
     regex = new RegExp(`^${regexPattern}$`);
     globPatternCache.set(pattern, regex);
@@ -82,7 +87,8 @@ function matchGlob(filename: string, pattern: string): boolean {
     }
   }
 
-  return regex.test(filename);
+  const normalizedFilename = filename.replace(/\\/g, '/');
+  return regex.test(normalizedFilename);
 }
 
 async function searchInFile(filePath: string, query: string, caseSensitive: boolean): Promise<Array<{ line: number; content: string }>> {
@@ -161,7 +167,7 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
 async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkResult[]> {
   const fullPath = resolve(workspace, dirPath);
   const files = await walkDirectory(fullPath, filterPattern, includeHidden);
-  const separator = workspace.endsWith('/') || workspace.endsWith('\\') ? '' : '/';
+  const separator = workspace.endsWith(sep) ? '' : sep;
 
   return files.map(file => ({
     ...file,
@@ -175,14 +181,15 @@ async function findFilesByPattern(pattern: string, searchPath: string): Promise<
   const hasDoubleStar = pattern.includes('**');
 
   if (hasDoubleStar) {
-    const parts = pattern.split('**');
-    const filePattern = (parts[parts.length - 1] ?? '').replace(/^\//, '');
     const files = await walkDirectory(searchPath, undefined, false);
-    const separator = searchPath.endsWith('/') || searchPath.endsWith('\\') ? '' : '/';
+    const separator = searchPath.endsWith(sep) ? '' : sep;
 
     for (const file of files) {
       if (file.excluded) continue;
-      const relativePath = file.path.replace(searchPath + separator, '');
+      const relativePath = file.path.startsWith(searchPath + separator)
+        ? file.path.slice((searchPath + separator).length)
+        : file.path.replace(searchPath, '').replace(new RegExp(`^\\${sep}`), '');
+
       if (matchGlob(relativePath, pattern)) {
         results.push(relativePath);
       }
@@ -423,6 +430,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             };
           }
 
+          trackFileChange(path, oldContent, content);
+
           const diff = generateDiff(oldContent, content);
           const diffLines = formatDiffForDisplay(diff);
 
@@ -564,7 +573,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         return {
           success: true,
-          result: JSON.stringify(files, null, 2)
+          result: JSON.stringify(files)
         };
       }
 
@@ -647,6 +656,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         if (oldContent === '' && content === '') {
           await writeFile(fullPath, newContent, 'utf-8');
 
+          trackFileCreated(path, newContent);
+
           const diff = generateDiff('', newContent);
           const diffLines = formatDiffForDisplay(diff);
 
@@ -671,6 +682,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const updatedContent = before + newContent + after;
 
         await writeFile(fullPath, updatedContent, 'utf-8');
+
+        trackFileChange(path, content, updatedContent);
 
         const diff = generateDiff(content, updatedContent);
         const diffLines = formatDiffForDisplay(diff);

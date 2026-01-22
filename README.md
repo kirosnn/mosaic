@@ -4,7 +4,7 @@
 
 # Mosaic CLI
 
-**Version 0.0.6.01**
+**Version 0.0.6.03**
 
 Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in your terminal, offering seamless interaction with AI coding assistants through a modern, responsive interface.
 
@@ -12,7 +12,8 @@ Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. I
 
 - **Multi-Provider AI Support**: Compatible with OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
 - **Terminal-First UI**: Modern React-based interface rendered directly in the terminal
-- **Powerful Tool Integration**: Built-in tools for file operations, code search, and terminal commands
+- **Web Interface**: Optional browser-based interface on http://127.0.0.1:8192
+- **Tool Integration**: Built-in tools for file operations, code search, and terminal commands
 - **Slash Commands**: Quick access to common operations
 - **Workspace Context**: Project-specific context files for better AI understanding
 
@@ -57,6 +58,16 @@ This command creates:
 - `.mosaic/` - Project-specific configuration directory
 
 The AI will automatically analyze your codebase and generate a comprehensive MOSAIC.md file tailored to your project.
+
+### Web Interface
+
+Launch the web interface server:
+
+```bash
+mosaic web
+```
+
+Then open your browser to http://127.0.0.1:8192 for a modern, browser-based AI coding assistant interface.
 
 ### Basic Usage
 
