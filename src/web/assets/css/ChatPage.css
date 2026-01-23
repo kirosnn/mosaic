@@ -6,6 +6,34 @@
     width: 100%;
 }
 
+.chat-title-bar {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1.5rem;
+    flex-shrink: 0;
+    width: 100%;
+    left: 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.chat-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+    cursor: default;
+}
+
+.chat-workspace {
+    margin-left: auto;
+    font-size: 0.9rem;
+    font-family: 'Geist Medium Monospace', monospace;
+    color: var(--text-secondary);
+    cursor: default;
+}
+
 .chat-container {
     display: flex;
     flex-direction: column;

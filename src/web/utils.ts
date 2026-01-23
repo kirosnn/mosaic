@@ -1,48 +1,43 @@
-export function formatToolCallMessage(toolName: string, args: Record<string, unknown>): string {
-    switch (toolName) {
-        case 'read':
-            return `Reading: ${args.path || 'file'}`;
-        case 'write':
-            return `Writing: ${args.path || 'file'}`;
-        case 'edit':
-            return `Editing: ${args.path || 'file'}`;
-        case 'list':
-            return `Listing: ${args.path || 'directory'}`;
-        case 'bash':
-            return `Running: ${args.command || 'command'}`;
-        case 'glob':
-            return `Searching: ${args.pattern || 'pattern'}`;
-        case 'grep':
-            return `Searching: ${args.pattern || 'pattern'}`;
-        case 'question':
-            return 'Asking question...';
-        default:
-            return `Running: ${toolName}`;
-    }
-}
+export {
+    formatToolMessage,
+    parseToolHeader,
+    formatToolResult,
+    isToolSuccess,
+    formatErrorMessage,
+    DEFAULT_MAX_TOOL_LINES,
+} from '../utils/toolFormatting';
 
-export function formatToolResult(toolName: string, args: Record<string, unknown>, result: unknown): string {
-    const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    const preview = resultStr.length > 500 ? resultStr.slice(0, 500) + '...' : resultStr;
-
-    switch (toolName) {
-        case 'read':
-            return `Read ${args.path || 'file'}:\n${preview}`;
-        case 'write':
-            return `Wrote to ${args.path || 'file'}`;
-        case 'edit':
-            return `Edited ${args.path || 'file'}`;
-        case 'list':
-            return `Listed ${args.path || 'directory'}:\n${preview}`;
-        case 'bash':
-            return `Command output:\n${preview}`;
-        case 'glob':
-            return `Found files:\n${preview}`;
-        case 'grep':
-            return `Search results:\n${preview}`;
-        default:
-            return preview;
-    }
-}
+export { parseDiffLine, getDiffLineColors, type ParsedDiffLine } from '../utils/diff';
 
 export const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+export function extractTitle(content: string, alreadyResolved: boolean): {
+    title: string | null;
+    cleanContent: string;
+    isPending: boolean;
+    noTitle: boolean
+} {
+    const trimmed = content.trimStart();
+
+    const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/s);
+    if (titleMatch) {
+        const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
+        const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/s, '');
+        return { title, cleanContent, isPending: false, noTitle: false };
+    }
+
+    if (alreadyResolved) {
+        return { title: null, cleanContent: content, isPending: false, noTitle: false };
+    }
+
+    const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
+    if (partialTitlePattern.test(trimmed) || (trimmed.startsWith('<title>') && !trimmed.includes('</title>'))) {
+        return { title: null, cleanContent: '', isPending: true, noTitle: false };
+    }
+
+    return { title: null, cleanContent: content, isPending: false, noTitle: true };
+}
+
+export function setDocumentTitle(title: string) {
+    document.title = `${title} - Mosaic`;
+}

@@ -246,6 +246,13 @@ serve({
 
             }
 
+            if (url.pathname === "/api/workspace" && request.method === "GET") {
+                const workspace = process.cwd();
+                return new Response(JSON.stringify({ workspace }), {
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
             if (url.pathname === "/api/recent-projects" && request.method === "GET") {
                 const { getRecentProjects } = await import("../utils/config");
                 const recentProjects = getRecentProjects();

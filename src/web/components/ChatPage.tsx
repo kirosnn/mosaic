@@ -10,9 +10,41 @@ interface ChatPageProps {
     isProcessing: boolean;
     onSendMessage: (message: string) => void;
     sidebarProps: SidebarProps;
+    currentTitle?: string | null;
+    workspace?: string | null;
 }
 
-export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps }: ChatPageProps) {
+function formatWorkspace(path: string | null | undefined): string {
+    if (!path) return '';
+
+    let normalized = path.replace(/\\/g, '/');
+
+    const homePatterns = [
+        /^\/Users\/[^/]+/,
+        /^\/home\/[^/]+/,
+        /^[A-Z]:\/Users\/[^/]+/i,
+    ];
+
+    for (const pattern of homePatterns) {
+        if (pattern.test(normalized)) {
+            normalized = normalized.replace(pattern, '~');
+            break;
+        }
+    }
+
+    const parts = normalized.split('/').filter(Boolean);
+    const maxLength = 35;
+
+    if (normalized.length > maxLength && parts.length > 3) {
+        const isHome = normalized.startsWith('~');
+        const lastParts = parts.slice(-2).join('/');
+        return isHome ? `~/.../` + lastParts : '.../' + lastParts;
+    }
+
+    return normalized;
+}
+
+export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, currentTitle, workspace }: ChatPageProps) {
     const [inputValue, setInputValue] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -47,12 +79,24 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps }
         }
     };
 
+    const formattedWorkspace = formatWorkspace(workspace);
+
     return (
         <div className="home-page">
             <Sidebar {...sidebarProps} />
 
             <div className="main-content" style={{ padding: 0 }}>
                 <div className="chat-page">
+                    {(currentTitle || workspace) && (
+                        <div className="chat-title-bar">
+                            <span className="chat-title">{currentTitle || ''}</span>
+                            {formattedWorkspace && (
+                                <span className="chat-workspace" title={workspace || ''}>
+                                    {formattedWorkspace}
+                                </span>
+                            )}
+                        </div>
+                    )}
                     <div className="chat-container">
                         <div className="messages">
                             {messages.map((msg) => (

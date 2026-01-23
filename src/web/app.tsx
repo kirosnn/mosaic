@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
-import { createId, formatToolCallMessage, formatToolResult } from './utils';
+import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES } from './utils';
+import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation } from './storage';
 import './assets/css/global.css'
 
 import { Modal } from './components/Modal';
@@ -16,6 +17,22 @@ function App() {
     const [, setTimerTick] = useState(0);
     const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
     const [activeModal, setActiveModal] = useState<'none' | 'settings' | 'help'>('none');
+    const [currentTitle, setCurrentTitle] = useState<string | null>(null);
+    const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [workspace, setWorkspace] = useState<string | null>(null);
+
+    const refreshConversations = useCallback(() => {
+        setConversations(getAllConversations());
+    }, []);
+
+    useEffect(() => {
+        refreshConversations();
+        fetch('/api/workspace')
+            .then(res => res.json())
+            .then(data => setWorkspace(data.workspace))
+            .catch(() => { });
+    }, [refreshConversations]);
 
     useEffect(() => {
         const timerInterval = setInterval(() => {
@@ -23,6 +40,20 @@ function App() {
         }, 1000);
         return () => clearInterval(timerInterval);
     }, []);
+
+    useEffect(() => {
+        if (currentConversation && messages.length > 0) {
+            const updatedConversation: Conversation = {
+                ...currentConversation,
+                messages,
+                title: currentTitle,
+                updatedAt: Date.now(),
+            };
+            saveConversation(updatedConversation);
+            setCurrentConversation(updatedConversation);
+            refreshConversations();
+        }
+    }, [messages, currentTitle]);
 
     const handleSendMessage = async (content: string) => {
         if (!content.trim() || isProcessing) return;
@@ -32,6 +63,12 @@ function App() {
             role: 'user',
             content: content,
         };
+
+        let conversation = currentConversation;
+        if (!conversation) {
+            conversation = createNewConversation();
+            setCurrentConversation(conversation);
+        }
 
         if (currentPage === 'home') {
             setCurrentPage('chat');
@@ -61,6 +98,7 @@ function App() {
             let assistantChunk = '';
             let thinkingChunk = '';
             let assistantMessageId: string | null = null;
+            let titleExtracted = false;
             const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId: string }>();
 
             while (reader) {
@@ -103,6 +141,18 @@ function App() {
                         } else if (event.type === 'text-delta') {
                             assistantChunk += event.content;
 
+                            const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtracted);
+
+                            if (title) {
+                                titleExtracted = true;
+                                setCurrentTitle(title);
+                                setDocumentTitle(title);
+                            } else if (noTitle) {
+                                titleExtracted = true;
+                            }
+
+                            if (isPending) continue;
+
                             if (assistantMessageId === null) {
                                 assistantMessageId = createId();
                             }
@@ -115,13 +165,13 @@ function App() {
                                     newMessages.push({
                                         id: assistantMessageId!,
                                         role: 'assistant',
-                                        content: assistantChunk,
+                                        content: cleanContent,
                                         thinkingContent: thinkingChunk,
                                     });
                                 } else {
                                     newMessages[messageIndex] = {
                                         ...newMessages[messageIndex]!,
-                                        content: assistantChunk,
+                                        content: cleanContent,
                                     };
                                 }
                                 return newMessages;
@@ -131,13 +181,17 @@ function App() {
                             const toolName = event.toolName;
                             const args = event.args || {};
 
+                            const needsApproval = toolName === 'write' || toolName === 'edit' || toolName === 'bash';
+                            const isBashTool = toolName === 'bash';
+
+                            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, args);
+                            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+
                             pendingToolCalls.set(event.toolCallId, {
                                 toolName,
                                 args,
                                 messageId: toolCallMessageId,
                             });
-
-                            const needsApproval = toolName === 'write' || toolName === 'edit' || toolName === 'bash';
 
                             if (!needsApproval) {
                                 setMessages((prev) => [
@@ -145,11 +199,12 @@ function App() {
                                     {
                                         id: toolCallMessageId,
                                         role: 'tool',
-                                        content: formatToolCallMessage(toolName, args),
+                                        content: runningContent,
                                         toolName,
                                         toolArgs: args,
-                                        isRunning: true,
-                                        runningStartTime: Date.now(),
+                                        success: true,
+                                        isRunning: isBashTool,
+                                        runningStartTime: isBashTool ? Date.now() : undefined,
                                     },
                                 ]);
                             }
@@ -160,25 +215,34 @@ function App() {
                             const runningMessageId = pending?.messageId;
                             pendingToolCalls.delete(event.toolCallId);
 
-                            const toolContent = formatToolResult(toolName, toolArgs, event.result);
-                            const success = !event.result?.includes?.('Error') && !event.result?.error;
+                            const { content: toolContent, success } = formatToolMessage(
+                                toolName,
+                                toolArgs,
+                                event.result,
+                                { maxLines: DEFAULT_MAX_TOOL_LINES }
+                            );
 
                             setMessages((prev) => {
                                 const newMessages = [...prev];
 
+                                let runningIndex = -1;
                                 if (runningMessageId) {
-                                    const runningIndex = newMessages.findIndex((m) => m.id === runningMessageId);
-                                    if (runningIndex !== -1) {
-                                        newMessages[runningIndex] = {
-                                            ...newMessages[runningIndex]!,
-                                            content: toolContent,
-                                            toolResult: event.result,
-                                            success,
-                                            isRunning: false,
-                                            runningStartTime: undefined,
-                                        };
-                                        return newMessages;
-                                    }
+                                    runningIndex = newMessages.findIndex((m) => m.id === runningMessageId);
+                                } else if (toolName === 'bash') {
+                                    runningIndex = newMessages.findIndex((m) => m.toolName === 'bash' && m.isRunning === true);
+                                }
+
+                                if (runningIndex !== -1) {
+                                    newMessages[runningIndex] = {
+                                        ...newMessages[runningIndex]!,
+                                        content: toolContent,
+                                        toolArgs: toolArgs,
+                                        toolResult: event.result,
+                                        success,
+                                        isRunning: false,
+                                        runningStartTime: undefined,
+                                    };
+                                    return newMessages;
                                 }
 
                                 newMessages.push({
@@ -199,12 +263,13 @@ function App() {
                         } else if (event.type === 'finish' || event.type === 'step-finish') {
                             break;
                         } else if (event.type === 'error') {
+                            const errorContent = formatErrorMessage('API', event.error);
                             setMessages((prev) => [
                                 ...prev,
                                 {
                                     id: createId(),
                                     role: 'assistant',
-                                    content: `Error: ${event.error}`,
+                                    content: errorContent,
                                     isError: true,
                                 },
                             ]);
@@ -216,12 +281,14 @@ function App() {
                 }
             }
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const errorContent = formatErrorMessage('Mosaic', errorMessage);
             setMessages((prev) => [
                 ...prev,
                 {
                     id: createId(),
                     role: 'assistant',
-                    content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                    content: errorContent,
                     isError: true,
                 },
             ]);
@@ -230,15 +297,48 @@ function App() {
         }
     };
 
+    const handleLoadConversation = (conversationId: string) => {
+        const conversation = getConversation(conversationId);
+        if (conversation) {
+            setCurrentConversation(conversation);
+            setMessages(conversation.messages);
+            setCurrentTitle(conversation.title);
+            if (conversation.title) {
+                setDocumentTitle(conversation.title);
+            }
+            setCurrentPage('chat');
+        }
+    };
+
+    const handleDeleteConversation = (conversationId: string) => {
+        deleteConversation(conversationId);
+        refreshConversations();
+
+        if (currentConversation?.id === conversationId) {
+            setCurrentConversation(null);
+            setMessages([]);
+            setCurrentTitle(null);
+            document.title = 'Mosaic';
+            setCurrentPage('home');
+        }
+    };
+
     const sidebarProps = {
         isExpanded: isSidebarExpanded,
         onToggleExpand: () => setIsSidebarExpanded(!isSidebarExpanded),
         onNavigateToNewChat: () => {
+            setCurrentConversation(null);
             setMessages([]);
+            setCurrentTitle(null);
+            document.title = 'Mosaic';
             setCurrentPage('chat');
         },
         onOpenSettings: () => setActiveModal('settings'),
         onOpenHelp: () => setActiveModal('help'),
+        conversations,
+        currentConversationId: currentConversation?.id || null,
+        onLoadConversation: handleLoadConversation,
+        onDeleteConversation: handleDeleteConversation,
     };
 
     return (
@@ -251,6 +351,8 @@ function App() {
                     isProcessing={isProcessing}
                     onSendMessage={handleSendMessage}
                     sidebarProps={sidebarProps}
+                    currentTitle={currentTitle}
+                    workspace={workspace}
                 />
             )}
 

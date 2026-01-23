@@ -122,7 +122,12 @@
 
 .tool-name {
     font-weight: bold;
-    color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+.tool-info {
+    color: var(--text-muted);
+    font-weight: normal;
 }
 
 .tool-timer {
@@ -132,15 +137,53 @@
 }
 
 .tool-output {
-    margin: 0;
-    padding: 0.5rem;
-    background: var(--bg-code);
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    padding: 0;
+    background: transparent;
+    font-family: 'Geist Medium Monospace', monospace;
+    font-size: 0.85rem;
     color: var(--text-secondary);
     overflow-x: auto;
-    border: 1px solid var(--border-subtle);
+}
+
+.tool-line {
+    padding: 0.1rem 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.tool-line.diff-line {
+    display: flex;
+    align-items: flex-start;
+    padding: 0;
+    border-radius: 2px;
+    margin: 1px 0;
+}
+
+.tool-line.diff-line.added {
+    color: #4ade80;
+}
+
+.tool-line.diff-line.removed {
+    color: #f87171;
+}
+
+.diff-label {
+    padding: 0.1rem 0.4rem;
+    font-family: 'Geist Medium Monospace', monospace;
+    font-size: 0.8rem;
+    min-width: 4.5rem;
+    text-align: right;
+}
+
+.diff-separator {
+    padding: 0.1rem 0.3rem;
+    color: var(--text-muted);
+}
+
+.diff-content {
+    flex: 1;
+    padding: 0.1rem 0.3rem;
 }
 
 .thinking-section {
