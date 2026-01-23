@@ -410,8 +410,8 @@ export function ChatPage({
             if (item.blendDuration && item.blendDuration > 60000) {
               const timeStr = formatElapsedTime(item.blendDuration, false);
               return (
-                <box key={item.key} flexDirection="row" width="100%">
-                  <text attributes={TextAttributes.DIM | TextAttributes.ITALIC}>⁘ {item.blendWord} for {timeStr}</text>
+                <box key={item.key} flexDirection="row" width="100%" paddingLeft={1}>
+                  <text attributes={TextAttributes.DIM}>⁘ {item.blendWord} for {timeStr}</text>
                 </box>
               );
             }
