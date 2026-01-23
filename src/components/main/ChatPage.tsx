@@ -117,11 +117,26 @@ export function ChatPage({
   }
 
   const allItems: RenderItem[] = [];
+  let pendingBlend: { key: string; blendDuration: number; blendWord: string } | null = null;
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
+
+    if (messageRole === 'user' && pendingBlend) {
+      allItems.push({
+        key: pendingBlend.key,
+        type: 'blend',
+        role: 'assistant',
+        isFirst: false,
+        visualLines: 1,
+        blendDuration: pendingBlend.blendDuration,
+        blendWord: pendingBlend.blendWord
+      });
+      pendingBlend = null;
+    }
+
     if (messageRole === 'assistant') {
       const blocks = parseAndWrapMarkdown(message.content, maxWidth);
       let isFirstContent = true;
@@ -215,15 +230,11 @@ export function ChatPage({
     }
 
     if (message.responseDuration && messageRole === 'assistant' && message.responseDuration > 60000) {
-      allItems.push({
+      pendingBlend = {
         key: `${messageKey}-blend`,
-        type: 'blend',
-        role: messageRole,
-        isFirst: false,
-        visualLines: 1,
         blendDuration: message.responseDuration,
         blendWord: message.blendWord || 'Blended'
-      });
+      };
     }
 
     allItems.push({
@@ -234,6 +245,18 @@ export function ChatPage({
       isFirst: false,
       isSpacer: true,
       visualLines: 1
+    });
+  }
+
+  if (pendingBlend) {
+    allItems.push({
+      key: pendingBlend.key,
+      type: 'blend',
+      role: 'assistant',
+      isFirst: false,
+      visualLines: 1,
+      blendDuration: pendingBlend.blendDuration,
+      blendWord: pendingBlend.blendWord
     });
   }
 
