@@ -8,6 +8,15 @@ import { z } from 'zod';
 import { readConfig } from '../../utils/config';
 import { executeTool } from './executor';
 
+interface ExploreLog {
+  tool: string;
+  args: Record<string, unknown>;
+  success: boolean;
+  resultPreview?: string;
+}
+
+let exploreLogs: ExploreLog[] = [];
+
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase.
 
 Your goal is to explore the codebase to fulfill the given purpose. You have access to these tools:
@@ -66,6 +75,13 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
 
 let exploreDoneResult: string | null = null;
 
+function getResultPreview(result: string | undefined): string {
+  if (!result) return '';
+  const lines = result.split('\n');
+  if (lines.length <= 3) return result.substring(0, 200);
+  return lines.slice(0, 3).join('\n').substring(0, 200) + '...';
+}
+
 function createExploreTools() {
   return {
     read: createTool({
@@ -75,6 +91,12 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         const result = await executeTool('read', args);
+        exploreLogs.push({
+          tool: 'read',
+          args,
+          success: result.success,
+          resultPreview: result.success ? `${(result.result || '').split('\n').length} lines` : result.error,
+        });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -87,6 +109,21 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         const result = await executeTool('glob', args);
+        let preview = '';
+        if (result.success && result.result) {
+          try {
+            const files = JSON.parse(result.result);
+            preview = `${Array.isArray(files) ? files.length : 0} files`;
+          } catch {
+            preview = 'parsed';
+          }
+        }
+        exploreLogs.push({
+          tool: 'glob',
+          args,
+          success: result.success,
+          resultPreview: result.success ? preview : result.error,
+        });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -102,6 +139,21 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         const result = await executeTool('grep', args);
+        let preview = '';
+        if (result.success && result.result) {
+          try {
+            const matches = JSON.parse(result.result);
+            preview = `${Array.isArray(matches) ? matches.length : 0} matches`;
+          } catch {
+            preview = 'parsed';
+          }
+        }
+        exploreLogs.push({
+          tool: 'grep',
+          args,
+          success: result.success,
+          resultPreview: result.success ? preview : result.error,
+        });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -116,6 +168,21 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         const result = await executeTool('list', args);
+        let preview = '';
+        if (result.success && result.result) {
+          try {
+            const items = JSON.parse(result.result);
+            preview = `${Array.isArray(items) ? items.length : 0} items`;
+          } catch {
+            preview = 'parsed';
+          }
+        }
+        exploreLogs.push({
+          tool: 'list',
+          args,
+          success: result.success,
+          resultPreview: result.success ? preview : result.error,
+        });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -133,6 +200,18 @@ function createExploreTools() {
   };
 }
 
+function formatExploreLogs(): string {
+  if (exploreLogs.length === 0) return '';
+
+  const lines = ['Tools used:'];
+  for (const log of exploreLogs) {
+    const argStr = log.args.path || log.args.pattern || log.args.query || '';
+    const status = log.success ? '+' : '-';
+    lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
+  }
+  return lines.join('\n');
+}
+
 export async function executeExploreTool(purpose: string): Promise<ExploreResult> {
   const userConfig = readConfig();
 
@@ -144,6 +223,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   }
 
   exploreDoneResult = null;
+  exploreLogs = [];
 
   try {
     const model = createModelProvider({
@@ -167,27 +247,43 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       maxSteps: MAX_STEPS,
     });
 
+    let lastError: string | null = null;
+
     for await (const chunk of result.fullStream as any) {
+      const c: any = chunk;
+      if (c.type === 'error') {
+        lastError = c.error instanceof Error ? c.error.message : String(c.error);
+      }
       if (exploreDoneResult !== null) {
         break;
       }
     }
 
+    if (lastError && exploreLogs.length === 0) {
+      return {
+        success: false,
+        error: lastError,
+      };
+    }
+
+    const logsStr = formatExploreLogs();
+
     if (exploreDoneResult !== null) {
       return {
         success: true,
-        result: exploreDoneResult,
+        result: `${logsStr}\n\nSummary:\n${exploreDoneResult}`,
       };
     }
 
     return {
       success: true,
-      result: `Exploration completed after ${MAX_STEPS} steps without explicit done call.`,
+      result: `${logsStr}\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
     };
   } catch (error) {
+    const logsStr = formatExploreLogs();
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error during exploration',
+      error: `${error instanceof Error ? error.message : 'Unknown error during exploration'}${logsStr ? '\n\n' + logsStr : ''}`,
     };
   }
 }
