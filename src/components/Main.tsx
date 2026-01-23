@@ -296,7 +296,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           setMessages((prev: Message[]) => [...prev, userMessage]);
           setIsProcessing(true);
-          setProcessingStartTime(Date.now());
+          const localStartTime = Date.now();
+          setProcessingStartTime(localStartTime);
           setCurrentTokens(0);
           shouldAutoScroll.current = true;
 
@@ -663,8 +664,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             if (abortControllerRef.current === abortController) {
               abortControllerRef.current = null;
             }
-            const duration = processingStartTime ? Date.now() - processingStartTime : null;
-            if (duration && duration >= 60000) {
+            const duration = Date.now() - localStartTime;
+            if (duration >= 60000) {
               const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
               setMessages((prev: Message[]) => {
                 const newMessages = [...prev];
@@ -718,7 +719,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
     setMessages((prev: Message[]) => [...prev, userMessage]);
     setIsProcessing(true);
-    setProcessingStartTime(Date.now());
+    const localStartTime = Date.now();
+    setProcessingStartTime(localStartTime);
     setCurrentTokens(0);
     shouldAutoScroll.current = true;
 
@@ -1050,8 +1052,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
-      const duration = processingStartTime ? Date.now() - processingStartTime : null;
-      if (duration && duration >= 60000) {
+      const duration = Date.now() - localStartTime;
+      if (duration >= 60000) {
         const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
