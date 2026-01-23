@@ -61,7 +61,6 @@ export function MessageItem({ message }: MessageItemProps) {
 
         return (
             <div className={`message tool ${statusClass}`}>
-                <div className="message-bar" />
                 <div className="message-content">
                     <div className="tool-header">
                         <span className="tool-icon">{icon}</span>
@@ -86,7 +85,6 @@ export function MessageItem({ message }: MessageItemProps) {
     if (message.role === 'assistant') {
         return (
             <div className="message assistant">
-                <div className="message-bar" />
                 <div className="message-content">
                     {message.thinkingContent && (
                         <details className="thinking-section">
@@ -102,7 +100,6 @@ export function MessageItem({ message }: MessageItemProps) {
 
     return (
         <div className={`message ${message.role} ${message.isError ? 'error' : ''}`}>
-            <div className="message-bar" />
             <div className="message-content">
                 {message.displayContent || message.content}
             </div>

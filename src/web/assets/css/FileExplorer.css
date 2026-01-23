@@ -1,0 +1,202 @@
+.file-explorer-modal {
+    width: min(920px, 88vw) !important;
+    max-width: none !important;
+    height: min(720px, 84vh) !important;
+    max-height: none !important;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-panel);
+    border-radius: 24px;
+    overflow: hidden;
+}
+
+.file-explorer-modal .modal-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+.file-explorer-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    background: var(--bg-panel);
+    color: var(--text-primary);
+}
+
+.file-explorer-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 18px;
+    background: var(--bg-panel);
+}
+
+.file-explorer-path {
+    flex: 1;
+    border-radius: 16px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-family: 'Geist Medium Monospace', monospace;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: var(--overlay-medium);
+    border: 1px solid var(--border-overlay-light);
+    transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.file-explorer-path:hover {
+    background: var(--overlay-strong);
+    border-color: var(--border-overlay-strong);
+    color: var(--text-primary);
+}
+
+.file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0.6rem 0.85rem;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+    border: 1px solid transparent;
+    user-select: none;
+}
+
+.file-item:hover {
+    background: var(--overlay-light);
+    color: var(--text-primary);
+}
+
+.file-item.selected {
+    background: var(--overlay-medium);
+    border-color: var(--border-overlay-light);
+    color: var(--text-primary);
+}
+
+.file-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.file-item.is-directory .file-icon {
+    color: var(--accent-color);
+}
+
+.file-name {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-explorer-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    background: var(--bg-panel);
+    gap: 12px;
+}
+
+.selected-path-display {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.footer-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.explorer-btn {
+    display: flex;
+    align-items: center;
+    background: var(--overlay-medium);
+    border: 1px solid var(--border-overlay-light);
+    color: var(--text-primary);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.explorer-btn.cancel {
+    background: var(--overlay-medium);
+    border: 1px solid var(--border-overlay-light);
+    color: var(--text-primary);
+}
+
+.explorer-btn.cancel:hover {
+    background: var(--overlay-strong);
+    border-color: var(--border-overlay-strong);
+}
+
+.explorer-btn.confirm {
+    display: flex;
+    align-items: center;
+    background: var(--overlay-medium);
+    border: 1px solid var(--border-overlay-light);
+    color: var(--text-primary);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.explorer-btn.confirm:hover {
+    background: var(--overlay-strong);
+    border-color: var(--border-overlay-strong);
+}
+
+.loading-indicator,
+.empty-message {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.file-list::-webkit-scrollbar {
+    width: 6px;
+    display: block;
+}
+
+.file-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.file-list::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 999px;
+}
+
+.file-list::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}

@@ -162,7 +162,6 @@ body {
     border-radius: 16px;
     width: 90%;
     max-width: 500px;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
     overflow: hidden;
     animation: modal-slide-up 0.3s ease-out;
 }

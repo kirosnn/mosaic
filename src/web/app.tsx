@@ -344,7 +344,35 @@ function App() {
     return (
         <>
             {currentPage === 'home' ? (
-                <HomePage onStartChat={handleSendMessage} sidebarProps={sidebarProps} />
+                <HomePage
+                    onStartChat={handleSendMessage}
+                    onOpenProject={async (path) => {
+                        try {
+                            const res = await fetch('/api/workspace', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path }),
+                            });
+
+                            if (res.ok) {
+                                setWorkspace(path);
+                                setCurrentConversation(null);
+                                setMessages([]);
+                                setCurrentTitle(null);
+                                setCurrentPage('chat');
+
+                                await fetch('/api/add-recent-project', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path }),
+                                });
+                            }
+                        } catch (error) {
+                            console.error('Failed to open project:', error);
+                        }
+                    }}
+                    sidebarProps={sidebarProps}
+                />
             ) : (
                 <ChatPage
                     messages={messages}

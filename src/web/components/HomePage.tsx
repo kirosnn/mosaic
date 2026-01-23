@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import { useState, useEffect } from 'react';
 import { Sidebar, SidebarProps } from './Sidebar';
+import { Modal } from './Modal';
+import { FileExplorer } from './FileExplorer';
 import '../assets/css/global.css'
 import '../assets/css/HomePage.css'
 
@@ -11,6 +13,7 @@ interface RecentProject {
 
 interface HomePageProps {
     onStartChat: (message: string) => void;
+    onOpenProject: (path: string) => void;
     sidebarProps: SidebarProps;
 }
 
@@ -28,9 +31,10 @@ function formatRelativeTime(timestamp: number): string {
     return `${days} day${days !== 1 ? 's' : ''} ago`;
 }
 
-export function HomePage({ onStartChat, sidebarProps }: HomePageProps) {
+export function HomePage({ onStartChat, onOpenProject, sidebarProps }: HomePageProps) {
     const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [showFileExplorer, setShowFileExplorer] = useState(false);
 
     useEffect(() => {
         async function fetchRecentProjects() {
@@ -53,6 +57,11 @@ export function HomePage({ onStartChat, sidebarProps }: HomePageProps) {
     }, []);
 
     const handleProjectClick = async (path: string) => {
+        onOpenProject(path);
+    };
+
+    /*
+    const handleProjectClick = async (path: string) => {
         try {
             await fetch('/api/add-recent-project', {
                 method: 'POST',
@@ -64,6 +73,7 @@ export function HomePage({ onStartChat, sidebarProps }: HomePageProps) {
         }
         onStartChat(`Opening project: ${path}`);
     };
+    */
 
     return (
         <div className="home-page">
@@ -80,7 +90,7 @@ export function HomePage({ onStartChat, sidebarProps }: HomePageProps) {
                 <div className="projects-section">
                     <div className="section-header">
                         <h2>Recents projects</h2>
-                        <button className="open-project-btn" onClick={() => onStartChat('open project dialog')}>
+                        <button className="open-project-btn" onClick={() => setShowFileExplorer(true)}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                             Open project
                         </button>
@@ -106,6 +116,22 @@ export function HomePage({ onStartChat, sidebarProps }: HomePageProps) {
                     </div>
                 </div>
             </div>
+
+
+            <Modal
+                isOpen={showFileExplorer}
+                onClose={() => setShowFileExplorer(false)}
+                title="Open project"
+                className="file-explorer-modal"
+            >
+                <FileExplorer
+                    onSelect={(path) => {
+                        setShowFileExplorer(false);
+                        onOpenProject(path);
+                    }}
+                    onCancel={() => setShowFileExplorer(false)}
+                />
+            </Modal>
         </div>
     );
 }

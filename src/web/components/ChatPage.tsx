@@ -104,7 +104,6 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                             ))}
                             {isProcessing && (
                                 <div className="message assistant">
-                                    <div className="message-bar" />
                                     <div className="message-content">
                                         <div className="typing-indicator">
                                             <span></span>

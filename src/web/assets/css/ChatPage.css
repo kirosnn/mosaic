@@ -59,21 +59,17 @@
     bottom: 2rem;
     left: 50%;
     transform: translateX(-50%);
-    width: 90%;
-    max-width: 768px;
-
+    width: calc(100% - 2rem);
     background: var(--bg-panel);
-    border-radius: 26px;
-    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    padding: 0.75rem;
     border: 1px solid var(--border-subtle);
-    box-shadow: 0 4px 12px var(--shadow-light);
     transition: all 0.2s ease;
     z-index: 100;
 }
 
 .input-area:focus-within {
     border-color: var(--accent-color);
-    box-shadow: 0 4px 20px var(--shadow-medium);
 }
 
 .input-area textarea {

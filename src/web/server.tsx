@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { join } from "path";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { build } from "bun";
 import { createCliRenderer, TextAttributes } from "@opentui/core";
 import { createRoot } from "@opentui/react";
@@ -251,6 +251,68 @@ serve({
                 return new Response(JSON.stringify({ workspace }), {
                     headers: { "Content-Type": "application/json" },
                 });
+            }
+
+            if (url.pathname === "/api/workspace" && request.method === "POST") {
+                const body = (await request.json()) as { path: string };
+                if (!body.path || typeof body.path !== "string") {
+                    return new Response(JSON.stringify({ error: "Invalid path" }), {
+                        status: 400,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+
+                try {
+                    process.chdir(body.path);
+                    return new Response(JSON.stringify({ success: true, workspace: process.cwd() }), {
+                        headers: { "Content-Type": "application/json" },
+                    });
+                } catch (error) {
+                    return new Response(JSON.stringify({ error: "Failed to change directory" }), {
+                        status: 500,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+            }
+
+            if (url.pathname === "/api/files" && request.method === "GET") {
+                const urlObj = new URL(request.url);
+                const queryPath = urlObj.searchParams.get("path");
+                const currentPath = queryPath || process.cwd();
+
+                try {
+                    if (!existsSync(currentPath)) {
+                        return new Response(JSON.stringify({ error: "Path does not exist" }), {
+                            status: 404,
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    const items = readdirSync(currentPath, { withFileTypes: true });
+                    const files = items.map((item) => ({
+                        name: item.name,
+                        isDirectory: item.isDirectory(),
+                        path: join(currentPath, item.name)
+                    })).sort((a, b) => {
+                        if (a.isDirectory === b.isDirectory) {
+                            return a.name.localeCompare(b.name);
+                        }
+                        return a.isDirectory ? -1 : 1;
+                    });
+
+                    return new Response(JSON.stringify({
+                        path: currentPath,
+                        files
+                    }), {
+                        headers: { "Content-Type": "application/json" },
+                    });
+
+                } catch (error) {
+                    return new Response(JSON.stringify({ error: "Failed to list files" }), {
+                        status: 500,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
             }
 
             if (url.pathname === "/api/recent-projects" && request.method === "GET") {
