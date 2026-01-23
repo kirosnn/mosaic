@@ -8,6 +8,7 @@ import { glob } from './glob.ts';
 import { grep } from './grep.ts';
 import { edit } from './edit.ts';
 import { question } from './question.ts';
+import { explore } from './explore.ts';
 
 export const tools: Record<string, CoreTool> = {
   read,
@@ -18,6 +19,7 @@ export const tools: Record<string, CoreTool> = {
   grep,
   edit,
   question,
+  explore,
 };
 
 export function getTools(): Record<string, CoreTool> {

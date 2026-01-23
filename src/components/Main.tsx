@@ -399,7 +399,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 setCurrentTokens(estimateTokens());
 
                 const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
-                const isBashTool = event.toolName === 'bash';
+                const showRunning = event.toolName === 'bash' || event.toolName === 'explore';
                 let runningMessageId: string | undefined;
 
                 if (!needsApproval) {
@@ -416,8 +416,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                       toolName: event.toolName,
                       toolArgs: event.args,
                       success: true,
-                      isRunning: isBashTool,
-                      runningStartTime: isBashTool ? Date.now() : undefined
+                      isRunning: showRunning,
+                      runningStartTime: showRunning ? Date.now() : undefined
                     });
                     return newMessages;
                   });
@@ -469,8 +469,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   let runningIndex = -1;
                   if (runningMessageId) {
                     runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-                  } else if (toolName === 'bash') {
-                    runningIndex = newMessages.findIndex(m => m.toolName === 'bash' && m.isRunning === true);
+                  } else if (toolName === 'bash' || toolName === 'explore') {
+                    runningIndex = newMessages.findIndex(m => m.toolName === toolName && m.isRunning === true);
                   }
 
                   if (runningIndex !== -1) {
@@ -777,16 +777,41 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           totalChars += JSON.stringify(event.args).length;
           setCurrentTokens(estimateTokens());
 
+          const isExploreTool = event.toolName === 'explore';
+          let runningMessageId: string | undefined;
+
+          if (isExploreTool) {
+            runningMessageId = createId();
+            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
+            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+
+            setMessages((prev: Message[]) => {
+              const newMessages = [...prev];
+              newMessages.push({
+                id: runningMessageId!,
+                role: "tool",
+                content: runningContent,
+                toolName: event.toolName,
+                toolArgs: event.args,
+                success: true,
+                isRunning: true,
+                runningStartTime: Date.now()
+              });
+              return newMessages;
+            });
+          }
+
           pendingToolCalls.set(event.toolCallId, {
             toolName: event.toolName,
             args: event.args,
-            messageId: undefined
+            messageId: runningMessageId
           });
 
         } else if (event.type === 'tool-result') {
           const pending = pendingToolCalls.get(event.toolCallId);
           const toolName = pending?.toolName ?? event.toolName;
           const toolArgs = pending?.args ?? {};
+          const runningMessageId = pending?.messageId;
           pendingToolCalls.delete(event.toolCallId);
           const { content: toolContent, success } = formatToolMessage(
             toolName,
@@ -818,12 +843,20 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
-            const runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+
+            let runningIndex = -1;
+            if (runningMessageId) {
+              runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
+            } else if (toolName === 'bash' || toolName === 'explore') {
+              runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+            }
 
             if (runningIndex !== -1) {
               newMessages[runningIndex] = {
                 ...newMessages[runningIndex]!,
                 content: toolContent,
+                toolArgs: toolArgs,
+                toolResult: event.result,
                 success,
                 isRunning: false,
                 runningStartTime: undefined
@@ -836,6 +869,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               role: "tool",
               content: toolContent,
               toolName,
+              toolArgs: toolArgs,
+              toolResult: event.result,
               success: success
             });
             return newMessages;

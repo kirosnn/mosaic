@@ -14,6 +14,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   grep: 'Grep',
   bash: 'Command',
   question: 'Question',
+  explore: 'Explore',
 };
 
 function getToolDisplayName(toolName: string): string {
@@ -109,6 +110,10 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
       const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
       return cleanCommand ? `${displayName} (${cleanCommand})` : displayName;
     }
+    case 'explore': {
+      const calls = Array.isArray(args.calls) ? args.calls : [];
+      return `${displayName} (${calls.length} tools)`;
+    }
     default:
       return displayName;
   }
@@ -137,6 +142,10 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
       const command = typeof args.command === 'string' ? args.command : '';
       const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
       return { name: displayName, info: cleanCommand || null };
+    }
+    case 'explore': {
+      const calls = Array.isArray(args.calls) ? args.calls : [];
+      return { name: displayName, info: `${calls.length} tools` };
     }
     default:
       return { name: displayName, info: null };
@@ -292,6 +301,33 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
         if (value) return [`Selected: ${value}`];
       }
       return ['Selected'];
+    }
+
+    case 'explore': {
+      if (typeof result !== 'string') return ['Error: invalid result'];
+      try {
+        const parsed = JSON.parse(result) as Array<{
+          index: number;
+          tool: string;
+          args: Record<string, unknown>;
+          success: boolean;
+          result?: string;
+          error?: string;
+        }>;
+        if (!Array.isArray(parsed)) return ['Error: result is not an array'];
+
+        const lines: string[] = [];
+        for (const item of parsed) {
+          const toolDisplay = getToolDisplayName(item.tool);
+          const argInfo = item.args.path || item.args.pattern || '';
+          const status = item.success ? 'ok' : 'error';
+          const statusIcon = item.success ? '+' : '-';
+          lines.push(`${statusIcon} ${toolDisplay}${argInfo ? ` (${argInfo})` : ''}: ${status}`);
+        }
+        return lines.length > 0 ? lines : ['No results'];
+      } catch {
+        return ['Error parsing results'];
+      }
     }
 
     default: {

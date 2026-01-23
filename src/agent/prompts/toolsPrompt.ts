@@ -50,8 +50,36 @@ SEARCH & DISCOVERY:
    - Search in specific directory: grep(pattern="*.js", query="console.log", path="src")
    - Case-sensitive search: grep(pattern="**/*.ts", query="UserModel", case_sensitive=true)
 
+PARALLEL EXPLORATION:
+7. explore: Execute multiple read-only tools in parallel
+   - SIGNIFICANTLY faster for exploration tasks - runs tools simultaneously
+   - Only allows safe read-only tools: read, glob, grep, list
+   - Use this when you need to gather information from multiple sources at once
+   - Maximum 10 parallel tool calls
+   - Parameters: calls (array of {tool: string, args: object})
+
+   Examples:
+   - Read multiple files at once:
+     explore(calls=[
+       {tool:"read", args:{path:"package.json"}},
+       {tool:"read", args:{path:"tsconfig.json"}},
+       {tool:"read", args:{path:"src/index.ts"}}
+     ])
+   - Search and read in parallel:
+     explore(calls=[
+       {tool:"glob", args:{pattern:"**/*.tsx"}},
+       {tool:"grep", args:{pattern:"**/*.ts", query:"interface"}},
+       {tool:"read", args:{path:"README.md"}}
+     ])
+   - Explore directory structure:
+     explore(calls=[
+       {tool:"list", args:{path:"src", recursive:true}},
+       {tool:"glob", args:{pattern:"**/*.test.ts"}},
+       {tool:"glob", args:{pattern:"**/*.spec.ts"}}
+     ])
+
 COMMAND EXECUTION:
-7. bash: Execute a shell command
+8. bash: Execute a shell command
    - Use this to run build tools, tests, git commands, or other CLI tools
    - Parameters: command (string)
    - CRITICAL: You MUST add --timeout <ms> at the END of commands that might hang:
@@ -68,7 +96,7 @@ COMMAND EXECUTION:
    - Quick commands (ls, cat, git status, echo): No --timeout needed (default: 30s)
 
 USER INTERACTION:
-8. question: Ask the user a question with predefined options
+9. question: Ask the user a question with predefined options
    - CRITICAL: This is the ONLY way to ask the user questions. NEVER ask questions in plain text.
    - MANDATORY usage scenarios:
      * When you need user to pick between choices
@@ -88,6 +116,7 @@ USER INTERACTION:
 
 TOOL USAGE GUIDELINES:
 
+- Use explore to run multiple read/search operations in parallel (FASTER)
 - Use glob to find files by pattern (fast file discovery)
 - Use grep to search for text content within files
 - Use edit for small changes to avoid rewriting entire files
@@ -102,8 +131,8 @@ ERRORS:
 
 WORKFLOW BEST PRACTICES:
 
-1. Discover: Use glob, grep, and list to find relevant files
-2. Understand: Use read to examine the current state
+1. Discover: Use explore to run glob, grep, list, and read in parallel for faster exploration
+2. Understand: Use read to examine files (or explore for multiple files at once)
 3. Plan: Think through modifications before acting
 4. Execute: Use edit for small changes, write for new/complete rewrites
 5. Verify: Use bash to run tests and verify changes
