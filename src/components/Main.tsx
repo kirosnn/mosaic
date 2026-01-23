@@ -10,6 +10,7 @@ import type { InputSubmitMeta } from './CustomInput';
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
 import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
 import { subscribeUndoRedo } from "../utils/undoRedoBridge";
+import { setExploreAbortController, setExploreToolCallback, abortExplore } from "../utils/exploreBridge";
 import { initializeSession, saveState } from "../utils/undoRedo";
 import { resetFileChanges } from "../utils/fileChangeTracker";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
@@ -64,12 +65,42 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const commandsOpenRef = useRef(commandsOpen);
   const questionRequestRef = useRef<QuestionRequest | null>(questionRequest);
   const initialMessageProcessed = useRef(false);
+  const exploreMessageIdRef = useRef<string | null>(null);
+  const exploreToolsRef = useRef<Array<{ tool: string; info: string; success: boolean }>>([]);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
   useEffect(() => {
     initializeCommands();
     initializeSession();
+  }, []);
+
+  useEffect(() => {
+    setExploreToolCallback((toolName, args, result) => {
+      const info = (args.path || args.pattern || args.query || '') as string;
+      const shortInfo = info.length > 40 ? info.substring(0, 37) + '...' : info;
+      exploreToolsRef.current.push({ tool: toolName, info: shortInfo, success: result.success });
+
+      if (exploreMessageIdRef.current) {
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex(m => m.id === exploreMessageIdRef.current);
+          if (idx !== -1) {
+            const toolLines = exploreToolsRef.current.map(t => {
+              const icon = t.success ? '+' : '-';
+              return `  ${icon} ${t.tool}(${t.info})`;
+            });
+            const newContent = `Exploring...\n${toolLines.join('\n')}`;
+            newMessages[idx] = { ...newMessages[idx]!, content: newContent };
+          }
+          return newMessages;
+        });
+      }
+    });
+
+    return () => {
+      setExploreToolCallback(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -402,10 +433,21 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 const showRunning = event.toolName === 'bash' || event.toolName === 'explore';
                 let runningMessageId: string | undefined;
 
+                if (event.toolName === 'explore') {
+                  setExploreAbortController(abortController);
+                  exploreToolsRef.current = [];
+                }
+
                 if (!needsApproval) {
                   runningMessageId = createId();
                   const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
-                  const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+                  const runningContent = event.toolName === 'explore'
+                    ? `Explore (${toolInfo || 'exploring...'})\nStarting exploration...`
+                    : (toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName);
+
+                  if (event.toolName === 'explore') {
+                    exploreMessageIdRef.current = runningMessageId;
+                  }
 
                   setMessages((prev: Message[]) => {
                     const newMessages = [...prev];
@@ -435,6 +477,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 const toolArgs = pending?.args ?? {};
                 const runningMessageId = pending?.messageId;
                 pendingToolCalls.delete(event.toolCallId);
+
+                if (toolName === 'explore') {
+                  exploreMessageIdRef.current = null;
+                  setExploreAbortController(null);
+                }
+
                 const { content: toolContent, success } = formatToolMessage(
                   toolName,
                   toolArgs,
@@ -781,9 +829,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           let runningMessageId: string | undefined;
 
           if (isExploreTool) {
+            setExploreAbortController(abortController);
+            exploreToolsRef.current = [];
             runningMessageId = createId();
-            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
-            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+            exploreMessageIdRef.current = runningMessageId;
+            const { info: toolInfo } = parseToolHeader(event.toolName, event.args);
+            const runningContent = `Explore (${toolInfo || 'exploring...'})\nStarting exploration...`;
 
             setMessages((prev: Message[]) => {
               const newMessages = [...prev];
@@ -813,6 +864,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const toolArgs = pending?.args ?? {};
           const runningMessageId = pending?.messageId;
           pendingToolCalls.delete(event.toolCallId);
+
+          if (toolName === 'explore') {
+            exploreMessageIdRef.current = null;
+            setExploreAbortController(null);
+          }
+
           const { content: toolContent, success } = formatToolMessage(
             toolName,
             toolArgs,

@@ -7,6 +7,7 @@ import { createXai } from '@ai-sdk/xai';
 import { z } from 'zod';
 import { readConfig } from '../../utils/config';
 import { executeTool } from './executor';
+import { getExploreAbortSignal, isExploreAborted, notifyExploreTool } from '../../utils/exploreBridge';
 
 interface ExploreLog {
   tool: string;
@@ -16,6 +17,8 @@ interface ExploreLog {
 }
 
 let exploreLogs: ExploreLog[] = [];
+
+const EXPLORE_TIMEOUT = 8 * 60 * 1000; // 8 minutes
 
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase.
 
@@ -90,13 +93,11 @@ function createExploreTools() {
         path: z.string().describe('Path to the file to read'),
       }),
       execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('read', args);
-        exploreLogs.push({
-          tool: 'read',
-          args,
-          success: result.success,
-          resultPreview: result.success ? `${(result.result || '').split('\n').length} lines` : result.error,
-        });
+        const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
+        exploreLogs.push({ tool: 'read', args, success: result.success, resultPreview: preview });
+        notifyExploreTool('read', args, { success: result.success, preview });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -108,22 +109,17 @@ function createExploreTools() {
         path: z.string().optional().describe('Directory to search in (default: workspace root)'),
       }),
       execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('glob', args);
-        let preview = '';
+        let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
             const files = JSON.parse(result.result);
             preview = `${Array.isArray(files) ? files.length : 0} files`;
-          } catch {
-            preview = 'parsed';
-          }
+          } catch { preview = 'ok'; }
         }
-        exploreLogs.push({
-          tool: 'glob',
-          args,
-          success: result.success,
-          resultPreview: result.success ? preview : result.error,
-        });
+        exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
+        notifyExploreTool('glob', args, { success: result.success, preview });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -138,22 +134,17 @@ function createExploreTools() {
         max_results: z.number().optional().describe('Maximum results'),
       }),
       execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('grep', args);
-        let preview = '';
+        let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
             const matches = JSON.parse(result.result);
             preview = `${Array.isArray(matches) ? matches.length : 0} matches`;
-          } catch {
-            preview = 'parsed';
-          }
+          } catch { preview = 'ok'; }
         }
-        exploreLogs.push({
-          tool: 'grep',
-          args,
-          success: result.success,
-          resultPreview: result.success ? preview : result.error,
-        });
+        exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
+        notifyExploreTool('grep', args, { success: result.success, preview });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -167,22 +158,17 @@ function createExploreTools() {
         include_hidden: z.boolean().optional().describe('Include hidden files'),
       }),
       execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('list', args);
-        let preview = '';
+        let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
             const items = JSON.parse(result.result);
             preview = `${Array.isArray(items) ? items.length : 0} items`;
-          } catch {
-            preview = 'parsed';
-          }
+          } catch { preview = 'ok'; }
         }
-        exploreLogs.push({
-          tool: 'list',
-          args,
-          success: result.success,
-          resultPreview: result.success ? preview : result.error,
-        });
+        exploreLogs.push({ tool: 'list', args, success: result.success, resultPreview: preview });
+        notifyExploreTool('list', args, { success: result.success, preview });
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -225,6 +211,13 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreDoneResult = null;
   exploreLogs = [];
 
+  const abortSignal = getExploreAbortSignal();
+  const timeoutId = setTimeout(() => {
+    if (!exploreDoneResult) {
+      exploreDoneResult = '[Exploration timed out after 8 minutes]';
+    }
+  }, EXPLORE_TIMEOUT);
+
   try {
     const model = createModelProvider({
       provider: userConfig.provider,
@@ -245,11 +238,15 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       system: EXPLORE_SYSTEM_PROMPT,
       tools,
       maxSteps: MAX_STEPS,
+      abortSignal,
     });
 
     let lastError: string | null = null;
 
     for await (const chunk of result.fullStream as any) {
+      if (isExploreAborted()) {
+        break;
+      }
       const c: any = chunk;
       if (c.type === 'error') {
         lastError = c.error instanceof Error ? c.error.message : String(c.error);
@@ -257,6 +254,16 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       if (exploreDoneResult !== null) {
         break;
       }
+    }
+
+    clearTimeout(timeoutId);
+
+    if (isExploreAborted()) {
+      const logsStr = formatExploreLogs();
+      return {
+        success: false,
+        error: `Exploration interrupted by user${logsStr ? '\n\n' + logsStr : ''}`,
+      };
     }
 
     if (lastError && exploreLogs.length === 0) {
@@ -280,7 +287,16 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       result: `${logsStr}\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
     };
   } catch (error) {
+    clearTimeout(timeoutId);
     const logsStr = formatExploreLogs();
+
+    if (isExploreAborted()) {
+      return {
+        success: false,
+        error: `Exploration interrupted by user${logsStr ? '\n\n' + logsStr : ''}`,
+      };
+    }
+
     return {
       success: false,
       error: `${error instanceof Error ? error.message : 'Unknown error during exploration'}${logsStr ? '\n\n' + logsStr : ''}`,
