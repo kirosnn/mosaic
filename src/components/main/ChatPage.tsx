@@ -197,7 +197,7 @@ export function ChatPage({
       }
     }
 
-    if (message.isRunning && message.runningStartTime && messageRole === 'tool') {
+    if (message.isRunning && message.runningStartTime && messageRole === 'tool' && message.toolName !== 'explore') {
       allItems.push({
         key: `${messageKey}-running`,
         type: 'line',

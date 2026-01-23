@@ -95,9 +95,10 @@ function createExploreTools() {
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('read', args);
+        const resultLen = result.result?.length || 0;
         const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
         exploreLogs.push({ tool: 'read', args, success: result.success, resultPreview: preview });
-        notifyExploreTool('read', args, { success: result.success, preview });
+        notifyExploreTool('read', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -111,6 +112,7 @@ function createExploreTools() {
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('glob', args);
+        const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
@@ -119,7 +121,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
-        notifyExploreTool('glob', args, { success: result.success, preview });
+        notifyExploreTool('glob', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -136,6 +138,7 @@ function createExploreTools() {
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('grep', args);
+        const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
@@ -144,7 +147,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
-        notifyExploreTool('grep', args, { success: result.success, preview });
+        notifyExploreTool('grep', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -160,6 +163,7 @@ function createExploreTools() {
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
         const result = await executeTool('list', args);
+        const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
         if (result.success && result.result) {
           try {
@@ -168,7 +172,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'list', args, success: result.success, resultPreview: preview });
-        notifyExploreTool('list', args, { success: result.success, preview });
+        notifyExploreTool('list', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
       },

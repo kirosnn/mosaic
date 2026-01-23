@@ -67,6 +67,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const initialMessageProcessed = useRef(false);
   const exploreMessageIdRef = useRef<string | null>(null);
   const exploreToolsRef = useRef<Array<{ tool: string; info: string; success: boolean }>>([]);
+  const explorePurposeRef = useRef<string>('');
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -76,10 +77,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, []);
 
   useEffect(() => {
-    setExploreToolCallback((toolName, args, result) => {
+    let lastExploreTokens = 0;
+    setExploreToolCallback((toolName, args, result, totalTokens) => {
       const info = (args.path || args.pattern || args.query || '') as string;
       const shortInfo = info.length > 40 ? info.substring(0, 37) + '...' : info;
       exploreToolsRef.current.push({ tool: toolName, info: shortInfo, success: result.success });
+
+      const tokenDelta = totalTokens - lastExploreTokens;
+      lastExploreTokens = totalTokens;
+      if (tokenDelta > 0) {
+        setCurrentTokens(prev => prev + tokenDelta);
+      }
 
       if (exploreMessageIdRef.current) {
         setMessages((prev: Message[]) => {
@@ -90,7 +98,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               const icon = t.success ? '+' : '-';
               return `  ${icon} ${t.tool}(${t.info})`;
             });
-            const newContent = `Exploring...\n${toolLines.join('\n')}`;
+            const purpose = explorePurposeRef.current;
+            const newContent = `Explore (${purpose})\n${toolLines.join('\n')}`;
             newMessages[idx] = { ...newMessages[idx]!, content: newContent };
           }
           return newMessages;
@@ -430,22 +439,23 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 setCurrentTokens(estimateTokens());
 
                 const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
-                const showRunning = event.toolName === 'bash' || event.toolName === 'explore';
+                const isExploreTool = event.toolName === 'explore';
+                const showRunning = event.toolName === 'bash';
                 let runningMessageId: string | undefined;
 
-                if (event.toolName === 'explore') {
+                if (isExploreTool) {
                   setExploreAbortController(abortController);
                   exploreToolsRef.current = [];
+                  const purpose = (event.args.purpose as string) || 'exploring...';
+                  explorePurposeRef.current = purpose;
                 }
 
                 if (!needsApproval) {
                   runningMessageId = createId();
                   const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
-                  const runningContent = event.toolName === 'explore'
-                    ? `Explore (${toolInfo || 'exploring...'})\nStarting exploration...`
-                    : (toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName);
+                  const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
-                  if (event.toolName === 'explore') {
+                  if (isExploreTool) {
                     exploreMessageIdRef.current = runningMessageId;
                   }
 
@@ -458,8 +468,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                       toolName: event.toolName,
                       toolArgs: event.args,
                       success: true,
-                      isRunning: showRunning,
-                      runningStartTime: showRunning ? Date.now() : undefined
+                      isRunning: showRunning || isExploreTool,
+                      runningStartTime: (showRunning || isExploreTool) ? Date.now() : undefined
                     });
                     return newMessages;
                   });
@@ -831,10 +841,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           if (isExploreTool) {
             setExploreAbortController(abortController);
             exploreToolsRef.current = [];
+            const purpose = (event.args.purpose as string) || 'exploring...';
+            explorePurposeRef.current = purpose;
             runningMessageId = createId();
             exploreMessageIdRef.current = runningMessageId;
-            const { info: toolInfo } = parseToolHeader(event.toolName, event.args);
-            const runningContent = `Explore (${toolInfo || 'exploring...'})\nStarting exploration...`;
+            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
+            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
             setMessages((prev: Message[]) => {
               const newMessages = [...prev];
