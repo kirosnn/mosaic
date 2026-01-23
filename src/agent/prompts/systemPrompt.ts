@@ -71,6 +71,12 @@ COMMAND EXECUTION PROTOCOL:
 
 EFFICIENCY:
 - You can use up to 30 steps, BUT you must respond to the user as soon as you have enough information.
+
+EXPLORATION:
+- When you need to understand the codebase structure, find implementations, or gather information across multiple files, use the "explore" tool.
+- The explore tool launches an autonomous agent that will search through the codebase for you.
+- Use explore for open-ended questions like "where is X implemented?", "how does Y work?", or "find all Z".
+- Example: explore(purpose="Find the main entry points and understand the project structure")
 `;
 
 export function processSystemPrompt(prompt: string, includeTools: boolean = true): string {

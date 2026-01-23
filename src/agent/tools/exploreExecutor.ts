@@ -202,7 +202,16 @@ function formatExploreLogs(): string {
   return lines.join('\n');
 }
 
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
 export async function executeExploreTool(purpose: string): Promise<ExploreResult> {
+  const startTime = Date.now();
   const userConfig = readConfig();
 
   if (!userConfig.provider || !userConfig.model) {
@@ -261,12 +270,13 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     }
 
     clearTimeout(timeoutId);
+    const duration = formatDuration(Date.now() - startTime);
 
     if (isExploreAborted()) {
       const logsStr = formatExploreLogs();
       return {
         success: false,
-        error: `Exploration interrupted by user${logsStr ? '\n\n' + logsStr : ''}`,
+        error: `Exploration interrupted (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
       };
     }
 
@@ -282,28 +292,29 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     if (exploreDoneResult !== null) {
       return {
         success: true,
-        result: `${logsStr}\n\nSummary:\n${exploreDoneResult}`,
+        result: `Completed in ${duration}\n${logsStr}\n\nSummary:\n${exploreDoneResult}`,
       };
     }
 
     return {
       success: true,
-      result: `${logsStr}\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
+      result: `Completed in ${duration}\n${logsStr}\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
     };
   } catch (error) {
     clearTimeout(timeoutId);
+    const duration = formatDuration(Date.now() - startTime);
     const logsStr = formatExploreLogs();
 
     if (isExploreAborted()) {
       return {
         success: false,
-        error: `Exploration interrupted by user${logsStr ? '\n\n' + logsStr : ''}`,
+        error: `Exploration interrupted (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
       };
     }
 
     return {
       success: false,
-      error: `${error instanceof Error ? error.message : 'Unknown error during exploration'}${logsStr ? '\n\n' + logsStr : ''}`,
+      error: `${error instanceof Error ? error.message : 'Unknown error'} (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
     };
   }
 }

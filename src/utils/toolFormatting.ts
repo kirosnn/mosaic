@@ -51,7 +51,8 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     case 'create_directory':
     case 'glob':
     case 'grep':
-    case 'bash': {
+    case 'bash':
+    case 'explore': {
       return null;
     }
 
