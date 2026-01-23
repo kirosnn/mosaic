@@ -50,33 +50,21 @@ SEARCH & DISCOVERY:
    - Search in specific directory: grep(pattern="*.js", query="console.log", path="src")
    - Case-sensitive search: grep(pattern="**/*.ts", query="UserModel", case_sensitive=true)
 
-PARALLEL EXPLORATION:
-7. explore: Execute multiple read-only tools in parallel
-   - SIGNIFICANTLY faster for exploration tasks - runs tools simultaneously
-   - Only allows safe read-only tools: read, glob, grep, list
-   - Use this when you need to gather information from multiple sources at once
-   - Maximum 10 parallel tool calls
-   - Parameters: calls (array of {tool: string, args: object})
+AUTONOMOUS EXPLORATION:
+7. explore: Launch an autonomous exploration agent
+   - Explores the codebase iteratively to gather information
+   - The agent uses read, glob, grep, and list tools autonomously
+   - Continues until it has enough information or reaches its limit
+   - Use for open-ended exploration tasks
+   - Parameters: purpose (string) - The goal of the exploration
 
    Examples:
-   - Read multiple files at once:
-     explore(calls=[
-       {tool:"read", args:{path:"package.json"}},
-       {tool:"read", args:{path:"tsconfig.json"}},
-       {tool:"read", args:{path:"src/index.ts"}}
-     ])
-   - Search and read in parallel:
-     explore(calls=[
-       {tool:"glob", args:{pattern:"**/*.tsx"}},
-       {tool:"grep", args:{pattern:"**/*.ts", query:"interface"}},
-       {tool:"read", args:{path:"README.md"}}
-     ])
-   - Explore directory structure:
-     explore(calls=[
-       {tool:"list", args:{path:"src", recursive:true}},
-       {tool:"glob", args:{pattern:"**/*.test.ts"}},
-       {tool:"glob", args:{pattern:"**/*.spec.ts"}}
-     ])
+   - Understand project structure:
+     explore(purpose="Understand the project structure and main entry points")
+   - Find implementations:
+     explore(purpose="Find all React components that handle user authentication")
+   - Investigate code patterns:
+     explore(purpose="Find how errors are handled throughout the codebase")
 
 COMMAND EXECUTION:
 8. bash: Execute a shell command
@@ -116,7 +104,7 @@ USER INTERACTION:
 
 TOOL USAGE GUIDELINES:
 
-- Use explore to run multiple read/search operations in parallel (FASTER)
+- Use explore for open-ended exploration tasks (autonomous agent)
 - Use glob to find files by pattern (fast file discovery)
 - Use grep to search for text content within files
 - Use edit for small changes to avoid rewriting entire files
@@ -131,8 +119,8 @@ ERRORS:
 
 WORKFLOW BEST PRACTICES:
 
-1. Discover: Use explore to run glob, grep, list, and read in parallel for faster exploration
-2. Understand: Use read to examine files (or explore for multiple files at once)
+1. Discover: Use explore for open-ended exploration, or glob/grep for targeted searches
+2. Understand: Use read to examine files
 3. Plan: Think through modifications before acting
 4. Execute: Use edit for small changes, write for new/complete rewrites
 5. Verify: Use bash to run tests and verify changes

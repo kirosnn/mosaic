@@ -730,54 +730,6 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         };
       }
 
-      case 'explore': {
-        const ALLOWED_EXPLORE_TOOLS = ['read', 'glob', 'grep', 'list'];
-        const calls = args.calls as Array<{ tool: string; args: Record<string, unknown> }>;
-
-        if (!Array.isArray(calls) || calls.length === 0) {
-          return {
-            success: false,
-            error: 'No tool calls provided'
-          };
-        }
-
-        if (calls.length > 10) {
-          return {
-            success: false,
-            error: 'Maximum 10 parallel tool calls allowed'
-          };
-        }
-
-        for (const call of calls) {
-          if (!ALLOWED_EXPLORE_TOOLS.includes(call.tool)) {
-            return {
-              success: false,
-              error: `Tool "${call.tool}" is not allowed in explore. Only: ${ALLOWED_EXPLORE_TOOLS.join(', ')}`
-            };
-          }
-        }
-
-        const results = await Promise.all(
-          calls.map(async (call, index) => {
-            const toolResult = await executeTool(call.tool, call.args);
-            return {
-              index,
-              tool: call.tool,
-              args: call.args,
-              success: toolResult.success,
-              result: toolResult.success ? toolResult.result : undefined,
-              error: toolResult.success ? undefined : toolResult.error,
-            };
-          })
-        );
-
-        const allSuccessful = results.every(r => r.success);
-
-        return {
-          success: allSuccessful,
-          result: JSON.stringify(results, null, 2),
-        };
-      }
 
       default:
         return {

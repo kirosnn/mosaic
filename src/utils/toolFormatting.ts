@@ -111,8 +111,8 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
       return cleanCommand ? `${displayName} (${cleanCommand})` : displayName;
     }
     case 'explore': {
-      const calls = Array.isArray(args.calls) ? args.calls : [];
-      return `${displayName} (${calls.length} tools)`;
+      const purpose = typeof args.purpose === 'string' ? args.purpose : '';
+      return purpose ? `${displayName} (${purpose})` : displayName;
     }
     default:
       return displayName;
@@ -144,8 +144,8 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
       return { name: displayName, info: cleanCommand || null };
     }
     case 'explore': {
-      const calls = Array.isArray(args.calls) ? args.calls : [];
-      return { name: displayName, info: `${calls.length} tools` };
+      const purpose = typeof args.purpose === 'string' ? args.purpose : '';
+      return { name: displayName, info: purpose || null };
     }
     default:
       return { name: displayName, info: null };
@@ -304,30 +304,17 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
     }
 
     case 'explore': {
-      if (typeof result !== 'string') return ['Error: invalid result'];
-      try {
-        const parsed = JSON.parse(result) as Array<{
-          index: number;
-          tool: string;
-          args: Record<string, unknown>;
-          success: boolean;
-          result?: string;
-          error?: string;
-        }>;
-        if (!Array.isArray(parsed)) return ['Error: result is not an array'];
-
-        const lines: string[] = [];
-        for (const item of parsed) {
-          const toolDisplay = getToolDisplayName(item.tool);
-          const argInfo = item.args.path || item.args.pattern || '';
-          const status = item.success ? 'ok' : 'error';
-          const statusIcon = item.success ? '+' : '-';
-          lines.push(`${statusIcon} ${toolDisplay}${argInfo ? ` (${argInfo})` : ''}: ${status}`);
-        }
-        return lines.length > 0 ? lines : ['No results'];
-      } catch {
-        return ['Error parsing results'];
+      if (typeof result === 'string') {
+        const lines = result.split(/\r?\n/).filter(line => line.trim());
+        return lines.length > 0 ? lines : ['Exploration completed'];
       }
+      if (result && typeof result === 'object') {
+        const obj = result as Record<string, unknown>;
+        if (typeof obj.error === 'string') {
+          return [`Error: ${obj.error}`];
+        }
+      }
+      return ['Exploration completed'];
     }
 
     default: {

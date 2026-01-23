@@ -1,28 +1,17 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
-import { executeTool } from './executor';
-
-const ALLOWED_TOOLS = ['read', 'glob', 'grep', 'list'] as const;
-type AllowedTool = typeof ALLOWED_TOOLS[number];
-
-const toolCallSchema = z.object({
-  tool: z.enum(ALLOWED_TOOLS).describe('The tool to execute'),
-  args: z.record(z.unknown()).describe('Arguments to pass to the tool'),
-});
+import { executeExploreTool } from './exploreExecutor';
 
 export const explore: CoreTool = tool({
-  description: `Execute multiple read-only tools in parallel for faster exploration.
-Only allows safe tools: ${ALLOWED_TOOLS.join(', ')}.
-Use this to speed up exploration by running multiple searches/reads at once.
-Each tool call will be executed simultaneously and results returned together.`,
+  description: `Explore the codebase autonomously to gather information.
+This tool launches an exploration agent that will use read, glob, grep, and list tools iteratively.
+The agent will continue exploring until it has gathered enough information to answer the purpose.
+Use this for open-ended exploration tasks like understanding code structure, finding implementations, etc.`,
   parameters: z.object({
-    calls: z.array(toolCallSchema)
-      .min(1)
-      .max(10)
-      .describe('Array of tool calls to execute in parallel. Each call specifies a tool name and its arguments.'),
+    purpose: z.string().describe('The goal of the exploration - what information you need to gather'),
   }),
   execute: async (args) => {
-    const result = await executeTool('explore', args);
+    const result = await executeExploreTool(args.purpose);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     return result.result;
   },
