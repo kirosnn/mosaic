@@ -23,3 +23,6 @@ test.ts
 *.db
 *.db-wal
 *.db-shm
+undo-redo.db
+undo-redo.db-wal
+undo-redo.db-shm
