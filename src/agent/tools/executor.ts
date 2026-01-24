@@ -78,7 +78,7 @@ function matchGlob(filename: string, pattern: string): boolean {
       .replace(/\*/g, '[^/]*')
       .replace(/\?/g, '[^/]');
 
-    regex = new RegExp(`^${regexPattern}$`);
+    regex = new RegExp(`^${regexPattern}$`, 'i');
     globPatternCache.set(pattern, regex);
 
     if (globPatternCache.size > 100) {
@@ -183,12 +183,17 @@ async function findFilesByPattern(pattern: string, searchPath: string): Promise<
   if (hasDoubleStar) {
     const files = await walkDirectory(searchPath, undefined, false);
     const separator = searchPath.endsWith(sep) ? '' : sep;
+    const root = searchPath + separator;
 
     for (const file of files) {
       if (file.excluded) continue;
-      const relativePath = file.path.startsWith(searchPath + separator)
-        ? file.path.slice((searchPath + separator).length)
-        : file.path.replace(searchPath, '').replace(new RegExp(`^\\${sep}`), '');
+
+      let relativePath = file.path;
+      if (file.path.startsWith(root)) {
+        relativePath = file.path.slice(root.length);
+      } else if (file.path.toLowerCase().startsWith(root.toLowerCase())) {
+        relativePath = file.path.slice(root.length);
+      }
 
       if (matchGlob(relativePath, pattern)) {
         results.push(relativePath);
