@@ -3,6 +3,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Message } from '../types';
 import { MessageItem } from './MessageItem';
 import { Sidebar, SidebarProps } from './Sidebar';
+import { QuestionRequest } from '../../utils/questionBridge';
+import { ApprovalRequest } from '../../utils/approvalBridge';
+import { QuestionPanel } from './QuestionPanel';
+import { ApprovalPanel } from './ApprovalPanel';
 import '../assets/css/global.css'
 
 interface ChatPageProps {
@@ -12,6 +16,8 @@ interface ChatPageProps {
     sidebarProps: SidebarProps;
     currentTitle?: string | null;
     workspace?: string | null;
+    questionRequest?: QuestionRequest | null;
+    approvalRequest?: ApprovalRequest | null;
 }
 
 function formatWorkspace(path: string | null | undefined): string {
@@ -44,7 +50,7 @@ function formatWorkspace(path: string | null | undefined): string {
     return normalized;
 }
 
-export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, currentTitle, workspace }: ChatPageProps) {
+export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest }: ChatPageProps) {
     const [inputValue, setInputValue] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -53,13 +59,13 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
         if (messagesEndRef.current) {
             messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-    }, [messages]);
+    }, [messages, questionRequest, approvalRequest]);
 
     useEffect(() => {
-        if (inputRef.current && !isProcessing) {
+        if (inputRef.current && !isProcessing && !questionRequest && !approvalRequest) {
             inputRef.current.focus();
         }
-    }, [isProcessing]);
+    }, [isProcessing, questionRequest, approvalRequest]);
 
     useEffect(() => {
         if (inputRef.current) inputRef.current.focus();
@@ -76,6 +82,30 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSubmit();
+        }
+    };
+
+    const handleQuestionAnswer = async (index: number, customText?: string) => {
+        try {
+            await fetch('/api/question/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index, customText })
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const handleApprovalResponse = async (approved: boolean, customResponse?: string) => {
+        try {
+            await fetch('/api/approval/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved, customResponse })
+            });
+        } catch (err) {
+            console.error(err);
         }
     };
 
@@ -113,6 +143,29 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                                     </div>
                                 </div>
                             )}
+
+                            {questionRequest && (
+                                <div className="message assistant">
+                                    <div className="message-content" style={{ width: '100%', maxWidth: '100%' }}>
+                                        <QuestionPanel
+                                            request={questionRequest}
+                                            onAnswer={handleQuestionAnswer}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {approvalRequest && (
+                                <div className="message assistant">
+                                    <div className="message-content" style={{ width: '100%', maxWidth: '100%' }}>
+                                        <ApprovalPanel
+                                            request={approvalRequest}
+                                            onRespond={handleApprovalResponse}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             <div ref={messagesEndRef} />
                         </div>
 
@@ -124,7 +177,7 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                                 onKeyDown={handleKeyDown}
                                 placeholder="Type your message..."
                                 rows={1}
-                                disabled={isProcessing}
+                                disabled={isProcessing || !!questionRequest || !!approvalRequest}
                             />
                         </form>
                     </div>

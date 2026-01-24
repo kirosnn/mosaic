@@ -6,6 +6,8 @@ import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
 import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES } from './utils';
 import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation } from './storage';
+import { QuestionRequest } from '../utils/questionBridge';
+import { ApprovalRequest } from '../utils/approvalBridge';
 import './assets/css/global.css'
 
 import { Modal } from './components/Modal';
@@ -21,6 +23,8 @@ function App() {
     const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [workspace, setWorkspace] = useState<string | null>(null);
+    const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
+    const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
 
     const refreshConversations = useCallback(() => {
         setConversations(getAllConversations());
@@ -260,6 +264,10 @@ function App() {
                             assistantChunk = '';
                             thinkingChunk = '';
                             assistantMessageId = null;
+                        } else if (event.type === 'question') {
+                            setQuestionRequest(event.request);
+                        } else if (event.type === 'approval') {
+                            setApprovalRequest(event.request);
                         } else if (event.type === 'finish' || event.type === 'step-finish') {
                             break;
                         } else if (event.type === 'error') {
@@ -381,6 +389,8 @@ function App() {
                     sidebarProps={sidebarProps}
                     currentTitle={currentTitle}
                     workspace={workspace}
+                    questionRequest={questionRequest}
+                    approvalRequest={approvalRequest}
                 />
             )}
 

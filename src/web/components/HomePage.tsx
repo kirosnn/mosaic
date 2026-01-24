@@ -42,7 +42,7 @@ export function HomePage({ onStartChat, onOpenProject, sidebarProps }: HomePageP
                 const response = await fetch('/api/recent-projects');
                 if (response.ok) {
                     const projects = await response.json();
-                    setRecentProjects(projects);
+                    setRecentProjects(projects.slice(0, 3));
                 }
             } catch (error) {
                 console.error('Failed to fetch recent projects:', error);
@@ -59,22 +59,6 @@ export function HomePage({ onStartChat, onOpenProject, sidebarProps }: HomePageP
     const handleProjectClick = async (path: string) => {
         onOpenProject(path);
     };
-
-    /*
-    const handleProjectClick = async (path: string) => {
-        try {
-            await fetch('/api/add-recent-project', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path }),
-            });
-        } catch (error) {
-            console.error('Failed to add recent project:', error);
-        }
-        onStartChat(`Opening project: ${path}`);
-    };
-    */
-
     return (
         <div className="home-page">
             <Sidebar {...sidebarProps} />

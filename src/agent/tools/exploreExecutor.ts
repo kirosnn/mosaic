@@ -18,7 +18,7 @@ interface ExploreLog {
 
 let exploreLogs: ExploreLog[] = [];
 
-const EXPLORE_TIMEOUT = 8 * 60 * 1000; // 8 minutes
+const EXPLORE_TIMEOUT = 8 * 60 * 1000;
 
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase.
 
