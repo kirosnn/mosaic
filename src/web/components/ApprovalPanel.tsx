@@ -12,7 +12,6 @@ export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [selectedIndex, setSelectedIndex] = useState(0);
 
-    // Parse title
     const titleMatch = request.preview.title.match(/^(.+?)\s*\((.+)\)$/);
     const toolName = titleMatch ? titleMatch[1] : request.preview.title;
     const toolInfo = titleMatch ? titleMatch[2] : null;

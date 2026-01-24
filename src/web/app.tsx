@@ -331,6 +331,25 @@ function App() {
         }
     };
 
+    const handleRenameConversation = (conversationId: string, newTitle: string) => {
+        const conversation = getConversation(conversationId);
+        if (conversation) {
+            const updated: Conversation = {
+                ...conversation,
+                title: newTitle,
+                updatedAt: Date.now(),
+            };
+            saveConversation(updated);
+            refreshConversations();
+
+            if (currentConversation?.id === conversationId) {
+                setCurrentConversation(updated);
+                setCurrentTitle(newTitle);
+                setDocumentTitle(newTitle);
+            }
+        }
+    };
+
     const sidebarProps = {
         isExpanded: isSidebarExpanded,
         onToggleExpand: () => setIsSidebarExpanded(!isSidebarExpanded),
@@ -347,6 +366,7 @@ function App() {
         currentConversationId: currentConversation?.id || null,
         onLoadConversation: handleLoadConversation,
         onDeleteConversation: handleDeleteConversation,
+        onRenameConversation: handleRenameConversation,
     };
 
     return (

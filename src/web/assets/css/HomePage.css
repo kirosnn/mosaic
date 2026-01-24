@@ -264,25 +264,176 @@
     color: var(--text-muted);
 }
 
-.conversation-delete {
+.conversation-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.conversation-item:hover .conversation-actions {
+    opacity: 1;
+}
+
+.conversation-action-btn {
     background: transparent;
     border: none;
     color: var(--text-muted);
     cursor: pointer;
     padding: 4px;
     border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    transition: color 0.15s, background 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.conversation-item:hover .conversation-delete {
-    opacity: 1;
+.conversation-action-btn:hover {
+    background: var(--overlay-light);
+}
+
+.conversation-edit:hover {
+    color: var(--accent-color);
 }
 
 .conversation-delete:hover {
     color: var(--status-error);
+}
+
+.sidebar-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    backdrop-filter: blur(4px);
+}
+
+.sidebar-modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 400px;
+    animation: modal-appear 0.15s ease-out;
+}
+
+@keyframes modal-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.sidebar-modal-header {
+    padding: 1rem 1.25rem;
+}
+
+.sidebar-modal-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sidebar-modal-body {
+    padding: 1rem 1.25rem;
+}
+
+.sidebar-modal-body p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.sidebar-modal-input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    background: var(--bg-app);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.sidebar-modal-input:focus {
+    border-color: var(--accent-color);
+}
+
+.sidebar-modal-input::placeholder {
+    color: var(--text-muted);
+}
+
+.sidebar-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+}
+
+.sidebar-modal-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.sidebar-modal-btn.cancel {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.sidebar-modal-btn.cancel:hover {
     background: var(--overlay-light);
+    color: var(--text-primary);
+}
+
+.sidebar-modal-btn.delete {
+    background: var(--status-error);
+    border: 1px solid var(--status-error);
+    color: white;
+}
+
+.sidebar-modal-btn.delete:hover {
+    background: #e03030;
+    border-color: #e03030;
+}
+
+.sidebar-modal-btn.confirm {
+    background: var(--accent-color);
+    border: 1px solid var(--accent-color);
+    color: #000;
+}
+
+.sidebar-modal-btn.confirm:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+.sidebar-modal-btn.confirm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sidebar-modal-btn.confirm:disabled:hover {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
 }

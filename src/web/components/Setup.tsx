@@ -36,9 +36,8 @@ export function Setup({ onComplete }: SetupProps) {
     const [selectedProviderId, setSelectedProviderId] = useState<string>('');
     const [selectedModelId, setSelectedModelId] = useState<string>('');
     const [apiKey, setApiKey] = useState<string>('');
-    const [selectedIndex, setSelectedIndex] = useState(0); // For list navigation
+    const [selectedIndex, setSelectedIndex] = useState(0);
 
-    // Load available providers
     useEffect(() => {
         fetch('/api/config/providers')
             .then(res => res.json())
@@ -46,7 +45,6 @@ export function Setup({ onComplete }: SetupProps) {
             .catch(err => console.error("Failed to load providers", err));
     }, []);
 
-    // Reset selection index when step changes
     useEffect(() => {
         setSelectedIndex(0);
     }, [step]);
@@ -74,7 +72,7 @@ export function Setup({ onComplete }: SetupProps) {
                 const model = options[selectedIndex];
                 setSelectedModelId(model.id);
                 const requiresKey = (provider?.requiresApiKey || model.requiresApiKey);
-                if (requiresKey && provider?.id !== 'ollama') { // Ollama usually doesn't need key unless cloud
+                if (requiresKey && provider?.id !== 'ollama') {
                     setStep('apikey');
                 } else if (requiresKey && provider?.id === 'ollama' && (model.id.includes(':cloud') || model.id.includes('-cloud'))) {
                     setStep('apikey');
@@ -107,8 +105,6 @@ export function Setup({ onComplete }: SetupProps) {
         }
     };
 
-    // Need global keydown listener for some things or just div focus? 
-    // Ideally we focus the container.
     const containerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         containerRef.current?.focus();
