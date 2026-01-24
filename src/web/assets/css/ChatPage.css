@@ -4,6 +4,7 @@
     height: 100%;
     position: relative;
     width: 100%;
+    overflow: hidden;
 }
 
 .chat-title-bar {
@@ -42,13 +43,14 @@
     margin: 0 auto;
     width: 100%;
     position: relative;
+    overflow: hidden;
 }
 
 .messages {
     flex: 1;
     overflow-y: auto;
     padding: 1rem;
-    padding-bottom: 150px;
+    padding-bottom: 180px;
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
@@ -56,20 +58,19 @@
 
 .input-area {
     position: absolute;
-    bottom: 2rem;
-    left: 50%;
-    transform: translateX(-50%);
-    width: calc(100% - 2rem);
-    background: var(--bg-panel);
-    border-radius: 12px;
-    padding: 0.75rem;
-    border: 1px solid var(--border-subtle);
-    transition: all 0.2s ease;
+    bottom: 1.5rem;
+    left: 1rem;
+    right: 1rem;
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    background: var(--bg-panel-transparent);
+    border-radius: 16px;
+    padding: 1rem 1rem 0.75rem 1rem;
     z-index: 100;
-}
-
-.input-area:focus-within {
-    border-color: var(--accent-color);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .input-area textarea {
@@ -81,6 +82,7 @@
     font-family: inherit;
     resize: none;
     outline: none;
+    min-height: 60px;
     max-height: 200px;
     padding: 0;
     line-height: 1.5;
@@ -93,6 +95,65 @@
 .input-area textarea:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.input-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 0.5rem;
+}
+
+.input-actions-left {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.input-actions-right {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.action-btn {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    padding: 0.4rem 0.75rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.action-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+.action-btn.primary {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
+}
+
+.action-btn.primary:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+.action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: var(--border-subtle);
 }
 
 .messages::-webkit-scrollbar {

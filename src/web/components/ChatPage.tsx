@@ -176,9 +176,25 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                                 onChange={(e) => setInputValue(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 placeholder="Type your message..."
-                                rows={1}
+                                rows={2}
                                 disabled={isProcessing || !!questionRequest || !!approvalRequest}
                             />
+                            <div className="input-actions">
+                                <div className="input-actions-left">
+                                    <button type="button" className="action-btn" disabled={isProcessing}>
+                                        + Attach
+                                    </button>
+                                </div>
+                                <div className="input-actions-right">
+                                    <button
+                                        type="submit"
+                                        className="action-btn primary"
+                                        disabled={isProcessing || !inputValue.trim() || !!questionRequest || !!approvalRequest}
+                                    >
+                                        Send
+                                    </button>
+                                </div>
+                            </div>
                         </form>
                     </div>
                 </div>

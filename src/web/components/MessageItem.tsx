@@ -58,7 +58,6 @@ function parseToolHeader(content: string): { name: string; info: string | null; 
 
 export function MessageItem({ message }: MessageItemProps) {
     if (message.role === 'tool') {
-        const icon = message.success === false ? '✗' : message.isRunning ? '⏳' : '✓';
         const statusClass = message.success === false ? 'error' : message.isRunning ? 'running' : 'success';
 
         const { name, info, bodyLines } = parseToolHeader(message.content);
@@ -67,7 +66,6 @@ export function MessageItem({ message }: MessageItemProps) {
             <div className={`message tool ${statusClass}`}>
                 <div className="message-content">
                     <div className="tool-header">
-                        <span className="tool-icon">{icon}</span>
                         <span className="tool-name">{name}</span>
                         {info && <span className="tool-info">({info})</span>}
                         {message.isRunning && message.runningStartTime && (

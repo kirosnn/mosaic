@@ -19,7 +19,16 @@
 }
 
 .message.user {
-    background: var(--bg-panel);
+    background: transparent;
+    justify-content: flex-end;
+}
+
+.message.user .message-content {
+    background: var(--bg-app);
+    padding: 0.6rem 1rem;
+    border-radius: 12px;
+    max-width: 80%;
+    flex: none;
 }
 
 .message.assistant {
@@ -29,6 +38,7 @@
 .message.tool {
     background: var(--bg-tool);
     border: 1px solid var(--border-tool);
+    border-radius: 16px;
 }
 
 .message.tool.running {
@@ -254,4 +264,113 @@
     40% {
         transform: scale(1);
     }
+}
+
+.markdown-content {
+    line-height: 1.6;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+    font-weight: 500;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+.markdown-content h1 {
+    font-size: 1.25rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 0.3rem;
+}
+
+.markdown-content h2 {
+    font-size: 1.15rem;
+}
+
+.markdown-content h3 {
+    font-size: 1.05rem;
+}
+
+.markdown-content h4 {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.markdown-content p {
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+.markdown-content ul,
+.markdown-content ol {
+    padding-left: 1.25rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+.markdown-content li {
+    margin-bottom: 0.25rem;
+}
+
+.markdown-content code {
+    background: var(--bg-code);
+    padding: 0.2rem 0.3rem;
+    border-radius: 4px;
+    font-family: 'Geist Medium Monospace', monospace;
+    font-size: 0.85em;
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+}
+
+.markdown-content pre {
+    margin: 1rem 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+}
+
+.markdown-content pre>div {
+    margin: 0 !important;
+    padding: 1rem !important;
+    border-radius: 0 !important;
+    background-color: #0a0a0a !important;
+}
+
+.markdown-content pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+    border: none;
+}
+
+.markdown-content blockquote {
+    border-left: 3px solid var(--border-subtle);
+    margin: 1rem 0;
+    padding-left: 1rem;
+    color: var(--text-muted);
+}
+
+.markdown-content a {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-decoration-color: var(--border-subtle);
+    text-underline-offset: 3px;
+}
+
+.markdown-content a:hover {
+    color: var(--accent-color);
+    text-decoration-color: var(--accent-color);
+}
+
+.markdown-content hr {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 1.5rem 0;
 }

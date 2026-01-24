@@ -6,6 +6,7 @@
     --bg-app: #171717;
     --bg-panel: #1a1a1a;
     --bg-code: #0a0a0a;
+    --bg-panel-transparent: rgba(26, 26, 26, 0.5);
 
     --text-primary: #ffffff;
     --text-secondary: #aaaaaa;
@@ -141,7 +142,6 @@ body {
     display: none;
 }
 
-/* Modal Styles */
 .modal-overlay {
     position: fixed;
     top: 0;
