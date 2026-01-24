@@ -6,139 +6,121 @@
 
 **Version 0.0.6.03**
 
-Mosaic is an open-source AI-powered CLI coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in your terminal, offering seamless interaction with AI coding assistants through a modern, responsive interface.
+Mosaic is an open-source, AI-powered coding agent for the terminal. It combines a React-based TUI (OpenTUI) with a tool-driven agent architecture to deliver a fast, context-aware development workflow. A web UI is also available for those who prefer a browser experience.
 
-## Features
+## Highlights
 
-- **Multi-Provider AI Support**: Compatible with OpenAI, Anthropic, Google, Mistral, XAI, and Ollama
-- **Terminal-First UI**: Modern React-based interface rendered directly in the terminal
-- **Web Interface**: Optional browser-based interface on http://127.0.0.1:8192
-- **Tool Integration**: Built-in tools for file operations, code search, and terminal commands
-- **Slash Commands**: Quick access to common operations
-- **Workspace Context**: Project-specific context files for better AI understanding
+- Multi-provider AI support (OpenAI, Anthropic, Google, Mistral, xAI, Ollama)
+- Terminal-first UI powered by React + OpenTUI
+- Optional web interface on http://127.0.0.1:8192
+- Built-in tools for file operations, search, and shell commands
+- Slash commands for quick actions
+- Project context via `MOSAIC.md` files
 
-## Prerequisites
+## Requirements
 
-- [Bun](https://bun.sh) - Fast all-in-one JavaScript runtime
+- [Bun](https://bun.sh)
 
-## Installation
+## Installation (from source)
 
 ```bash
-git clone https://github.com/yourusername/mosaic-cli.git
+git clone https://github.com/kirosnn/mosaic.git
 cd mosaic-cli
 bun install
 bun link
 ```
 
-After linking, you can run Mosaic from any directory:
+After linking, run Mosaic from any directory:
 
 ```bash
 mosaic
 ```
 
-## Usage
+If you prefer not to link globally:
 
-### First Run
+```bash
+bun run mosaic
+```
 
-On first run, Mosaic will:
-1. Display a welcome screen
-2. Create a configuration directory at `~/.mosaic/`
-3. Guide you through AI provider setup
+## Quick Start
 
-### Initializing a Project
-
-Initialize Mosaic context in your project workspace:
+1. Run `mosaic` in a project directory.
+2. On first run, Mosaic creates `~/.mosaic/` and guides you through provider setup.
+3. Initialize project context with:
 
 ```bash
 /init
 ```
 
-This command creates:
-- `MOSAIC.md` - A context file that helps the AI understand your project structure, patterns, and conventions
-- `.mosaic/` - Project-specific configuration directory
+This creates:
+- `MOSAIC.md` with project context and conventions
+- `.mosaic/` for project-specific settings
 
-The AI will automatically analyze your codebase and generate a comprehensive MOSAIC.md file tailored to your project.
+## CLI Usage
 
-### Web Interface
+```bash
+mosaic                       # Start in current directory
+mosaic ./my-project          # Start in a specific directory
+mosaic run "fix the bug"     # Launch with a task
+mosaic --help                # Show help
+```
 
-Launch the web interface server:
+## Web Interface
 
 ```bash
 mosaic web
 ```
 
-Then open your browser to http://127.0.0.1:8192 for a modern, browser-based AI coding assistant interface.
+Open http://127.0.0.1:8192 in your browser.
 
-### Basic Usage
+## Configuration
 
-```bash
-mosaic                       # Start in current directory
-mosaic ./my-project          # Start in specific directory
-mosaic run "fix the bug"     # Launch with a task
-mosaic --help                # Show help
-```
+Mosaic stores global settings in `~/.mosaic/`:
+- `mosaic.jsonc` includes first-run status and version metadata
 
-### Uninstalling
+Project-specific settings live in `.mosaic/` at the repository root.
 
-```bash
-mosaic uninstall             # Interactive uninstall
-mosaic uninstall --force     # Remove all data without prompts
-```
+## Project Structure
 
-### Slash Commands
+- `src/index.tsx` - CLI entry point and routing
+- `src/agent/` - Agent core, tools, and providers
+- `src/components/` - TUI components
+- `src/web/` - Web UI and server
+- `src/utils/` - Helpers, config, and commands
 
-Available commands within Mosaic:
+## How It Works
 
-- `/init` or `/i` - Initialize workspace with MOSAIC.md context file
-- `/help` or `/h` - Show available commands
-- `/echo <text>` - Echo text back (testing)
+Mosaic relies on a tool registry that exposes safe, focused capabilities to the agent:
+
+- File operations (read, write, edit)
+- Directory listing and navigation
+- Code search with regex
+- Terminal command execution
+- Interactive questions for clarification
+
+The `MOSAIC.md` file helps the agent adapt to each repository by describing conventions and structure.
+
+## AI Providers
+
+Mosaic uses the Vercel AI SDK and currently supports:
+
+- OpenAI (GPT family)
+- Anthropic (Claude family)
+- Google (Gemini family)
+- Mistral (Mistral, Mixtral)
+- xAI (Grok family)
+- Ollama (local or cloud models)
 
 ## Development
 
 ```bash
-bun run dev              # Run with auto-reload
-bun run start            # Run normally
+bun run dev              # Watch mode
+bun run start            # Normal run
 ```
-
-## Configuration
-
-Mosaic stores its configuration in `~/.mosaic/`:
-- `mosaic.jsonc` - Tracks first run status and version information
-
-## Technical Stack
-
-- **Runtime**: Bun
-- **UI**: OpenTUI with React
-- **AI Integration**: Vercel AI SDK
-- **Language**: TypeScript
-- **Database**: Better SQLite 3
-
-## Supported AI Providers
-
-Mosaic supports multiple AI providers through the Vercel AI SDK:
-
-- **OpenAI**: GPT-4, GPT-3.5-turbo and other models
-- **Anthropic**: Claude models (Opus, Sonnet, Haiku)
-- **Google**: Gemini models
-- **Mistral**: Mistral and Mixtral models
-- **xAI**: Grok models
-- **Ollama**: Local and cloud models with automatic service management
-
-## How It Works
-
-Mosaic provides AI agents with powerful tools:
-
-- **File Operations**: Read, write, and edit files
-- **Directory Management**: List and navigate project structure
-- **Code Search**: Regex-powered grep across the entire project
-- **Terminal Integration**: Execute shell commands
-- **User Interaction**: Ask questions for clarification
-
-The MOSAIC.md context file helps the AI understand your project's architecture, conventions, and patterns, making it more effective at completing tasks.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+Issues and pull requests are welcome. Please include clear reproduction steps and context for behavior changes.
 
 ## License
 
