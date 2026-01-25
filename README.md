@@ -25,7 +25,7 @@ Mosaic is an open-source, AI-powered coding agent for the terminal. It combines 
 
 ```bash
 git clone https://github.com/kirosnn/mosaic.git
-cd mosaic-cli
+cd mosaic
 bun install
 bun link
 ```

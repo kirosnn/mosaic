@@ -24,7 +24,7 @@ export async function uninstallMosaic(force: boolean = false): Promise<void> {
 
     console.log('\nUnlinking Mosaic...');
     try {
-      execSync('bun unlink mosaic-cli', { stdio: 'inherit' });
+      execSync('bun unlink mosaic', { stdio: 'inherit' });
       console.log('✓ Mosaic unlinked successfully');
     } catch (error) {
       console.log('Note: Could not unlink (may not be linked)');
