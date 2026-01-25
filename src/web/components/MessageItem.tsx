@@ -155,11 +155,13 @@ export function MessageItem({ message }: MessageItemProps) {
                     </div>
                 </div>
                 {showBlend && (
-                    <div className="blend-indicator">
-                        <BlendIcon />
-                        <span className="blend-text">
-                            {message.blendWord || 'Blended'} for {formatBlendTime(message.responseDuration!)}
-                        </span>
+                    <div className="message assistant blend-message">
+                        <div className="message-content blend-indicator">
+                            <BlendIcon />
+                            <span className="blend-text">
+                                {message.blendWord || 'Blended'} for {formatBlendTime(message.responseDuration!)}
+                            </span>
+                        </div>
                     </div>
                 )}
             </>

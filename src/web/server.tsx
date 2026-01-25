@@ -335,6 +335,17 @@ async function startServer(port: number, maxRetries = 10) {
                         });
                     }
 
+                    if (url.pathname === "/api/config" && request.method === "GET") {
+                        const { readConfig } = await import("../utils/config");
+                        const config = readConfig();
+                        return new Response(JSON.stringify({
+                            provider: config.provider,
+                            model: config.model
+                        }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
                     if (url.pathname === "/api/add-recent-project" && request.method === "POST") {
                         const body = (await request.json()) as { path: string };
                         if (!body.path || typeof body.path !== "string") {
@@ -429,7 +440,7 @@ async function startServer(port: number, maxRetries = 10) {
                                     questionUnsub();
                                     approvalUnsub();
                                     exploreUnsub?.();
-                                    try { controller.close(); } catch {}
+                                    try { controller.close(); } catch { }
                                 });
 
                                 const questionUnsub = subscribeQuestion((req) => {
@@ -502,7 +513,7 @@ async function startServer(port: number, maxRetries = 10) {
                                     questionUnsub();
                                     approvalUnsub();
                                     exploreUnsub?.();
-                                    try { controller.close(); } catch {}
+                                    try { controller.close(); } catch { }
                                 }
                             },
                         });

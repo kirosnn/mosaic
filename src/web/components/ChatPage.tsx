@@ -8,6 +8,7 @@ import { ApprovalRequest } from '../../utils/approvalBridge';
 import { QuestionPanel } from './QuestionPanel';
 import { ApprovalPanel } from './ApprovalPanel';
 import { ThinkingIndicator } from './ThinkingIndicator';
+import { findModelsDevModelById, modelAcceptsImages } from '../../utils/models';
 import '../assets/css/global.css'
 
 interface ChatPageProps {
@@ -56,6 +57,7 @@ function formatWorkspace(path: string | null | undefined): string {
 
 export function ChatPage({ messages, isProcessing, processingStartTime, currentTokens, onSendMessage, onStopAgent, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest }: ChatPageProps) {
     const [inputValue, setInputValue] = useState('');
+    const [showAttachButton, setShowAttachButton] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -86,6 +88,40 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isProcessing, onStopAgent]);
+
+    useEffect(() => {
+        const checkModelSupport = async () => {
+            try {
+                const configRes = await fetch('/api/config');
+                if (!configRes.ok) return;
+
+                const { model } = await configRes.json();
+
+                if (model) {
+                    // Try to find the model using the enhanced fuzzy search
+                    const result = await findModelsDevModelById(model);
+
+                    if (result && result.model) {
+                        setShowAttachButton(modelAcceptsImages(result.model));
+                    } else {
+                        // Very basic fallback if even fuzzy search fails
+                        const lowerId = model.toLowerCase();
+                        const likelySupportsImages =
+                            lowerId.includes('gpt-4') ||
+                            lowerId.includes('gpt-5') ||
+                            lowerId.includes('claude-3') ||
+                            lowerId.includes('gemini') ||
+                            lowerId.includes('vision');
+                        setShowAttachButton(likelySupportsImages);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to check model support:', err);
+            }
+        };
+
+        checkModelSupport();
+    }, []);
 
     const handleSubmit = (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -193,9 +229,13 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                             />
                             <div className="input-actions">
                                 <div className="input-actions-left">
-                                    <button type="button" className="action-btn" disabled={isProcessing}>
-                                        + Attach
-                                    </button>
+                                    {showAttachButton && (
+                                        <button type="button" className="send-btn" disabled={isProcessing} title="Attach file">
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(-45deg)' }}>
+                                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                                 <div className="input-actions-right">
                                     {isProcessing ? (
