@@ -1,24 +1,30 @@
 {
   "name": "@kirosnn/mosaic",
-  "module": "src/index.tsx",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "The open source coding agent.",
+  "license": "MIT",
   "type": "module",
   "bin": {
-    "mosaic": "src/index.tsx"
+    "mosaic": "bin/mosaic.cjs"
   },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "bun run --watch src/index.tsx",
     "mosaic": "bun run src/index.tsx",
     "start": "bun run src/index.tsx"
   },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.2.3"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",

@@ -11,10 +11,10 @@ import '../assets/css/global.css'
 function BlendIcon() {
     return (
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" className="blend-icon">
-            <circle cx="12" cy="6.5" r="1.4"/>
-            <circle cx="17.5" cy="12" r="1.4"/>
-            <circle cx="12" cy="17.5" r="1.4"/>
-            <circle cx="6.5" cy="12" r="1.4"/>
+            <circle cx="12" cy="6.5" r="1.4" />
+            <circle cx="17.5" cy="12" r="1.4" />
+            <circle cx="12" cy="17.5" r="1.4" />
+            <circle cx="6.5" cy="12" r="1.4" />
         </svg>
     );
 }
@@ -132,12 +132,13 @@ export function MessageItem({ message }: MessageItemProps) {
                                 components={{
                                     code({ node, className, children, ...props }) {
                                         const match = /language-(\w+)/.exec(className || '');
+                                        const { ref, ...rest } = props as any;
                                         return match ? (
                                             <SyntaxHighlighter
-                                                style={vscDarkPlus}
+                                                style={vscDarkPlus as any}
                                                 language={match[1]}
                                                 PreTag="div"
-                                                {...props}
+                                                {...rest}
                                             >
                                                 {String(children).replace(/\n$/, '')}
                                             </SyntaxHighlighter>
