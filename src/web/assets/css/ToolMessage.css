@@ -3,6 +3,8 @@
     border: 1px solid var(--border-tool);
     border-radius: 16px;
     margin-bottom: 0.5rem;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
 }
 
 .message.tool.running {
