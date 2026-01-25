@@ -206,6 +206,7 @@ await new Promise(resolve => setTimeout(resolve, 100));
 try {
   const renderer = await createCliRenderer();
   createRoot(renderer).render(<App initialMessage={parsed.initialMessage} />);
-} catch {
+} catch (error) {
+  console.error(error);
   cleanup(1);
 }

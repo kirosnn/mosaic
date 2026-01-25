@@ -1,7 +1,7 @@
 {
-  "name": "mosaic",
+  "name": "@kirosnn/mosaic",
   "module": "src/index.tsx",
-  "version": "0.0.6.03",
+  "version": "0.0.8",
   "description": "The open source coding agent.",
   "type": "module",
   "bin": {

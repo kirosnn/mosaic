@@ -53,7 +53,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: [
       { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', description: 'The best model for coding and agentic tasks across industries' },
       { id: 'gpt-5.1-2025-11-13', name: 'GPT-5.1', description: 'The best model for coding and agentic tasks with configurable reasoning effort' },
-      { id: 'gpt-5-2025-08-07', name: 'GPT-5', description: 'The first model GPT 5 series from OpenAI'},
+      { id: 'gpt-5-2025-08-07', name: 'GPT-5', description: 'The first model GPT 5 series from OpenAI' },
       { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', description: 'Smartest non-reasoning model from OpenAI' },
     ]
   },
@@ -156,14 +156,29 @@ export function readConfig(): MosaicConfig {
     };
   }
 
-  const content = readFileSync(CONFIG_FILE, 'utf-8');
-  const config = JSON.parse(content);
+  try {
+    const content = readFileSync(CONFIG_FILE, 'utf-8');
+    const config = JSON.parse(content);
 
-  if (config.requireApprovals === undefined) {
-    config.requireApprovals = true;
+    if (config.requireApprovals === undefined) {
+      config.requireApprovals = true;
+    }
+
+    return config;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      console.warn('Config file is corrupted. Resetting to default.');
+      try {
+        const { renameSync } = require('fs');
+        renameSync(CONFIG_FILE, `${CONFIG_FILE}.bak`);
+      } catch { }
+    }
+    return {
+      firstRun: true,
+      version: VERSION,
+      requireApprovals: true
+    };
   }
-
-  return config;
 }
 
 export function writeConfig(config: MosaicConfig): void {

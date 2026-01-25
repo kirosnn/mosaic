@@ -4,7 +4,7 @@
 
 # Mosaic CLI
 
-**Version 0.0.6.03**
+**Version 0.0.8**
 
 Mosaic is an open-source, AI-powered coding agent for the terminal. It combines a React-based TUI (OpenTUI) with a tool-driven agent architecture to deliver a fast, context-aware development workflow. A web UI is also available for those who prefer a browser experience.
 

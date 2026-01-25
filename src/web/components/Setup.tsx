@@ -58,8 +58,10 @@ export function Setup({ onComplete }: SetupProps) {
                 setSelectedIndex(prev => (prev - 1 + options.length) % options.length);
             } else if (e.key === 'Enter') {
                 const provider = options[selectedIndex];
-                setSelectedProviderId(provider.id);
-                setStep('model');
+                if (provider) {
+                    setSelectedProviderId(provider.id);
+                    setStep('model');
+                }
             }
         } else if (step === 'model') {
             const provider = providers.find(p => p.id === selectedProviderId);
@@ -70,14 +72,16 @@ export function Setup({ onComplete }: SetupProps) {
                 setSelectedIndex(prev => (prev - 1 + options.length) % options.length);
             } else if (e.key === 'Enter') {
                 const model = options[selectedIndex];
-                setSelectedModelId(model.id);
-                const requiresKey = (provider?.requiresApiKey || model.requiresApiKey);
-                if (requiresKey && provider?.id !== 'ollama') {
-                    setStep('apikey');
-                } else if (requiresKey && provider?.id === 'ollama' && (model.id.includes(':cloud') || model.id.includes('-cloud'))) {
-                    setStep('apikey');
-                } else {
-                    setStep('confirm');
+                if (model) {
+                    setSelectedModelId(model.id);
+                    const requiresKey = (provider?.requiresApiKey || model.requiresApiKey);
+                    if (requiresKey && provider?.id !== 'ollama') {
+                        setStep('apikey');
+                    } else if (requiresKey && provider?.id === 'ollama' && (model.id.includes(':cloud') || model.id.includes('-cloud'))) {
+                        setStep('apikey');
+                    } else {
+                        setStep('confirm');
+                    }
                 }
             } else if (e.key === 'Escape') {
                 setStep('provider');
@@ -98,9 +102,14 @@ export function Setup({ onComplete }: SetupProps) {
             } else if (e.key === 'Escape') {
                 const provider = providers.find(p => p.id === selectedProviderId);
                 const model = provider?.models.find(m => m.id === selectedModelId);
-                const requiresKey = (provider?.requiresApiKey || model?.requiresApiKey);
-                if (requiresKey) setStep('apikey');
-                else setStep('model');
+
+                if (provider && model) {
+                    const requiresKey = (provider.requiresApiKey || model.requiresApiKey);
+                    if (requiresKey) setStep('apikey');
+                    else setStep('model');
+                } else {
+                    setStep('model');
+                }
             }
         }
     };
