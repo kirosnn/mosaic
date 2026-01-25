@@ -1,10 +1,21 @@
 <p align="center">
-  <img src="docs/mosaic.png" width="200" />
+  <img src="docs/logo_white.svg" width="200" />
 </p>
 
-# Mosaic CLI
+<h1 align="center">Mosaic CLI</h1>
 
-**Version 0.0.8**
+<p align="center">
+  <strong>Version 0.0.91</strong>
+</p>
+
+<p align="center">
+  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#ai-providers">Providers</a> •
+  <a href="#contributing">Contributing</a>
+</p>
+
+---
 
 Mosaic is an open-source, AI-powered coding agent for the terminal. It combines a React-based TUI (OpenTUI) with a tool-driven agent architecture to deliver a fast, context-aware development workflow. A web UI is also available for those who prefer a browser experience.
 
@@ -19,9 +30,30 @@ Mosaic is an open-source, AI-powered coding agent for the terminal. It combines 
 
 ## Requirements
 
-- [Bun](https://bun.sh)
+- [Bun](https://bun.sh) (required at runtime)
+- Node.js >= 18 (for npm installation)
 
-## Installation (from source)
+## Installation
+
+### Via npm (recommended)
+
+```bash
+npm install -g @kirosnn/mosaic
+```
+
+Then run from any directory:
+
+```bash
+mosaic
+```
+
+### Via npx (no install)
+
+```bash
+npx @kirosnn/mosaic
+```
+
+### From source
 
 ```bash
 git clone https://github.com/kirosnn/mosaic.git
@@ -41,6 +73,8 @@ If you prefer not to link globally:
 ```bash
 bun run mosaic
 ```
+
+> **Note:** Mosaic requires Bun at runtime. If Bun is not installed, the CLI will prompt you to install it.
 
 ## Quick Start
 
@@ -73,6 +107,18 @@ mosaic web
 
 Open http://127.0.0.1:8192 in your browser.
 
+## Slash Commands
+
+| Command     | Description                          |
+|-------------|--------------------------------------|
+| `/init`     | Initialize project context (MOSAIC.md) |
+| `/help`     | Show available commands              |
+| `/undo`     | Undo last file change                |
+| `/redo`     | Redo undone change                   |
+| `/sessions` | Manage conversation sessions         |
+| `/web`      | Open web interface                   |
+| `/echo`     | Echo a message (debug)               |
+
 ## Configuration
 
 Mosaic stores global settings in `~/.mosaic/`:
@@ -92,24 +138,36 @@ Project-specific settings live in `.mosaic/` at the repository root.
 
 Mosaic relies on a tool registry that exposes safe, focused capabilities to the agent:
 
-- File operations (read, write, edit)
-- Directory listing and navigation
-- Code search with regex
-- Terminal command execution
-- Interactive questions for clarification
+| Tool       | Description                              |
+|------------|------------------------------------------|
+| `read`     | Read file contents                       |
+| `write`    | Create or overwrite files                |
+| `edit`     | Apply targeted edits to files            |
+| `bash`     | Execute shell commands                   |
+| `glob`     | Find files by pattern                    |
+| `grep`     | Search code with regex                   |
+| `list`     | List directory contents                  |
+| `question` | Ask clarifying questions to the user     |
 
-The `MOSAIC.md` file helps the agent adapt to each repository by describing conventions and structure.
+**Safety Features:**
+- Write and edit operations require user approval before execution
+- Built-in undo/redo system tracks all file changes (SQLite-backed)
+- Project context via `MOSAIC.md` helps the agent understand your codebase
 
 ## AI Providers
 
 Mosaic uses the Vercel AI SDK and currently supports:
 
-- OpenAI (GPT family)
-- Anthropic (Claude family)
-- Google (Gemini family)
-- Mistral (Mistral, Mixtral)
-- xAI (Grok family)
-- Ollama (local or cloud models)
+| Provider   | Models                        |
+|------------|-------------------------------|
+| OpenAI     | GPT-5, GPT-4, GPT-3.5         |
+| Anthropic  | Claude Sonnet, Haiku, Opus    |
+| Google     | Gemini 3 and others           |
+| Mistral    | Mistral Large, Mixtral        |
+| xAI        | Grok                          |
+| Ollama     | Any local model               |
+
+Configure your preferred provider on first run or edit `~/.mosaic/mosaic.jsonc`.
 
 ## Development
 
@@ -124,4 +182,10 @@ Issues and pull requests are welcome. Please include clear reproduction steps an
 
 ## License
 
-MIT
+MIT - see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Made with Bun, React, and OpenTUI
+</p>
