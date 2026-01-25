@@ -41,3 +41,21 @@ export function extractTitle(content: string, alreadyResolved: boolean): {
 export function setDocumentTitle(title: string) {
     document.title = `${title} - Mosaic`;
 }
+
+export const BLEND_WORDS = [
+    "Blended",
+    "Crafted",
+    "Brewed",
+    "Cooked",
+    "Forged",
+    "Woven",
+    "Composed",
+    "Rendered",
+    "Conjured",
+    "Distilled",
+    "Worked"
+];
+
+export function getRandomBlendWord(): string {
+    return BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)]!;
+}

@@ -1,6 +1,10 @@
 @import "ChatPage.css";
 @import "HomePage.css";
+@import "Sidebar.css";
+@import "SidebarModal.css";
 @import "MessageItem.css";
+@import "ToolMessage.css";
+@import "Markdown.css";
 
 :root {
     --bg-app: #171717;

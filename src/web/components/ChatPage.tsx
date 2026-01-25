@@ -7,12 +7,16 @@ import { QuestionRequest } from '../../utils/questionBridge';
 import { ApprovalRequest } from '../../utils/approvalBridge';
 import { QuestionPanel } from './QuestionPanel';
 import { ApprovalPanel } from './ApprovalPanel';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import '../assets/css/global.css'
 
 interface ChatPageProps {
     messages: Message[];
     isProcessing: boolean;
+    processingStartTime?: number;
+    currentTokens?: number;
     onSendMessage: (message: string) => void;
+    onStopAgent?: () => void;
     sidebarProps: SidebarProps;
     currentTitle?: string | null;
     workspace?: string | null;
@@ -50,7 +54,7 @@ function formatWorkspace(path: string | null | undefined): string {
     return normalized;
 }
 
-export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest }: ChatPageProps) {
+export function ChatPage({ messages, isProcessing, processingStartTime, currentTokens, onSendMessage, onStopAgent, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest }: ChatPageProps) {
     const [inputValue, setInputValue] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -70,6 +74,18 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
     useEffect(() => {
         if (inputRef.current) inputRef.current.focus();
     }, []);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && isProcessing && onStopAgent) {
+                e.preventDefault();
+                onStopAgent();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [isProcessing, onStopAgent]);
 
     const handleSubmit = (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -132,14 +148,10 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                             {messages.map((msg) => (
                                 <MessageItem key={msg.id} message={msg} />
                             ))}
-                            {isProcessing && (
+                            {isProcessing && !questionRequest && !approvalRequest && (
                                 <div className="message assistant">
                                     <div className="message-content">
-                                        <div className="typing-indicator">
-                                            <span></span>
-                                            <span></span>
-                                            <span></span>
-                                        </div>
+                                        <ThinkingIndicator startTime={processingStartTime} tokens={currentTokens} />
                                     </div>
                                 </div>
                             )}
@@ -186,13 +198,30 @@ export function ChatPage({ messages, isProcessing, onSendMessage, sidebarProps, 
                                     </button>
                                 </div>
                                 <div className="input-actions-right">
-                                    <button
-                                        type="submit"
-                                        className="action-btn primary"
-                                        disabled={isProcessing || !inputValue.trim() || !!questionRequest || !!approvalRequest}
-                                    >
-                                        Send
-                                    </button>
+                                    {isProcessing ? (
+                                        <button
+                                            type="button"
+                                            className="send-btn stop"
+                                            onClick={onStopAgent}
+                                            title="Stop (Esc)"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                                <rect x="6" y="6" width="12" height="12" rx="1" />
+                                            </svg>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="submit"
+                                            className="send-btn"
+                                            disabled={!inputValue.trim() || !!questionRequest || !!approvalRequest}
+                                            title="Send"
+                                        >
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                <line x1="12" y1="19" x2="12" y2="5"></line>
+                                                <polyline points="5 12 12 5 19 12"></polyline>
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </form>

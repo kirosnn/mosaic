@@ -4,6 +4,7 @@ export interface Conversation {
     id: string;
     title: string | null;
     messages: Message[];
+    workspace: string | null;
     createdAt: number;
     updatedAt: number;
 }
@@ -19,7 +20,7 @@ export function getAllConversations(): Conversation[] {
         const data = localStorage.getItem(STORAGE_KEY);
         if (!data) return [];
         const conversations: Conversation[] = JSON.parse(data);
-        return conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+        return conversations.sort((a, b) => b.createdAt - a.createdAt);
     } catch {
         return [];
     }
@@ -49,12 +50,43 @@ export function deleteConversation(id: string): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
 }
 
-export function createNewConversation(): Conversation {
+export function createNewConversation(workspace: string | null = null): Conversation {
     return {
         id: generateConversationId(),
         title: null,
         messages: [],
+        workspace,
         createdAt: Date.now(),
         updatedAt: Date.now(),
     };
+}
+
+export function formatWorkspace(path: string | null | undefined): string {
+    if (!path) return '';
+
+    let normalized = path.replace(/\\/g, '/');
+
+    const homePatterns = [
+        /^\/Users\/[^/]+/,
+        /^\/home\/[^/]+/,
+        /^[A-Z]:\/Users\/[^/]+/i,
+    ];
+
+    for (const pattern of homePatterns) {
+        if (pattern.test(normalized)) {
+            normalized = normalized.replace(pattern, '~');
+            break;
+        }
+    }
+
+    const parts = normalized.split('/').filter(Boolean);
+    const maxLength = 30;
+
+    if (normalized.length > maxLength && parts.length > 3) {
+        const isHome = normalized.startsWith('~');
+        const lastParts = parts.slice(-2).join('/');
+        return isHome ? '~/.../' + lastParts : '.../' + lastParts;
+    }
+
+    return normalized;
 }

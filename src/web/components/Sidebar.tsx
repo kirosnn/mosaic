@@ -1,11 +1,75 @@
 /** @jsxImportSource react */
-import { useState } from 'react';
-import { Conversation } from '../storage';
+import { useState, useMemo } from 'react';
+import { Conversation, formatWorkspace } from '../storage';
+
+type TimePeriod = 'today' | 'yesterday' | 'previous7days' | 'previous30days' | 'older';
+
+interface GroupedConversations {
+    period: TimePeriod;
+    label: string;
+    conversations: Conversation[];
+}
+
+function getTimePeriod(timestamp: number): TimePeriod {
+    const now = new Date();
+    const date = new Date(timestamp);
+
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const startOf7DaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
+    const startOf30DaysAgo = startOfToday - 30 * 24 * 60 * 60 * 1000;
+
+    if (timestamp >= startOfToday) {
+        return 'today';
+    } else if (timestamp >= startOfYesterday) {
+        return 'yesterday';
+    } else if (timestamp >= startOf7DaysAgo) {
+        return 'previous7days';
+    } else if (timestamp >= startOf30DaysAgo) {
+        return 'previous30days';
+    } else {
+        return 'older';
+    }
+}
+
+const periodLabels: Record<TimePeriod, string> = {
+    today: 'Today',
+    yesterday: 'Yesterday',
+    previous7days: 'Previous 7 days',
+    previous30days: 'Previous 30 days',
+    older: 'Older',
+};
+
+const periodOrder: TimePeriod[] = ['today', 'yesterday', 'previous7days', 'previous30days', 'older'];
+
+function groupConversationsByPeriod(conversations: Conversation[]): GroupedConversations[] {
+    const groups: Record<TimePeriod, Conversation[]> = {
+        today: [],
+        yesterday: [],
+        previous7days: [],
+        previous30days: [],
+        older: [],
+    };
+
+    for (const conv of conversations) {
+        const period = getTimePeriod(conv.updatedAt);
+        groups[period].push(conv);
+    }
+
+    return periodOrder
+        .filter(period => groups[period].length > 0)
+        .map(period => ({
+            period,
+            label: periodLabels[period],
+            conversations: groups[period],
+        }));
+}
 
 export interface SidebarProps {
     isExpanded: boolean;
     onToggleExpand: () => void;
     onNavigateToNewChat: () => void;
+    onNavigateHome?: () => void;
     onOpenSettings: () => void;
     onOpenHelp: () => void;
     conversations?: Conversation[];
@@ -19,6 +83,7 @@ export function Sidebar({
     isExpanded,
     onToggleExpand,
     onNavigateToNewChat,
+    onNavigateHome,
     onOpenSettings,
     onOpenHelp,
     conversations = [],
@@ -82,6 +147,11 @@ export function Sidebar({
         }
     };
 
+    const groupedConversations = useMemo(
+        () => groupConversationsByPeriod(conversations),
+        [conversations]
+    );
+
     return (
         <>
             <div className={`sidebar ${isExpanded ? 'expanded' : ''}`}>
@@ -89,6 +159,10 @@ export function Sidebar({
                     <button className="icon-btn" onClick={onToggleExpand} title={isExpanded ? "Collapse" : "Expand"}>
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
                         <span className="label">Collapse</span>
+                    </button>
+                    <button className="icon-btn" onClick={onNavigateHome} title="Home">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                        <span className="label">Home</span>
                     </button>
                     <button className="icon-btn" onClick={onNavigateToNewChat} title="New Chat">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -98,41 +172,50 @@ export function Sidebar({
 
                 {isExpanded && conversations.length > 0 && (
                     <div className="sidebar-conversations">
-                        <div className="conversations-header">Your chats</div>
                         <div className="conversations-list">
-                            {conversations.map((conv) => (
-                                <div
-                                    key={conv.id}
-                                    className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''}`}
-                                    onClick={() => onLoadConversation?.(conv.id)}
-                                >
-                                    <div className="conversation-info">
-                                        <span className="conversation-title">
-                                            {conv.title || 'New conversation'}
-                                        </span>
-                                    </div>
-                                    <div className="conversation-actions">
-                                        <button
-                                            className="conversation-action-btn conversation-edit"
-                                            onClick={(e) => handleEditClick(e, conv)}
-                                            title="Rename"
+                            {groupedConversations.map((group) => (
+                                <div key={group.period} className="conversation-group">
+                                    <div className="conversation-group-header">{group.label}</div>
+                                    {group.conversations.map((conv) => (
+                                        <div
+                                            key={conv.id}
+                                            className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''}`}
+                                            onClick={() => onLoadConversation?.(conv.id)}
                                         >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                            </svg>
-                                        </button>
-                                        <button
-                                            className="conversation-action-btn conversation-delete"
-                                            onClick={(e) => handleDeleteClick(e, conv.id)}
-                                            title="Delete"
-                                        >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <polyline points="3 6 5 6 21 6"></polyline>
-                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                            </svg>
-                                        </button>
-                                    </div>
+                                            <div className="conversation-info">
+                                                <span className="conversation-title">
+                                                    {conv.title || 'New conversation'}
+                                                </span>
+                                                {conv.workspace && (
+                                                    <span className="conversation-workspace" title={conv.workspace}>
+                                                        {formatWorkspace(conv.workspace)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="conversation-actions">
+                                                <button
+                                                    className="conversation-action-btn conversation-edit"
+                                                    onClick={(e) => handleEditClick(e, conv)}
+                                                    title="Rename"
+                                                >
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                    </svg>
+                                                </button>
+                                                <button
+                                                    className="conversation-action-btn conversation-delete"
+                                                    onClick={(e) => handleDeleteClick(e, conv.id)}
+                                                    title="Delete"
+                                                >
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             ))}
                         </div>

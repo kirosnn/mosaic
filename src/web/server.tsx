@@ -13,6 +13,8 @@ const HOST = "127.0.0.1";
 import { subscribeQuestion, answerQuestion } from "../utils/questionBridge";
 import { subscribeApproval, respondApproval } from "../utils/approvalBridge";
 
+let currentAbortController: AbortController | null = null;
+
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -173,12 +175,14 @@ async function startServer(port: number, maxRetries = 10) {
                 const url = new URL(request.url);
 
                 try {
-                    if (url.pathname === "/") {
-                        addLog(`${request.method} /`);
+                    const isApiRoute = url.pathname.startsWith('/api/');
+                    const isStaticFile = url.pathname.match(/\.(js|css|svg|ico|png|jpg|jpeg|gif|webp|woff|woff2|ttf|eot)$/);
+
+                    if (url.pathname === "/" || url.pathname === "/home" || url.pathname.startsWith("/chat")) {
+                        addLog(`${request.method} ${url.pathname}`);
                         return new Response(HTML_TEMPLATE, {
                             headers: { "Content-Type": "text/html" },
                         });
-
                     }
 
                     if (url.pathname === "/app.js") {
@@ -363,6 +367,20 @@ async function startServer(port: number, maxRetries = 10) {
                         });
                     }
 
+                    if (url.pathname === "/api/stop" && request.method === "POST") {
+                        if (currentAbortController) {
+                            currentAbortController.abort();
+                            currentAbortController = null;
+                            addLog("Agent stopped by user");
+                            return new Response(JSON.stringify({ success: true, message: "Agent stopped" }), {
+                                headers: { "Content-Type": "application/json" },
+                            });
+                        }
+                        return new Response(JSON.stringify({ success: false, message: "No agent running" }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
                     if (url.pathname === "/api/message" && request.method === "POST") {
                         const body = (await request.json()) as {
                             message: string;
@@ -380,12 +398,22 @@ async function startServer(port: number, maxRetries = 10) {
 
                         addLog("Message received");
 
+                        currentAbortController = new AbortController();
+                        const abortSignal = currentAbortController.signal;
+
                         const encoder = new TextEncoder();
                         const stream = new ReadableStream({
                             async start(controller) {
                                 let keepAlive: ReturnType<typeof setInterval> | null = null;
+                                let aborted = false;
+
+                                const cleanup = () => {
+                                    if (keepAlive) clearInterval(keepAlive);
+                                    currentAbortController = null;
+                                };
 
                                 const safeEnqueue = (text: string) => {
+                                    if (aborted) return false;
                                     try {
                                         controller.enqueue(encoder.encode(text));
                                         return true;
@@ -393,6 +421,16 @@ async function startServer(port: number, maxRetries = 10) {
                                         return false;
                                     }
                                 };
+
+                                abortSignal.addEventListener('abort', () => {
+                                    aborted = true;
+                                    safeEnqueue(JSON.stringify({ type: 'stopped', message: 'Agent stopped by user' }) + "\n");
+                                    cleanup();
+                                    questionUnsub();
+                                    approvalUnsub();
+                                    exploreUnsub?.();
+                                    try { controller.close(); } catch {}
+                                });
 
                                 const questionUnsub = subscribeQuestion((req) => {
                                     safeEnqueue(JSON.stringify({ type: 'question', request: req }) + "\n");
@@ -403,13 +441,22 @@ async function startServer(port: number, maxRetries = 10) {
                                     safeEnqueue(JSON.stringify({ type: 'approval', request: req }) + "\n");
                                 });
 
-
                                 keepAlive = setInterval(() => {
                                     safeEnqueue(JSON.stringify({ type: 'ping' }) + "\n");
                                 }, 5000);
 
+                                let exploreUnsub: (() => void) | null = null;
+
                                 try {
                                     const { Agent } = await import("../agent");
+                                    const { subscribeExploreTool } = await import("../utils/exploreBridge");
+
+                                    addLog("[EXPLORE] Subscribing...");
+                                    exploreUnsub = subscribeExploreTool((event) => {
+                                        addLog(`[EXPLORE] Tool: ${event.toolName}`);
+                                        safeEnqueue(JSON.stringify({ type: 'explore-tool', ...event }) + "\n");
+                                    });
+                                    addLog("[EXPLORE] Subscribed");
                                     const providerStatus = await Agent.ensureProviderReady();
 
                                     if (!providerStatus.ready) {
@@ -419,9 +466,10 @@ async function startServer(port: number, maxRetries = 10) {
                                                 error: providerStatus.error || "Provider not ready",
                                             }) + "\n"
                                         );
-                                        if (keepAlive) clearInterval(keepAlive);
+                                        cleanup();
                                         questionUnsub();
                                         approvalUnsub();
+                                        exploreUnsub?.();
                                         controller.close();
                                         return;
                                     }
@@ -432,24 +480,29 @@ async function startServer(port: number, maxRetries = 10) {
 
 
                                     for await (const event of agent.streamMessages(conversationHistory as any, {})) {
+                                        if (aborted) break;
                                         if (!safeEnqueue(JSON.stringify(event) + "\n")) break;
                                     }
 
-                                    if (keepAlive) clearInterval(keepAlive);
+                                    cleanup();
                                     questionUnsub();
                                     approvalUnsub();
-                                    controller.close();
+                                    exploreUnsub?.();
+                                    if (!aborted) controller.close();
                                 } catch (error) {
-                                    safeEnqueue(
-                                        JSON.stringify({
-                                            type: "error",
-                                            error: error instanceof Error ? error.message : "Unknown error",
-                                        }) + "\n"
-                                    );
-                                    if (keepAlive) clearInterval(keepAlive);
+                                    if (!aborted) {
+                                        safeEnqueue(
+                                            JSON.stringify({
+                                                type: "error",
+                                                error: error instanceof Error ? error.message : "Unknown error",
+                                            }) + "\n"
+                                        );
+                                    }
+                                    cleanup();
                                     questionUnsub();
                                     approvalUnsub();
-                                    controller.close();
+                                    exploreUnsub?.();
+                                    try { controller.close(); } catch {}
                                 }
                             },
                         });

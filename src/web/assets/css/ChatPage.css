@@ -172,3 +172,42 @@
 .messages::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+.send-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.send-btn:hover {
+    background: var(--border-code);
+    transform: scale(1.02);
+}
+
+.send-btn:active {
+    transform: scale(0.98);
+}
+
+.send-btn:disabled {
+    background: var(--border-subtle);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    transform: none;
+}
+
+.send-btn.stop {
+    background: #ff4d4d;
+    color: #fff;
+}
+
+.send-btn.stop:hover {
+    background: #ff3333;
+}

@@ -12,4 +12,6 @@ export interface Message {
     thinkingContent?: string;
     isRunning?: boolean;
     runningStartTime?: number;
+    responseDuration?: number;
+    blendWord?: string;
 }

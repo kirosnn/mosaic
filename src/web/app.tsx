@@ -4,18 +4,37 @@ import ReactDOM from 'react-dom/client';
 import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
-import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES } from './utils';
+import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord } from './utils';
 import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation } from './storage';
 import { QuestionRequest } from '../utils/questionBridge';
 import { ApprovalRequest } from '../utils/approvalBridge';
+import { parseRoute, navigateTo, replaceTo, Route } from './router';
 import './assets/css/global.css'
 
 import { Modal } from './components/Modal';
 
+function useRouter() {
+    const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
+
+    useEffect(() => {
+        const handlePopState = () => {
+            setRoute(parseRoute(window.location.pathname));
+        };
+
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, []);
+
+    return route;
+}
+
 function App() {
-    const [currentPage, setCurrentPage] = useState<'home' | 'chat'>('home');
+    const route = useRouter();
+    const currentPage = route.page;
     const [messages, setMessages] = useState<Message[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [processingStartTime, setProcessingStartTime] = useState<number | undefined>(undefined);
+    const [currentTokens, setCurrentTokens] = useState(0);
     const [, setTimerTick] = useState(0);
     const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
     const [activeModal, setActiveModal] = useState<'none' | 'settings' | 'help'>('none');
@@ -30,6 +49,28 @@ function App() {
         setConversations(getAllConversations());
     }, []);
 
+    const handleStopAgent = useCallback(async () => {
+        try {
+            await fetch('/api/stop', { method: 'POST' });
+            setIsProcessing(false);
+            setProcessingStartTime(undefined);
+            setQuestionRequest(null);
+            setApprovalRequest(null);
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: createId(),
+                    role: 'tool',
+                    content: "Generation aborted. What should Mosaic do instead?",
+                    toolName: 'stop',
+                    success: false,
+                },
+            ]);
+        } catch (error) {
+            console.error('Failed to stop agent:', error);
+        }
+    }, []);
+
     useEffect(() => {
         refreshConversations();
         fetch('/api/workspace')
@@ -37,6 +78,40 @@ function App() {
             .then(data => setWorkspace(data.workspace))
             .catch(() => { });
     }, [refreshConversations]);
+
+    useEffect(() => {
+        if (route.page === 'chat' && route.conversationId) {
+            const conversation = getConversation(route.conversationId);
+            if (conversation) {
+                setCurrentConversation(conversation);
+                setMessages(conversation.messages);
+                setCurrentTitle(conversation.title);
+                if (conversation.title) {
+                    setDocumentTitle(conversation.title);
+                }
+                if (conversation.workspace) {
+                    setWorkspace(conversation.workspace);
+                    fetch('/api/workspace', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: conversation.workspace }),
+                    }).catch(() => { });
+                }
+            } else {
+                navigateTo({ page: 'home' });
+            }
+        } else if (route.page === 'chat' && !route.conversationId) {
+            setCurrentConversation(null);
+            setMessages([]);
+            setCurrentTitle(null);
+            document.title = 'Mosaic';
+        } else if (route.page === 'home') {
+            setCurrentConversation(null);
+            setMessages([]);
+            setCurrentTitle(null);
+            document.title = 'Mosaic';
+        }
+    }, [route]);
 
     useEffect(() => {
         const timerInterval = setInterval(() => {
@@ -51,6 +126,7 @@ function App() {
                 ...currentConversation,
                 messages,
                 title: currentTitle,
+                workspace: currentConversation.workspace || workspace,
                 updatedAt: Date.now(),
             };
             saveConversation(updatedConversation);
@@ -70,16 +146,21 @@ function App() {
 
         let conversation = currentConversation;
         if (!conversation) {
-            conversation = createNewConversation();
+            conversation = createNewConversation(workspace);
             setCurrentConversation(conversation);
+            replaceTo({ page: 'chat', conversationId: conversation.id });
         }
 
         if (currentPage === 'home') {
-            setCurrentPage('chat');
+            navigateTo({ page: 'chat', conversationId: conversation.id });
         }
 
         setMessages((prev) => [...prev, userMessage]);
         setIsProcessing(true);
+        setProcessingStartTime(Date.now());
+        setCurrentTokens(0);
+        let totalChars = 0;
+        const estimateTokens = () => Math.ceil(totalChars / 4);
 
         try {
             const response = await fetch('/api/message', {
@@ -102,8 +183,12 @@ function App() {
             let assistantChunk = '';
             let thinkingChunk = '';
             let assistantMessageId: string | null = null;
+            let assistantStartTime: number | null = null;
             let titleExtracted = false;
             const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId: string }>();
+            let exploreMessageId: string | null = null;
+            let exploreTools: Array<{ tool: string; info: string; success: boolean }> = [];
+            let explorePurpose = '';
 
             while (reader) {
                 const { done, value } = await reader.read();
@@ -118,9 +203,12 @@ function App() {
 
                         if (event.type === 'reasoning-delta') {
                             thinkingChunk += event.content;
+                            totalChars += event.content.length;
+                            setCurrentTokens(estimateTokens());
 
                             if (assistantMessageId === null) {
                                 assistantMessageId = createId();
+                                assistantStartTime = Date.now();
                             }
 
                             setMessages((prev) => {
@@ -144,6 +232,8 @@ function App() {
                             });
                         } else if (event.type === 'text-delta') {
                             assistantChunk += event.content;
+                            totalChars += event.content.length;
+                            setCurrentTokens(estimateTokens());
 
                             const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtracted);
 
@@ -159,6 +249,7 @@ function App() {
 
                             if (assistantMessageId === null) {
                                 assistantMessageId = createId();
+                                assistantStartTime = Date.now();
                             }
 
                             setMessages((prev) => {
@@ -181,12 +272,16 @@ function App() {
                                 return newMessages;
                             });
                         } else if (event.type === 'tool-call-end') {
+                            totalChars += JSON.stringify(event.args || {}).length;
+                            setCurrentTokens(estimateTokens());
+
                             const toolCallMessageId = createId();
                             const toolName = event.toolName;
                             const args = event.args || {};
 
                             const needsApproval = toolName === 'write' || toolName === 'edit' || toolName === 'bash';
                             const isBashTool = toolName === 'bash';
+                            const isExploreTool = toolName === 'explore';
 
                             const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, args);
                             const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
@@ -196,6 +291,13 @@ function App() {
                                 args,
                                 messageId: toolCallMessageId,
                             });
+
+                            if (isExploreTool) {
+                                exploreMessageId = toolCallMessageId;
+                                exploreTools = [];
+                                explorePurpose = (args.purpose as string) || 'exploring...';
+                                console.log('[CLIENT] Set exploreMessageId:', exploreMessageId);
+                            }
 
                             if (!needsApproval) {
                                 setMessages((prev) => [
@@ -207,17 +309,53 @@ function App() {
                                         toolName,
                                         toolArgs: args,
                                         success: true,
-                                        isRunning: isBashTool,
-                                        runningStartTime: isBashTool ? Date.now() : undefined,
+                                        isRunning: isBashTool || isExploreTool,
+                                        runningStartTime: (isBashTool || isExploreTool) ? Date.now() : undefined,
                                     },
                                 ]);
                             }
+                        } else if (event.type === 'explore-tool') {
+                            console.log('[CLIENT] explore-tool received:', event.toolName, 'exploreMessageId:', exploreMessageId);
+                            const info = (event.args?.path || event.args?.pattern || event.args?.query || '') as string;
+                            const shortInfo = info.length > 40 ? info.substring(0, 37) + '...' : info;
+                            exploreTools.push({ tool: event.toolName, info: shortInfo, success: event.success });
+
+                            totalChars += event.tokenEstimate * 4;
+                            setCurrentTokens(estimateTokens());
+
+                            if (exploreMessageId) {
+                                console.log('[CLIENT] Updating message:', exploreMessageId);
+                                setMessages((prev) => {
+                                    const newMessages = [...prev];
+                                    const idx = newMessages.findIndex(m => m.id === exploreMessageId);
+                                    console.log('[CLIENT] Found message at index:', idx);
+                                    if (idx !== -1) {
+                                        const toolLines = exploreTools.map(t => {
+                                            const icon = t.success ? '+' : '-';
+                                            return `  ${icon} ${t.tool}(${t.info})`;
+                                        });
+                                        const newContent = `Explore (${explorePurpose})\n${toolLines.join('\n')}`;
+                                        newMessages[idx] = { ...newMessages[idx]!, content: newContent };
+                                    }
+                                    return newMessages;
+                                });
+                            } else {
+                                console.log('[CLIENT] exploreMessageId is null!');
+                            }
                         } else if (event.type === 'tool-result') {
+                            const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+                            totalChars += toolResultStr.length;
+                            setCurrentTokens(estimateTokens());
+
                             const pending = pendingToolCalls.get(event.toolCallId);
                             const toolName = pending?.toolName ?? event.toolName;
                             const toolArgs = pending?.args ?? {};
                             const runningMessageId = pending?.messageId;
                             pendingToolCalls.delete(event.toolCallId);
+
+                            if (toolName === 'explore') {
+                                exploreMessageId = null;
+                            }
 
                             const { content: toolContent, success } = formatToolMessage(
                                 toolName,
@@ -232,8 +370,8 @@ function App() {
                                 let runningIndex = -1;
                                 if (runningMessageId) {
                                     runningIndex = newMessages.findIndex((m) => m.id === runningMessageId);
-                                } else if (toolName === 'bash') {
-                                    runningIndex = newMessages.findIndex((m) => m.toolName === 'bash' && m.isRunning === true);
+                                } else if (toolName === 'bash' || toolName === 'explore') {
+                                    runningIndex = newMessages.findIndex((m) => m.toolName === toolName && m.isRunning === true);
                                 }
 
                                 if (runningIndex !== -1) {
@@ -264,11 +402,32 @@ function App() {
                             assistantChunk = '';
                             thinkingChunk = '';
                             assistantMessageId = null;
+                            assistantStartTime = null;
                         } else if (event.type === 'question') {
                             setQuestionRequest(event.request);
                         } else if (event.type === 'approval') {
                             setApprovalRequest(event.request);
                         } else if (event.type === 'finish' || event.type === 'step-finish') {
+                            if (assistantMessageId && assistantStartTime) {
+                                const responseDuration = Date.now() - assistantStartTime;
+                                if (responseDuration > 60000) {
+                                    const blendWord = getRandomBlendWord();
+                                    setMessages((prev) => {
+                                        const newMessages = [...prev];
+                                        const idx = newMessages.findIndex(m => m.id === assistantMessageId);
+                                        if (idx !== -1) {
+                                            newMessages[idx] = {
+                                                ...newMessages[idx]!,
+                                                responseDuration,
+                                                blendWord,
+                                            };
+                                        }
+                                        return newMessages;
+                                    });
+                                }
+                            }
+                            break;
+                        } else if (event.type === 'stopped') {
                             break;
                         } else if (event.type === 'error') {
                             const errorContent = formatErrorMessage('API', event.error);
@@ -302,20 +461,12 @@ function App() {
             ]);
         } finally {
             setIsProcessing(false);
+            setProcessingStartTime(undefined);
         }
     };
 
     const handleLoadConversation = (conversationId: string) => {
-        const conversation = getConversation(conversationId);
-        if (conversation) {
-            setCurrentConversation(conversation);
-            setMessages(conversation.messages);
-            setCurrentTitle(conversation.title);
-            if (conversation.title) {
-                setDocumentTitle(conversation.title);
-            }
-            setCurrentPage('chat');
-        }
+        navigateTo({ page: 'chat', conversationId });
     };
 
     const handleDeleteConversation = (conversationId: string) => {
@@ -323,11 +474,7 @@ function App() {
         refreshConversations();
 
         if (currentConversation?.id === conversationId) {
-            setCurrentConversation(null);
-            setMessages([]);
-            setCurrentTitle(null);
-            document.title = 'Mosaic';
-            setCurrentPage('home');
+            navigateTo({ page: 'home' });
         }
     };
 
@@ -350,16 +497,17 @@ function App() {
         }
     };
 
+    const handleNavigateHome = () => {
+        navigateTo({ page: 'home' });
+    };
+
     const sidebarProps = {
         isExpanded: isSidebarExpanded,
         onToggleExpand: () => setIsSidebarExpanded(!isSidebarExpanded),
         onNavigateToNewChat: () => {
-            setCurrentConversation(null);
-            setMessages([]);
-            setCurrentTitle(null);
-            document.title = 'Mosaic';
-            setCurrentPage('chat');
+            navigateTo({ page: 'chat', conversationId: null });
         },
+        onNavigateHome: handleNavigateHome,
         onOpenSettings: () => setActiveModal('settings'),
         onOpenHelp: () => setActiveModal('help'),
         conversations,
@@ -384,10 +532,7 @@ function App() {
 
                             if (res.ok) {
                                 setWorkspace(path);
-                                setCurrentConversation(null);
-                                setMessages([]);
-                                setCurrentTitle(null);
-                                setCurrentPage('chat');
+                                navigateTo({ page: 'chat', conversationId: null });
 
                                 await fetch('/api/add-recent-project', {
                                     method: 'POST',
@@ -405,7 +550,10 @@ function App() {
                 <ChatPage
                     messages={messages}
                     isProcessing={isProcessing}
+                    processingStartTime={processingStartTime}
+                    currentTokens={currentTokens}
                     onSendMessage={handleSendMessage}
+                    onStopAgent={handleStopAgent}
                     sidebarProps={sidebarProps}
                     currentTitle={currentTitle}
                     workspace={workspace}
@@ -429,12 +577,6 @@ function App() {
                                 <input type="checkbox" checked readOnly />
                             </label>
                         </div>
-                        <div style={{ padding: '0.5rem' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span>Notifications</span>
-                                <input type="checkbox" />
-                            </label>
-                        </div>
                     </div>
                 </div>
             </Modal>
@@ -454,6 +596,7 @@ function App() {
                     </ul>
                 </div>
             </Modal>
+
         </>
     );
 }

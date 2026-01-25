@@ -1,0 +1,47 @@
+.thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0.85rem 1.15rem;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.95rem;
+}
+
+.thinking-icon {
+    color: #ffca38;
+    font-weight: bold;
+    margin-right: 0.5rem;
+    font-size: 1.25rem;
+}
+
+.thinking-text {
+    display: inline-flex;
+}
+
+.thinking-text .shimmer-active {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.thinking-text .shimmer-dim {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.thinking-elapsed {
+    color: var(--text-secondary);
+    opacity: 0.7;
+    margin-left: 0.25rem;
+}
+
+.thinking-hint {
+    color: var(--text-secondary);
+    opacity: 0.5;
+    margin-left: 0.25rem;
+}
+
+.thinking-tokens {
+    color: var(--text-secondary);
+    opacity: 0.7;
+    margin-left: 0.25rem;
+}

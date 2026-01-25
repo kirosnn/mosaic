@@ -8,6 +8,35 @@ import { Message } from '../types';
 import { parseDiffLine, getDiffLineColors } from '../utils';
 import '../assets/css/global.css'
 
+function BlendIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" className="blend-icon">
+            <circle cx="12" cy="6.5" r="1.4"/>
+            <circle cx="17.5" cy="12" r="1.4"/>
+            <circle cx="12" cy="17.5" r="1.4"/>
+            <circle cx="6.5" cy="12" r="1.4"/>
+        </svg>
+    );
+}
+
+function formatBlendTime(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        const remainingMinutes = minutes % 60;
+        return `${hours}h ${remainingMinutes}m`;
+    }
+
+    if (minutes > 0) {
+        return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+    }
+
+    return `${seconds}s`;
+}
+
 interface MessageItemProps {
     message: Message;
 }
@@ -66,7 +95,7 @@ export function MessageItem({ message }: MessageItemProps) {
             <div className={`message tool ${statusClass}`}>
                 <div className="message-content">
                     <div className="tool-header">
-                        <span className="tool-name">{name}</span>
+                        <span className={`tool-name ${message.toolName === 'stop' ? 'no-bold' : ''}`}>{name}</span>
                         {info && <span className="tool-info">({info})</span>}
                         {message.isRunning && message.runningStartTime && (
                             <span className="tool-timer">
@@ -74,7 +103,7 @@ export function MessageItem({ message }: MessageItemProps) {
                             </span>
                         )}
                     </div>
-                    {!message.isRunning && bodyLines.length > 0 && (
+                    {bodyLines.length > 0 && (
                         <div className="tool-output">
                             {bodyLines.map((line, index) => renderDiffLine(line, index))}
                         </div>
@@ -85,43 +114,55 @@ export function MessageItem({ message }: MessageItemProps) {
     }
 
     if (message.role === 'assistant') {
+        const showBlend = message.responseDuration && message.responseDuration > 60000;
+
         return (
-            <div className="message assistant">
-                <div className="message-content">
-                    {message.thinkingContent && (
-                        <details className="thinking-section">
-                            <summary>Thinking...</summary>
-                            <pre className="thinking-content">{message.thinkingContent}</pre>
-                        </details>
-                    )}
-                    <div className="markdown-content">
-                        <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                                code({ node, className, children, ...props }) {
-                                    const match = /language-(\w+)/.exec(className || '');
-                                    return match ? (
-                                        <SyntaxHighlighter
-                                            style={vscDarkPlus}
-                                            language={match[1]}
-                                            PreTag="div"
-                                            {...props}
-                                        >
-                                            {String(children).replace(/\n$/, '')}
-                                        </SyntaxHighlighter>
-                                    ) : (
-                                        <code className={className} {...props}>
-                                            {children}
-                                        </code>
-                                    );
-                                }
-                            }}
-                        >
-                            {message.content}
-                        </ReactMarkdown>
+            <>
+                <div className="message assistant">
+                    <div className="message-content">
+                        {message.thinkingContent && (
+                            <details className="thinking-section">
+                                <summary>Thinking...</summary>
+                                <pre className="thinking-content">{message.thinkingContent}</pre>
+                            </details>
+                        )}
+                        <div className="markdown-content">
+                            <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                    code({ node, className, children, ...props }) {
+                                        const match = /language-(\w+)/.exec(className || '');
+                                        return match ? (
+                                            <SyntaxHighlighter
+                                                style={vscDarkPlus}
+                                                language={match[1]}
+                                                PreTag="div"
+                                                {...props}
+                                            >
+                                                {String(children).replace(/\n$/, '')}
+                                            </SyntaxHighlighter>
+                                        ) : (
+                                            <code className={className} {...props}>
+                                                {children}
+                                            </code>
+                                        );
+                                    }
+                                }}
+                            >
+                                {message.content}
+                            </ReactMarkdown>
+                        </div>
                     </div>
                 </div>
-            </div>
+                {showBlend && (
+                    <div className="blend-indicator">
+                        <BlendIcon />
+                        <span className="blend-text">
+                            {message.blendWord || 'Blended'} for {formatBlendTime(message.responseDuration!)}
+                        </span>
+                    </div>
+                )}
+            </>
         );
     }
 

@@ -1,38 +1,87 @@
 type ExploreToolCallback = (toolName: string, args: Record<string, unknown>, result: { success: boolean; preview: string }, tokenEstimate: number) => void;
 
-let currentAbortController: AbortController | null = null;
-let toolCallback: ExploreToolCallback | null = null;
-let totalExploreTokens = 0;
+export interface ExploreToolEvent {
+  toolName: string;
+  args: Record<string, unknown>;
+  success: boolean;
+  preview: string;
+  tokenEstimate: number;
+}
+
+type ExploreToolSubscriber = (event: ExploreToolEvent) => void;
+
+interface ExploreBridgeGlobal {
+  currentAbortController: AbortController | null;
+  toolCallback: ExploreToolCallback | null;
+  totalExploreTokens: number;
+  subscribers: Set<ExploreToolSubscriber>;
+}
+
+const globalKey = '__mosaic_explore_bridge__';
+const g = globalThis as any;
+
+if (!g[globalKey]) {
+  g[globalKey] = {
+    currentAbortController: null,
+    toolCallback: null,
+    totalExploreTokens: 0,
+    subscribers: new Set<ExploreToolSubscriber>(),
+  };
+}
+
+const state: ExploreBridgeGlobal = g[globalKey];
 
 export function setExploreAbortController(controller: AbortController | null): void {
-  currentAbortController = controller;
+  state.currentAbortController = controller;
   if (controller) {
-    totalExploreTokens = 0;
+    state.totalExploreTokens = 0;
   }
 }
 
 export function getExploreAbortSignal(): AbortSignal | undefined {
-  return currentAbortController?.signal;
+  return state.currentAbortController?.signal;
 }
 
 export function abortExplore(): void {
-  currentAbortController?.abort();
+  state.currentAbortController?.abort();
 }
 
 export function isExploreAborted(): boolean {
-  return currentAbortController?.signal.aborted ?? false;
+  return state.currentAbortController?.signal.aborted ?? false;
 }
 
 export function setExploreToolCallback(callback: ExploreToolCallback | null): void {
-  toolCallback = callback;
+  state.toolCallback = callback;
 }
 
 export function notifyExploreTool(toolName: string, args: Record<string, unknown>, result: { success: boolean; preview: string }, resultLength: number): void {
   const tokenEstimate = Math.ceil(resultLength / 4);
-  totalExploreTokens += tokenEstimate;
-  toolCallback?.(toolName, args, result, totalExploreTokens);
+  state.totalExploreTokens += tokenEstimate;
+  state.toolCallback?.(toolName, args, result, state.totalExploreTokens);
+
+  const event: ExploreToolEvent = {
+    toolName,
+    args,
+    success: result.success,
+    preview: result.preview,
+    tokenEstimate: state.totalExploreTokens,
+  };
+  console.log(`[EXPLORE BRIDGE] notify: ${toolName}, subs=${state.subscribers.size}`);
+  state.subscribers.forEach(sub => {
+    console.log(`[EXPLORE BRIDGE] calling subscriber`);
+    sub(event);
+  });
+}
+
+export function subscribeExploreTool(callback: ExploreToolSubscriber): () => void {
+  state.subscribers.add(callback);
+  console.log(`[EXPLORE BRIDGE] subscribe: now ${state.subscribers.size} subscribers`);
+  return () => {
+    state.subscribers.delete(callback);
+    console.log(`[EXPLORE BRIDGE] unsubscribe: now ${state.subscribers.size} subscribers`);
+  };
 }
 
 export function getExploreTokens(): number {
-  return totalExploreTokens;
+  return state.totalExploreTokens;
 }
