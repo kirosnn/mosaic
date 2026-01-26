@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { TextAttributes } from "@opentui/core";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
@@ -11,22 +11,31 @@ import type { Message } from "./types";
 import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
-import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, getInputAreaTotalLines, formatElapsedTime } from "./ThinkingIndicator";
+import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 
-function renderToolText(content: string, paragraphIndex: number, indent: number) {
+function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number) {
   if (paragraphIndex === 0) {
-    const match = content.match(/^(.+?)\s*\((.+)\)$/);
-    if (match) {
-      const [, toolName, toolInfo] = match;
-      return (
-        <>
-          <text fg="white">{toolName}</text>
-          <text fg="white" attributes={TextAttributes.DIM}> ({toolInfo})</text>
-        </>
-      );
+    if (wrappedLineIndex === 0) {
+      // Try to match "Name (Info...)" pattern
+      // 1. Strict match including closing parenthesis (single line case or last line of wrap logic if passed full, but here we get lines)
+      // 2. Loose match: starts with Name then (
+      const match = content.match(/^(.+?)\s*(\(.*)$/);
+      if (match) {
+        const [, toolName, toolInfo] = match;
+        return (
+          <>
+            <text fg="white">{toolName} </text>
+            <text fg="white" attributes={TextAttributes.DIM}>{toolInfo}</text>
+          </>
+        );
+      }
+    } else {
+      // For wrapped lines of the header, use DIM and add a small indentation for visual hierarchy.
+      return <text fg="white" attributes={TextAttributes.DIM}>{`  ${content || ' '}`}</text>;
     }
   }
+
 
   const diffLineRender = renderInlineDiffLine(content);
   if (diffLineRender) {
@@ -66,6 +75,7 @@ export function ChatPage({
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
   const [, setTimerTick] = useState(0);
+  const scrollboxRef = useRef<any>(null);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -88,6 +98,12 @@ export function ChatPage({
     }, 1000);
     return () => clearInterval(interval);
   }, [messages]);
+  useEffect(() => {
+    const sb = scrollboxRef.current;
+    if (sb?.verticalScrollBar) {
+      sb.verticalScrollBar.visible = false;
+    }
+  }, []);
 
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
@@ -104,6 +120,7 @@ export function ChatPage({
     isFirst: boolean;
     indent?: number;
     paragraphIndex?: number;
+    wrappedLineIndex?: number;
     segments?: import("../../utils/markdown").MarkdownSegment[];
     success?: boolean;
     isError?: boolean;
@@ -183,6 +200,7 @@ export function ChatPage({
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
             paragraphIndex: i,
+            wrappedLineIndex: 0,
             success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
             isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
             visualLines: 1,
@@ -204,6 +222,7 @@ export function ChatPage({
               isFirst: isFirstContent && i === 0 && j === 0,
               indent,
               paragraphIndex: i,
+              wrappedLineIndex: j,
               success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
               isSpacer: false,
               visualLines: 1,
@@ -345,45 +364,29 @@ export function ChatPage({
   const totalVisualLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
   const maxScrollOffset = Math.max(0, totalVisualLines - viewportHeight);
   const clampedScrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollOffset));
+  const scrollYPosition = Math.max(0, totalVisualLines - viewportHeight - clampedScrollOffset);
 
-  let visibleLines: RenderItem[] = [];
-
-  if (allItems.length === 0) {
-    visibleLines = [];
-  } else {
-    const targetEndLine = totalVisualLines - clampedScrollOffset;
-    const targetStartLine = Math.max(0, targetEndLine - viewportHeight);
-
-    let currentLine = 0;
-    let startIdx = -1;
-    let endIdx = -1;
-
-    for (let i = 0; i < allItems.length; i++) {
-      const item = allItems[i]!;
-      const itemEndLine = currentLine + item.visualLines;
-
-      if (startIdx === -1 && itemEndLine > targetStartLine) {
-        startIdx = i;
-      }
-
-      if (endIdx === -1 && itemEndLine >= targetEndLine) {
-        endIdx = i + 1;
-        break;
-      }
-
-      currentLine = itemEndLine;
+  useEffect(() => {
+    if (scrollboxRef.current && typeof scrollboxRef.current.scrollTop === 'number') {
+      scrollboxRef.current.scrollTop = scrollYPosition;
     }
-
-    if (startIdx === -1) startIdx = 0;
-    if (endIdx === -1) endIdx = allItems.length;
-
-    visibleLines = allItems.slice(startIdx, endIdx);
-  }
+  }, [scrollYPosition]);
 
   return (
     <box flexDirection="column" width="100%" height="100%" position="relative">
-      <box flexGrow={1} flexDirection="column" width="100%" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={bottomReservedLines}>
-        {visibleLines.map((item) => {
+      <scrollbox
+        ref={scrollboxRef}
+        scrollY
+        stickyScroll={scrollOffset === 0}
+        stickyStart="bottom"
+        viewportCulling
+        width="100%"
+        height={viewportHeight}
+        paddingLeft={1}
+        paddingRight={1}
+        paddingTop={1}
+      >
+        {allItems.map((item) => {
           if (item.type === 'question') {
             const req = item.questionRequest;
             if (!req) return null;
@@ -462,7 +465,7 @@ export function ChatPage({
                 isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
                   <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
                 ) : (
-                  renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0)
+                  renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0)
                 )
               ) : item.role === "user" || item.role === "slash" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
@@ -476,7 +479,7 @@ export function ChatPage({
             </box>
           );
         })}
-      </box>
+      </scrollbox>
 
       <box
         position="absolute"

@@ -95,7 +95,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const idx = newMessages.findIndex(m => m.id === exploreMessageIdRef.current);
           if (idx !== -1) {
             const toolLines = exploreToolsRef.current.map(t => {
-              const icon = t.success ? '+' : '-';
+              const icon = t.success ? '→' : '-';
               return `  ${icon} ${t.tool}(${t.info})`;
             });
             const purpose = explorePurposeRef.current;

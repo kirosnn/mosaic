@@ -139,7 +139,7 @@ async function fetchUrlContent(
     timeout?: number;
     userAgent?: string;
   } = {}
-): Promise<{ content: string; contentType: string; title: string | null; isSPA?: boolean }> {
+): Promise<{ content: string; contentType: string; title: string | null; status: number; statusText: string; isSPA?: boolean }> {
   const { raw = false, timeout = DEFAULT_FETCH_TIMEOUT, userAgent = DEFAULT_USER_AGENT } = options;
 
   const controller = new AbortController();
@@ -156,8 +156,11 @@ async function fetchUrlContent(
       redirect: 'follow',
     });
 
+    const status = response.status;
+    const statusText = response.statusText;
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new Error(`HTTP ${status} ${statusText}`);
     }
 
     const contentType = response.headers.get('content-type') || '';
@@ -169,10 +172,10 @@ async function fetchUrlContent(
 
     if (isHtml && !raw) {
       const { content, title, isSPA } = extractContentFromHtml(text, url);
-      return { content, contentType, title, isSPA };
+      return { content, contentType, title, isSPA, status, statusText };
     }
 
-    return { content: text, contentType, title: null };
+    return { content: text, contentType, title: null, status, statusText };
   } finally {
     clearTimeout(timeoutId);
   }
@@ -188,6 +191,7 @@ export interface ToolResult {
 
 const pathValidationCache = new Map<string, boolean>();
 const globPatternCache = new Map<string, RegExp>();
+
 
 function validatePath(fullPath: string, workspace: string): boolean {
   const cacheKey = `${fullPath}|${workspace}`;
@@ -1245,13 +1249,15 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         try {
           let fetchResult = await fetchUrlContent(url, { raw, timeout });
-          let { content, contentType, title, isSPA } = fetchResult;
+          let { content, contentType, title, isSPA, status, statusText } = fetchResult;
 
           if (isSPA && !raw) {
             const rawResult = await fetchUrlContent(url, { raw: true, timeout });
             content = rawResult.content;
             contentType = rawResult.contentType;
             title = rawResult.title;
+            status = rawResult.status;
+            statusText = rawResult.statusText;
             isSPA = false;
           }
 
@@ -1275,6 +1281,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           }
 
           parts.push(`**URL:** ${url}`);
+          parts.push(`**Status:** ${status} ${statusText}`);
           parts.push(`**Content-Type:** ${contentType}`);
           parts.push(`**Length:** ${extractedContent.length} / ${totalLength} characters`);
 

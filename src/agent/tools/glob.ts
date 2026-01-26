@@ -9,6 +9,8 @@ IMPORTANT: Use "**/" prefix to search recursively in all subdirectories.
 - "*.ts" only matches files in the current directory
 - "**/*.ts" matches files in ALL subdirectories (usually what you want)
 
+Note: Do not use this to simply list files in a directory; use the 'list' tool for that. This is for finding specific files by pattern.
+
 Examples:
 - glob(pattern="**/*.ts") - All TypeScript files
 - glob(pattern="**/*.tsx") - All React components

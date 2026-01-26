@@ -9,7 +9,6 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   write: 'Write',
   edit: 'Edit',
   list: 'List',
-  create_directory: 'Mkdir',
   glob: 'Glob',
   grep: 'Grep',
   bash: 'Command',
@@ -50,7 +49,6 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     case 'write':
     case 'edit':
     case 'list':
-    case 'create_directory':
     case 'glob':
     case 'grep':
     case 'bash':
@@ -261,7 +259,15 @@ function getToolErrorText(result: unknown): string | null {
 
 function formatToolBodyLines(toolName: string, args: Record<string, unknown>, result: unknown): string[] {
   const errorText = getToolErrorText(result);
-  if (errorText) return [`Tool error: ${errorText}`];
+  if (errorText) {
+    if (toolName === 'fetch') {
+      const statusMatch = errorText.match(/HTTP (\d+(?: [a-zA-Z ]+)?)/);
+      if (statusMatch) {
+        return [`${statusMatch[1]} - Failed to fetch`];
+      }
+    }
+    return [`Tool error: ${errorText}`];
+  }
 
   switch (toolName) {
     case 'read': {
@@ -344,6 +350,10 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
     case 'fetch': {
       if (typeof result === 'string') {
         const url = typeof args.url === 'string' ? args.url : 'URL';
+        const statusMatch = result.match(/\*\*Status:\*\* (\d+(?: [a-zA-Z ]+)?)/);
+        if (statusMatch) {
+          return [`${statusMatch[1]} - Fetched ${url}`];
+        }
         return [`Fetched ${url}`];
       }
       return ['Fetch completed'];

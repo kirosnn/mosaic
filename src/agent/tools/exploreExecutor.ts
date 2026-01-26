@@ -104,10 +104,10 @@ function createExploreTools() {
       },
     }),
     glob: createTool({
-      description: 'Find files matching a glob pattern',
+      description: 'Find files matching a glob pattern. Do NOT use this to list directory contents (use "list" instead).',
       parameters: z.object({
         pattern: z.string().describe('Glob pattern to match files (e.g., "**/*.ts", "src/**/*.tsx")'),
-        path: z.string().optional().describe('Directory to search in (default: workspace root)'),
+        path: z.string().describe('Directory to search in (use "." for workspace root)'),
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
@@ -127,17 +127,17 @@ function createExploreTools() {
       },
     }),
     grep: createTool({
-      description: 'Search for text content within files',
+      description: 'Search for text content within files using regular expressions',
       parameters: z.object({
         pattern: z.string().describe('Glob pattern to match files'),
-        query: z.string().describe('Text to search for'),
-        path: z.string().optional().describe('Directory to search in'),
-        case_sensitive: z.boolean().optional().describe('Case-sensitive search'),
-        max_results: z.number().optional().describe('Maximum results'),
+        query: z.string().describe('Regular expression pattern to search for'),
+        path: z.string().describe('Directory to search in (use "." for workspace root)'),
+        case_sensitive: z.boolean().describe('Case-sensitive search (pass false for default)'),
+        max_results: z.number().describe('Maximum results (pass 50 for default)'),
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const result = await executeTool('grep', args);
+        const result = await executeTool('grep', { ...args, regex: true });
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
         if (result.success && result.result) {
@@ -156,9 +156,9 @@ function createExploreTools() {
       description: 'List files and directories',
       parameters: z.object({
         path: z.string().describe('Path to list'),
-        recursive: z.boolean().optional().describe('List recursively'),
-        filter: z.string().optional().describe('Filter pattern'),
-        include_hidden: z.boolean().optional().describe('Include hidden files'),
+        recursive: z.boolean().describe('List recursively (pass false for default)'),
+        filter: z.string().describe('Filter pattern (pass empty string for no filter)'),
+        include_hidden: z.boolean().describe('Include hidden files (pass false for default)'),
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
@@ -196,7 +196,7 @@ function formatExploreLogs(): string {
   const lines = ['Tools used:'];
   for (const log of exploreLogs) {
     const argStr = log.args.path || log.args.pattern || log.args.query || '';
-    const status = log.success ? '+' : '-';
+    const status = log.success ? '→' : '-';
     lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
   }
   return lines.join('\n');
