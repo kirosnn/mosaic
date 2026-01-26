@@ -98,13 +98,11 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                 const { model } = await configRes.json();
 
                 if (model) {
-                    // Try to find the model using the enhanced fuzzy search
                     const result = await findModelsDevModelById(model);
 
                     if (result && result.model) {
                         setShowAttachButton(modelAcceptsImages(result.model));
                     } else {
-                        // Very basic fallback if even fuzzy search fails
                         const lowerId = model.toLowerCase();
                         const likelySupportsImages =
                             lowerId.includes('gpt-4') ||
@@ -225,7 +223,7 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                                 onKeyDown={handleKeyDown}
                                 placeholder="Type your message..."
                                 rows={2}
-                                disabled={isProcessing || !!questionRequest || !!approvalRequest}
+                                disabled={!!questionRequest || !!approvalRequest}
                             />
                             <div className="input-actions">
                                 <div className="input-actions-left">

@@ -7,8 +7,176 @@ import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { captureFileSnapshot } from '../../utils/undoRedo';
 import { trackFileChange, trackFileCreated, trackFileDeleted } from '../../utils/fileChangeTracker';
+import TurndownService from 'turndown';
+import { Readability } from '@mozilla/readability';
+import { parseHTML } from 'linkedom';
 
 const execAsync = promisify(exec);
+
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0';
+const DEFAULT_FETCH_MAX_LENGTH = 10000;
+const DEFAULT_FETCH_TIMEOUT = 30000;
+
+function extractContentFromHtml(html: string, url: string): { content: string; title: string | null; isSPA: boolean } {
+  const { document } = parseHTML(html);
+
+  const turndown = new TurndownService({
+    headingStyle: 'atx',
+    codeBlockStyle: 'fenced',
+    emDelimiter: '*',
+  });
+
+  turndown.addRule('removeScripts', {
+    filter: ['script', 'style', 'noscript'],
+    replacement: () => '',
+  });
+
+  turndown.addRule('preserveLinks', {
+    filter: 'a',
+    replacement: (content, node) => {
+      const element = node as HTMLAnchorElement;
+      const href = element.getAttribute('href');
+      if (!href || href.startsWith('#')) return content;
+
+      try {
+        const absoluteUrl = new URL(href, url).toString();
+        return `[${content}](${absoluteUrl})`;
+      } catch {
+        return `[${content}](${href})`;
+      }
+    },
+  });
+
+  turndown.addRule('preserveImages', {
+    filter: 'img',
+    replacement: (_content, node) => {
+      const element = node as HTMLImageElement;
+      const src = element.getAttribute('src');
+      const alt = element.getAttribute('alt') || '';
+      if (!src) return '';
+
+      try {
+        const absoluteUrl = new URL(src, url).toString();
+        return `![${alt}](${absoluteUrl})`;
+      } catch {
+        return `![${alt}](${src})`;
+      }
+    },
+  });
+
+  const reader = new Readability(document as unknown as Document, {
+    charThreshold: 0,
+  });
+  const article = reader.parse();
+
+  if (article && article.content) {
+    const content = turndown.turndown(article.content).trim();
+    if (content.length > 50) {
+      return {
+        content,
+        title: article.title || document.title || null,
+        isSPA: false,
+      };
+    }
+  }
+
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyContent = bodyMatch ? bodyMatch[1] : html;
+  const markdownContent = turndown.turndown(bodyContent || '').trim();
+
+  if (markdownContent.length > 50) {
+    return {
+      content: markdownContent,
+      title: document.title || null,
+      isSPA: false,
+    };
+  }
+
+  const isSPA = html.includes('id="root"') ||
+    html.includes('id="app"') ||
+    html.includes('id="__next"') ||
+    html.includes('data-reactroot') ||
+    html.includes('ng-app');
+
+  const metaTags: string[] = [];
+  const metaDescription = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
+  const metaOgTitle = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+  const metaOgDescription = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
+
+  if (metaOgTitle) metaTags.push(`**Title:** ${metaOgTitle[1]}`);
+  if (metaDescription) metaTags.push(`**Description:** ${metaDescription[1]}`);
+  if (metaOgDescription && metaOgDescription[1] !== metaDescription?.[1]) {
+    metaTags.push(`**OG Description:** ${metaOgDescription[1]}`);
+  }
+
+  let content = '';
+  if (isSPA) {
+    content = `*This appears to be a Single Page Application (SPA/React/Vue/Angular). The content is rendered client-side with JavaScript and cannot be extracted via simple HTTP fetch.*\n\n`;
+    if (metaTags.length > 0) {
+      content += `**Available metadata:**\n${metaTags.join('\n')}\n\n`;
+    }
+    content += `*To see the actual content, you would need a headless browser. Try using raw=true to see the HTML source.*`;
+  } else if (markdownContent) {
+    content = markdownContent;
+  } else {
+    content = `*No readable content could be extracted from this page.*\n\n`;
+    if (metaTags.length > 0) {
+      content += `**Available metadata:**\n${metaTags.join('\n')}`;
+    }
+  }
+
+  return {
+    content,
+    title: document.title || null,
+    isSPA,
+  };
+}
+
+async function fetchUrlContent(
+  url: string,
+  options: {
+    raw?: boolean;
+    timeout?: number;
+    userAgent?: string;
+  } = {}
+): Promise<{ content: string; contentType: string; title: string | null; isSPA?: boolean }> {
+  const { raw = false, timeout = DEFAULT_FETCH_TIMEOUT, userAgent = DEFAULT_USER_AGENT } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await globalThis.fetch(url, {
+      headers: {
+        'User-Agent': userAgent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const text = await response.text();
+
+    const isHtml = contentType.includes('text/html') ||
+      text.slice(0, 500).toLowerCase().includes('<html') ||
+      text.slice(0, 500).toLowerCase().includes('<!doctype html');
+
+    if (isHtml && !raw) {
+      const { content, title, isSPA } = extractContentFromHtml(text, url);
+      return { content, contentType, title, isSPA };
+    }
+
+    return { content: text, contentType, title: null };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 export interface ToolResult {
   success: boolean;
@@ -69,14 +237,14 @@ function matchGlob(filename: string, pattern: string): boolean {
   if (!regex) {
     const normalizedPattern = pattern.replace(/\\/g, '/');
 
-    let regexPattern = normalizedPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    let regexPattern = normalizedPattern.replace(/[.+^${}()|[\]\\*?]/g, '\\$&');
 
     regexPattern = regexPattern
-      .replace(/\*\*\//g, '(?:(?:[^/]+/)*)')
-      .replace(/\/\*\*$/g, '(?:/.*)?')
-      .replace(/\*\*/g, '.*')
-      .replace(/\*/g, '[^/]*')
-      .replace(/\?/g, '[^/]');
+      .replace(/\\\*\\\*\\\//g, '(?:(?:[^/]+/)*)')
+      .replace(/\\\/\*\\\*$/g, '(?:/.*)?')
+      .replace(/\\\*\\\*/g, '.*')
+      .replace(/\\\*/g, '[^/]*')
+      .replace(/\\\?/g, '[^/]');
 
     regex = new RegExp(`^${regexPattern}$`, 'i');
     globPatternCache.set(pattern, regex);
@@ -91,32 +259,199 @@ function matchGlob(filename: string, pattern: string): boolean {
   return regex.test(normalizedFilename);
 }
 
-async function searchInFile(filePath: string, query: string, caseSensitive: boolean): Promise<Array<{ line: number; content: string }>> {
+interface SearchResult {
+  matches: Array<{ line: number; content: string; context?: { before: string[]; after: string[] } }>;
+  error?: string;
+  matchCount?: number;
+  skipped?: boolean;
+  skipReason?: string;
+}
+
+interface SearchOptions {
+  caseSensitive: boolean;
+  isRegex: boolean;
+  wholeWord: boolean;
+  multiline: boolean;
+  contextBefore: number;
+  contextAfter: number;
+  maxFileSize: number;
+  invertMatch: boolean;
+}
+
+const DEFAULT_MAX_FILE_SIZE = 1024 * 1024;
+
+function isValidRegex(pattern: string): { valid: boolean; error?: string } {
   try {
-    const content = await readFile(filePath, 'utf-8');
-    const searchQuery = caseSensitive ? query : query.toLowerCase();
-    const matches: Array<{ line: number; content: string }> = [];
+    new RegExp(pattern);
+    return { valid: true };
+  } catch (e) {
+    return { valid: false, error: e instanceof Error ? e.message : 'Invalid regular expression' };
+  }
+}
 
-    let lineNumber = 1;
-    let lineStart = 0;
+function isBinaryFile(buffer: Buffer, bytesToCheck = 8000): boolean {
+  const checkLength = Math.min(buffer.length, bytesToCheck);
+  let nullCount = 0;
+  let controlCount = 0;
 
-    for (let i = 0; i <= content.length; i++) {
-      if (i === content.length || content[i] === '\n') {
-        const rawLine = content.slice(lineStart, i);
-        const lineContent = caseSensitive ? rawLine : rawLine.toLowerCase();
+  for (let i = 0; i < checkLength; i++) {
+    const byte = buffer[i];
+    if (byte === 0) {
+      nullCount++;
+      if (nullCount > 1) return true;
+    }
+    if (byte !== undefined && byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+      controlCount++;
+      if (controlCount > checkLength * 0.1) return true;
+    }
+  }
 
-        if (lineContent.includes(searchQuery)) {
-          matches.push({ line: lineNumber, content: rawLine });
-        }
+  return false;
+}
 
-        lineNumber++;
-        lineStart = i + 1;
+function escapeRegexForLiteral(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildSearchRegex(query: string, options: SearchOptions): { regex: RegExp; error?: undefined } | { regex?: undefined; error: string } {
+  try {
+    let pattern = query;
+
+    if (!options.isRegex) {
+      pattern = escapeRegexForLiteral(query);
+    }
+
+    if (options.wholeWord) {
+      if (options.isRegex) {
+        pattern = `(?:^|\\b)${pattern}(?:\\b|$)`;
+      } else {
+        pattern = `\\b${pattern}\\b`;
       }
     }
 
-    return matches;
-  } catch {
-    return [];
+    let flags = 'g';
+    if (!options.caseSensitive) flags += 'i';
+    if (options.multiline) flags += 'm';
+
+    return { regex: new RegExp(pattern, flags) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Invalid pattern' };
+  }
+}
+
+async function searchInFile(filePath: string, query: string, options: SearchOptions): Promise<SearchResult> {
+  try {
+    const stats = await stat(filePath);
+
+    if (stats.size > options.maxFileSize) {
+      return {
+        matches: [],
+        skipped: true,
+        skipReason: `File too large (${Math.round(stats.size / 1024)}KB > ${Math.round(options.maxFileSize / 1024)}KB)`
+      };
+    }
+
+    const buffer = await readFile(filePath);
+
+    if (isBinaryFile(buffer)) {
+      return {
+        matches: [],
+        skipped: true,
+        skipReason: 'Binary file'
+      };
+    }
+
+    const content = buffer.toString('utf-8');
+    const lines = content.split('\n');
+
+    const regexResult = buildSearchRegex(query, options);
+    if (regexResult.error || !regexResult.regex) {
+      return { matches: [], error: regexResult.error ?? 'Failed to build search pattern' };
+    }
+    const regex: RegExp = regexResult.regex;
+
+    if (options.invertMatch) {
+      const hasMatch = lines.some(line => regex.test(line));
+      return {
+        matches: [],
+        matchCount: hasMatch ? 0 : 1,
+      };
+    }
+
+    if (options.multiline && options.isRegex) {
+      const multilineMatches: Array<{ line: number; content: string }> = [];
+      let match;
+      regex.lastIndex = 0;
+
+      while ((match = regex.exec(content)) !== null) {
+        const matchStart = match.index;
+        let lineNumber = 1;
+        for (let i = 0; i < matchStart; i++) {
+          if (content[i] === '\n') lineNumber++;
+        }
+
+        const matchedText = match[0];
+        const matchLines = matchedText.split('\n');
+
+        multilineMatches.push({
+          line: lineNumber,
+          content: matchLines.length > 1
+            ? `${matchLines[0]}... (+${matchLines.length - 1} lines)`
+            : matchedText.slice(0, 200)
+        });
+
+        if (regex.lastIndex === match.index) {
+          regex.lastIndex++;
+        }
+      }
+
+      return { matches: multilineMatches, matchCount: multilineMatches.length };
+    }
+
+    const matches: Array<{ line: number; content: string; context?: { before: string[]; after: string[] } }> = [];
+    let matchCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line === undefined) continue;
+
+      regex.lastIndex = 0;
+      if (regex.test(line)) {
+        matchCount++;
+
+        const contextBefore: string[] = [];
+        const contextAfter: string[] = [];
+
+        if (options.contextBefore > 0) {
+          for (let j = Math.max(0, i - options.contextBefore); j < i; j++) {
+            const ctxLine = lines[j];
+            if (ctxLine !== undefined) contextBefore.push(ctxLine);
+          }
+        }
+
+        if (options.contextAfter > 0) {
+          for (let j = i + 1; j <= Math.min(lines.length - 1, i + options.contextAfter); j++) {
+            const ctxLine = lines[j];
+            if (ctxLine !== undefined) contextAfter.push(ctxLine);
+          }
+        }
+
+        const hasContext = contextBefore.length > 0 || contextAfter.length > 0;
+
+        matches.push({
+          line: i + 1,
+          content: line,
+          ...(hasContext && { context: { before: contextBefore, after: contextAfter } })
+        });
+      }
+    }
+
+    return { matches, matchCount };
+  } catch (error) {
+    return {
+      matches: [],
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
   }
 }
 
@@ -495,7 +830,11 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           }
 
           if (filter) {
-            const regex = new RegExp(filter.replace(/\*/g, '.*').replace(/\?/g, '.'));
+            const escapedFilter = filter
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+              .replace(/\*/g, '.*')
+              .replace(/\?/g, '.');
+            const regex = new RegExp(`^${escapedFilter}$`, 'i');
             filteredEntries = filteredEntries.filter(entry => regex.test(entry.name));
           }
 
@@ -583,11 +922,26 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       }
 
       case 'grep': {
-        const pattern = args.pattern as string;
+        const { FILE_TYPE_EXTENSIONS } = await import('./grep.ts');
+
+        const pattern = args.pattern === null ? undefined : (args.pattern as string | undefined);
+        const fileType = args.file_type === null ? undefined : (args.file_type as string | undefined);
         const query = args.query as string;
         const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
         const caseSensitive = ((args.case_sensitive === null ? undefined : (args.case_sensitive as boolean | undefined)) ?? false);
-        const maxResults = ((args.max_results === null ? undefined : (args.max_results as number | undefined)) ?? 100);
+        const isRegex = ((args.regex === null ? undefined : (args.regex as boolean | undefined)) ?? false);
+        const wholeWord = ((args.whole_word === null ? undefined : (args.whole_word as boolean | undefined)) ?? false);
+        const multiline = ((args.multiline === null ? undefined : (args.multiline as boolean | undefined)) ?? false);
+        const context = ((args.context === null ? undefined : (args.context as number | undefined)) ?? 0);
+        const contextBefore = ((args.context_before === null ? undefined : (args.context_before as number | undefined)) ?? context);
+        const contextAfter = ((args.context_after === null ? undefined : (args.context_after as number | undefined)) ?? context);
+        const maxResults = ((args.max_results === null ? undefined : (args.max_results as number | undefined)) ?? 500);
+        const maxFileSize = ((args.max_file_size === null ? undefined : (args.max_file_size as number | undefined)) ?? DEFAULT_MAX_FILE_SIZE);
+        const includeHidden = ((args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined)) ?? false);
+        const excludePattern = args.exclude_pattern === null ? undefined : (args.exclude_pattern as string | undefined);
+        const outputMode = ((args.output_mode === null ? undefined : (args.output_mode as string | undefined)) ?? 'matches') as 'matches' | 'files' | 'count';
+        const invertMatch = ((args.invert_match === null ? undefined : (args.invert_match as boolean | undefined)) ?? false);
+
         const fullPath = resolve(workspace, searchPath);
 
         if (!validatePath(fullPath, workspace)) {
@@ -597,39 +951,177 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         }
 
-        const files = await findFilesByPattern(pattern, fullPath);
+        const testSearchOptions: SearchOptions = {
+          caseSensitive,
+          isRegex,
+          wholeWord,
+          multiline,
+          contextBefore: 0,
+          contextAfter: 0,
+          maxFileSize: DEFAULT_MAX_FILE_SIZE,
+          invertMatch: false,
+        };
+        const regexTest = buildSearchRegex(query, testSearchOptions);
+        if (regexTest.error) {
+          return {
+            success: false,
+            error: `Invalid search pattern: ${regexTest.error}`
+          };
+        }
 
-        const results: Array<{ file: string; matches: Array<{ line: number; content: string }> }> = [];
+        let finalPattern: string;
+        if (pattern) {
+          finalPattern = pattern.includes('**') ? pattern : `**/${pattern}`;
+        } else if (fileType) {
+          const extensions = FILE_TYPE_EXTENSIONS[fileType.toLowerCase()];
+          if (!extensions) {
+            return {
+              success: false,
+              error: `Unknown file type: ${fileType}. Available types: ${Object.keys(FILE_TYPE_EXTENSIONS).join(', ')}`
+            };
+          }
+          if (extensions.length === 1) {
+            finalPattern = `**/*${extensions[0]}`;
+          } else {
+            finalPattern = '**/*';
+          }
+        } else {
+          finalPattern = '**/*';
+        }
+
+        let allFiles = await findFilesByPattern(finalPattern, fullPath);
+
+        if (!includeHidden) {
+          allFiles = allFiles.filter(f => !f.split('/').some(part => part.startsWith('.')));
+        }
+
+        if (fileType && !pattern) {
+          const extensions = FILE_TYPE_EXTENSIONS[fileType.toLowerCase()];
+          if (extensions) {
+            allFiles = allFiles.filter(f => extensions.some(ext => f.toLowerCase().endsWith(ext)));
+          }
+        }
+
+        if (excludePattern) {
+          allFiles = allFiles.filter(f => !matchGlob(f, excludePattern));
+        }
+
+        const searchOptions: SearchOptions = {
+          caseSensitive,
+          isRegex,
+          wholeWord,
+          multiline,
+          contextBefore,
+          contextAfter,
+          maxFileSize,
+          invertMatch,
+        };
+
+        type MatchType = { line: number; content: string; context?: { before: string[]; after: string[] } };
+        const results: Array<{ file: string; matches: MatchType[]; count?: number }> = [];
+        const skippedFiles: Array<{ file: string; reason: string }> = [];
         let totalResults = 0;
+        let totalMatchCount = 0;
 
-        const BATCH_SIZE = 10;
-        for (let i = 0; i < files.length; i += BATCH_SIZE) {
-          if (totalResults >= maxResults) break;
+        const BATCH_SIZE = 15;
+        for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
+          if (!invertMatch && totalResults >= maxResults) break;
 
-          const batch = files.slice(i, i + BATCH_SIZE);
+          const batch = allFiles.slice(i, i + BATCH_SIZE);
           const batchResults = await Promise.all(
             batch.map(async (file) => {
               const filePath = resolve(fullPath, file);
-              const matches = await searchInFile(filePath, query, caseSensitive);
-              return { file: join(searchPath, file), matches };
+              const searchResult = await searchInFile(filePath, query, searchOptions);
+              return {
+                file: join(searchPath, file),
+                matches: searchResult.matches,
+                matchCount: searchResult.matchCount ?? searchResult.matches.length,
+                skipped: searchResult.skipped,
+                skipReason: searchResult.skipReason,
+              };
             })
           );
 
-          for (const { file, matches } of batchResults) {
-            if (totalResults >= maxResults) break;
-            if (matches.length > 0) {
-              results.push({
-                file,
-                matches: matches.slice(0, maxResults - totalResults)
-              });
-              totalResults += matches.length;
+          for (const { file, matches, matchCount, skipped, skipReason } of batchResults) {
+            if (skipped && skipReason) {
+              skippedFiles.push({ file, reason: skipReason });
+              continue;
+            }
+
+            if (invertMatch) {
+              if (matchCount === 1) {
+                results.push({ file, matches: [], count: 1 });
+                totalResults++;
+              }
+              continue;
+            }
+
+            if (matches.length > 0 || matchCount > 0) {
+              totalMatchCount += matchCount;
+
+              if (outputMode === 'files') {
+                results.push({ file, matches: [] });
+                totalResults++;
+              } else if (outputMode === 'count') {
+                results.push({ file, matches: [], count: matchCount });
+                totalResults++;
+              } else {
+                const remainingSlots = maxResults - totalResults;
+                const matchesToInclude = matches.slice(0, remainingSlots);
+                results.push({ file, matches: matchesToInclude, count: matchCount });
+                totalResults += matchesToInclude.length;
+              }
             }
           }
         }
 
+        let formattedResult: string;
+
+        if (outputMode === 'files') {
+          const filesOnly = results.map(r => r.file);
+          const summary = {
+            files_found: filesOnly.length,
+            files: filesOnly,
+            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length })
+          };
+          formattedResult = JSON.stringify(summary, null, 2);
+        } else if (outputMode === 'count') {
+          const counts = results.map(r => ({ file: r.file, count: r.count ?? 0 }));
+          const summary = {
+            total_matches: totalMatchCount,
+            files_with_matches: counts.length,
+            counts,
+            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length })
+          };
+          formattedResult = JSON.stringify(summary, null, 2);
+        } else {
+          const summary = {
+            total_matches: totalMatchCount,
+            files_searched: allFiles.length,
+            files_with_matches: results.length,
+            ...(skippedFiles.length > 0 && { skipped_files: skippedFiles.length }),
+            ...(totalResults >= maxResults && { truncated: true, max_results: maxResults }),
+            results: results.map(r => ({
+              file: r.file,
+              match_count: r.count ?? r.matches.length,
+              matches: r.matches.map(m => {
+                if (m.context && (m.context.before.length > 0 || m.context.after.length > 0)) {
+                  return {
+                    line: m.line,
+                    content: m.content,
+                    context: m.context
+                  };
+                }
+                return { line: m.line, content: m.content };
+              })
+            }))
+          };
+          formattedResult = JSON.stringify(summary, null, 2);
+        }
+
         return {
           success: true,
-          result: JSON.stringify(results, null, 2)
+          result: formattedResult
         };
       }
 
@@ -735,6 +1227,92 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         };
       }
 
+      case 'fetch': {
+        const url = args.url as string;
+        const maxLength = (args.max_length as number | undefined) ?? DEFAULT_FETCH_MAX_LENGTH;
+        const startIndex = (args.start_index as number | undefined) ?? 0;
+        const raw = (args.raw as boolean | undefined) ?? false;
+        const timeout = (args.timeout as number | undefined) ?? DEFAULT_FETCH_TIMEOUT;
+
+        try {
+          new URL(url);
+        } catch {
+          return {
+            success: false,
+            error: `Invalid URL: ${url}`,
+          };
+        }
+
+        try {
+          let fetchResult = await fetchUrlContent(url, { raw, timeout });
+          let { content, contentType, title, isSPA } = fetchResult;
+
+          if (isSPA && !raw) {
+            const rawResult = await fetchUrlContent(url, { raw: true, timeout });
+            content = rawResult.content;
+            contentType = rawResult.contentType;
+            title = rawResult.title;
+            isSPA = false;
+          }
+
+          const totalLength = content.length;
+
+          if (startIndex >= totalLength) {
+            return {
+              success: false,
+              error: `Start index ${startIndex} exceeds content length ${totalLength}`,
+            };
+          }
+
+          const extractedContent = content.slice(startIndex, startIndex + maxLength);
+          const truncated = startIndex + maxLength < totalLength;
+          const nextStartIndex = truncated ? startIndex + maxLength : undefined;
+
+          const parts: string[] = [];
+
+          if (title) {
+            parts.push(`# ${title}\n`);
+          }
+
+          parts.push(`**URL:** ${url}`);
+          parts.push(`**Content-Type:** ${contentType}`);
+          parts.push(`**Length:** ${extractedContent.length} / ${totalLength} characters`);
+
+          if (fetchResult.isSPA) {
+            parts.push(`**Note:** SPA detected (React/Vue/Angular). Showing raw HTML source.`);
+          }
+
+          if (truncated && nextStartIndex !== undefined) {
+            parts.push(`**Status:** Content truncated. Use start_index=${nextStartIndex} to continue reading.`);
+          }
+
+          parts.push('\n---\n');
+          parts.push(extractedContent);
+
+          if (truncated && nextStartIndex !== undefined) {
+            parts.push(`\n\n---\n*Content truncated at ${extractedContent.length} characters. Call fetch again with start_index=${nextStartIndex} to continue reading.*`);
+          }
+
+          return {
+            success: true,
+            result: parts.join('\n'),
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+
+          if (message.includes('abort')) {
+            return {
+              success: false,
+              error: `Request timed out after ${timeout}ms`,
+            };
+          }
+
+          return {
+            success: false,
+            error: `Failed to fetch ${url}: ${message}`,
+          };
+        }
+      }
 
       default:
         return {

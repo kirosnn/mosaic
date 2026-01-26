@@ -1,6 +1,79 @@
-import { streamText, CoreMessage } from 'ai';
+import { streamText, CoreMessage, CoreTool } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
+import { z } from 'zod';
+
+function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodOptional) {
+    return unwrapOptional(schema.unwrap());
+  }
+  if (schema instanceof z.ZodEffects) {
+    const inner = unwrapOptional(schema.innerType());
+    return inner === schema.innerType() ? schema : new z.ZodEffects({
+      ...schema._def,
+      schema: inner,
+    });
+  }
+  return schema;
+}
+
+function makeAllPropertiesRequired(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodEffects) {
+    const innerTransformed = makeAllPropertiesRequired(schema.innerType());
+    return new z.ZodEffects({
+      ...schema._def,
+      schema: innerTransformed,
+    });
+  }
+
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape;
+    const newShape: Record<string, z.ZodTypeAny> = {};
+    for (const key in shape) {
+      let fieldSchema = shape[key];
+      fieldSchema = unwrapOptional(fieldSchema);
+      if (fieldSchema instanceof z.ZodObject) {
+        fieldSchema = makeAllPropertiesRequired(fieldSchema);
+      } else if (fieldSchema instanceof z.ZodArray) {
+        const innerType = fieldSchema.element;
+        if (innerType instanceof z.ZodObject) {
+          fieldSchema = z.array(makeAllPropertiesRequired(innerType));
+        }
+      } else if (fieldSchema instanceof z.ZodEffects) {
+        const innerType = fieldSchema.innerType();
+        if (innerType instanceof z.ZodObject) {
+          fieldSchema = new z.ZodEffects({
+            ...fieldSchema._def,
+            schema: makeAllPropertiesRequired(innerType),
+          });
+        }
+      }
+      newShape[key] = fieldSchema;
+    }
+    return z.object(newShape);
+  }
+  return schema;
+}
+
+function transformToolsForResponsesApi(
+  tools: Record<string, CoreTool> | undefined
+): Record<string, CoreTool> | undefined {
+  if (!tools) return tools;
+
+  const transformed: Record<string, CoreTool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const t = tool as any;
+    if (t.parameters) {
+      transformed[name] = {
+        ...t,
+        parameters: makeAllPropertiesRequired(t.parameters),
+      };
+    } else {
+      transformed[name] = tool;
+    }
+  }
+  return transformed;
+}
 
 export class OpenAIProvider implements Provider {
   async *sendMessage(
@@ -32,11 +105,16 @@ export class OpenAIProvider implements Provider {
       endpoint: OpenAIEndpoint,
       strictJsonSchema: boolean
     ): AsyncGenerator<AgentEvent> {
+      const toolsToUse =
+        endpoint === 'responses'
+          ? transformToolsForResponsesApi(config.tools)
+          : config.tools;
+
       const result = streamText({
         model: pickModel(endpoint),
         messages: messages,
         system: config.systemPrompt,
-        tools: config.tools,
+        tools: toolsToUse,
         maxSteps: config.maxSteps ?? 10,
         abortSignal: options?.abortSignal,
         providerOptions: {
@@ -150,59 +228,19 @@ export class OpenAIProvider implements Provider {
     };
 
     try {
-      yield* run('responses', true);
+      yield* run('responses', false);
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
-      const looksLikeStrictSchemaError =
-        msg.includes('Invalid schema for function') &&
-        msg.includes('required') &&
-        msg.includes('properties');
-
-      if (looksLikeStrictSchemaError) {
-        try {
-          yield* run('responses', false);
-          return;
-        } catch (retryError) {
-          if (options?.abortSignal?.aborted) return;
-          yield {
-            type: 'error',
-            error: retryError instanceof Error ? retryError.message : 'Unknown error occurred',
-          };
-          return;
-        }
-      }
 
       const fallbackEndpoint = classifyEndpointError(msg);
       if (fallbackEndpoint && fallbackEndpoint !== 'responses') {
         try {
-          yield* run(fallbackEndpoint, true);
+          yield* run(fallbackEndpoint, false);
           return;
         } catch (endpointError) {
           if (options?.abortSignal?.aborted) return;
           const endpointMsg = endpointError instanceof Error ? endpointError.message : String(endpointError);
-          const strictSchemaFromFallback =
-            endpointMsg.includes('Invalid schema for function') &&
-            endpointMsg.includes('required') &&
-            endpointMsg.includes('properties');
-
-          if (strictSchemaFromFallback) {
-            try {
-              yield* run(fallbackEndpoint, false);
-              return;
-            } catch (endpointRetryError) {
-              if (options?.abortSignal?.aborted) return;
-              yield {
-                type: 'error',
-                error:
-                  endpointRetryError instanceof Error
-                    ? endpointRetryError.message
-                    : 'Unknown error occurred',
-              };
-              return;
-            }
-          }
-
           yield {
             type: 'error',
             error: endpointMsg || 'Unknown error occurred',

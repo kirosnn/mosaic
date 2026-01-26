@@ -2,6 +2,8 @@ import { Ollama } from 'ollama';
 import { spawn } from 'child_process';
 import { CoreMessage, CoreTool } from 'ai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { z } from 'zod';
 
 let serveStartPromise: Promise<void> | null = null;
 const pullPromises = new Map<string, Promise<void>>();
@@ -221,18 +223,29 @@ function contentToString(content: CoreMessage['content']): string {
 function toOllamaTools(tools?: Record<string, CoreTool>): any[] | undefined {
   if (!tools) return undefined;
 
-  return Object.entries(tools).map(([name, tool]) => ({
-    type: 'function',
-    function: {
-      name,
-      description: String((tool as any)?.description ?? name),
-      parameters: (() => {
-        const params = (tool as any)?.parameters;
-        if (params && typeof params === 'object' && 'type' in params) return params;
-        return { type: 'object', properties: {} };
-      })(),
-    },
-  }));
+  return Object.entries(tools).map(([name, tool]) => {
+    const params = (tool as any)?.parameters;
+    let jsonSchema: any = { type: 'object', properties: {} };
+
+    if (params) {
+      if (params instanceof z.ZodType) {
+        const converted = zodToJsonSchema(params, { target: 'openApi3' });
+        jsonSchema = converted;
+        if ('$schema' in jsonSchema) delete jsonSchema.$schema;
+      } else if (typeof params === 'object' && 'type' in params) {
+        jsonSchema = params;
+      }
+    }
+
+    return {
+      type: 'function',
+      function: {
+        name,
+        description: String((tool as any)?.description ?? name),
+        parameters: jsonSchema,
+      },
+    };
+  });
 }
 
 function coreMessagesToOllamaMessages(messages: CoreMessage[]): any[] {

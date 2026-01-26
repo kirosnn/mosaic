@@ -9,6 +9,8 @@ import { grep } from './grep.ts';
 import { edit } from './edit.ts';
 import { question } from './question.ts';
 import { explore } from './explore.ts';
+import { fetch } from './fetch.ts';
+import { plan } from './plan.ts';
 
 export const tools: Record<string, CoreTool> = {
   read,
@@ -20,6 +22,8 @@ export const tools: Record<string, CoreTool> = {
   edit,
   question,
   explore,
+  fetch,
+  plan,
 };
 
 export function getTools(): Record<string, CoreTool> {

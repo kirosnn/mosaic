@@ -5,7 +5,7 @@
 <h1 align="center">Mosaic CLI</h1>
 
 <p align="center">
-  <strong>Version 0.0.91</strong>
+  <strong>Version 0.70.0</strong>
 </p>
 
 <p align="center">
@@ -187,5 +187,5 @@ MIT - see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  Made with Bun, React, and OpenTUI
+  Made with [Bun](https://bun.sh), [React](https://react.dev), and [OpenTUI](https://opentui.com)
 </p>

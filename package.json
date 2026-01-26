@@ -1,6 +1,6 @@
 {
   "name": "@kirosnn/mosaic",
-  "version": "0.0.91",
+  "version": "0.70.0",
   "description": "The open source coding agent.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.2.3"
+    "@types/react-dom": "^19.2.3",
+    "@types/turndown": "^5.0.6"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
@@ -32,17 +33,21 @@
     "@ai-sdk/mistral": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
     "@ai-sdk/xai": "^1.0.0",
+    "@mozilla/readability": "^0.6.0",
     "@opentui/core": "^0.1.69",
     "@opentui/react": "^0.1.69",
     "@types/react-syntax-highlighter": "^15.5.13",
     "ai": "^4.0.0",
     "better-sqlite3": "^12.6.0",
+    "linkedom": "^0.18.12",
     "ollama": "^0.5.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
     "remark-gfm": "^4.0.1",
-    "zod": "^3.23.8"
+    "turndown": "^7.2.2",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.1"
   }
 }

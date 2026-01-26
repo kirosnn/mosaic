@@ -100,6 +100,7 @@ export function ChatPage({
     type: 'line' | 'question' | 'approval' | 'blend';
     content?: string;
     role: "user" | "assistant" | "tool" | "slash";
+    toolName?: string;
     isFirst: boolean;
     indent?: number;
     paragraphIndex?: number;
@@ -153,6 +154,7 @@ export function ChatPage({
               type: 'line',
               content: wrapped.text || '',
               role: messageRole,
+              toolName: message.toolName,
               isFirst: isFirstContent && j === 0,
               segments: wrapped.segments,
               isError: message.isError,
@@ -177,6 +179,7 @@ export function ChatPage({
             type: 'line',
             content: '',
             role: messageRole,
+            toolName: message.toolName,
             isFirst: false,
             indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
             paragraphIndex: i,
@@ -197,6 +200,7 @@ export function ChatPage({
               type: 'line',
               content: wrappedLines[j] || '',
               role: messageRole,
+              toolName: message.toolName,
               isFirst: isFirstContent && i === 0 && j === 0,
               indent,
               paragraphIndex: i,
@@ -218,6 +222,7 @@ export function ChatPage({
         type: 'line',
         content: '',
         role: messageRole,
+        toolName: message.toolName,
         isFirst: false,
         indent: 2,
         paragraphIndex: 1,
@@ -242,6 +247,7 @@ export function ChatPage({
       type: 'line',
       content: '',
       role: messageRole,
+      toolName: message.toolName,
       isFirst: false,
       isSpacer: true,
       visualLines: 1
@@ -410,7 +416,7 @@ export function ChatPage({
             if (item.blendDuration && item.blendDuration > 60000) {
               const timeStr = formatElapsedTime(item.blendDuration, false);
               return (
-                <box key={item.key} flexDirection="row" width="100%" paddingLeft={1}>
+                <box key={item.key} flexDirection="row" width="100%" paddingLeft={1} marginBottom={1}>
                   <text attributes={TextAttributes.DIM}>⁘ {item.blendWord} for {timeStr}</text>
                 </box>
               );
@@ -419,7 +425,7 @@ export function ChatPage({
           }
 
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
-          const showToolBar = item.role === "tool" && item.isSpacer === false;
+          const showToolBar = item.role === "tool" && item.isSpacer === false && item.toolName !== "plan";
           const showSlashBar = item.role === "slash" && item.isSpacer === false;
           const showToolBackground = item.role === "tool" && item.isSpacer === false;
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;

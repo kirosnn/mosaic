@@ -15,6 +15,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   bash: 'Command',
   question: 'Question',
   explore: 'Explore',
+  fetch: 'Fetch',
+  plan: 'Plan',
 };
 
 function getToolDisplayName(toolName: string): string {
@@ -52,7 +54,12 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
     case 'glob':
     case 'grep':
     case 'bash':
-    case 'explore': {
+    case 'explore':
+    case 'fetch': {
+      return null;
+    }
+
+    case 'plan': {
       return null;
     }
 
@@ -103,18 +110,36 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
       return pattern ? `${displayName} (${pattern})` : displayName;
     }
     case 'grep': {
-      const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
-      return pattern ? `${displayName} (pattern: ${pattern})` : displayName;
+      const query = typeof args.query === 'string' ? args.query : '';
+      const fileType = typeof args.file_type === 'string' ? args.file_type : '';
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      const info = fileType ? `*.${fileType}` : pattern;
+      const cleanQuery = query.replace(/[\r\n]+/g, ' ').trim();
+      const queryShort = cleanQuery.length > 30 ? cleanQuery.slice(0, 30) + '...' : cleanQuery;
+      return info ? `${displayName} ("${queryShort}" in ${info})` : `${displayName} ("${queryShort}")`;
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
+      const cleanCommand = command.replace(/[\r\n]+/g, ' ').trim().replace(/\s+--timeout\s+\d+$/, '');
       return cleanCommand ? `${displayName} (${cleanCommand})` : displayName;
     }
     case 'explore': {
       const purpose = typeof args.purpose === 'string' ? args.purpose : '';
-      return purpose ? `${displayName} (${purpose})` : displayName;
+      const cleanPurpose = purpose.replace(/[\r\n]+/g, ' ').trim();
+      return cleanPurpose ? `${displayName} (${cleanPurpose})` : displayName;
     }
+    case 'fetch': {
+      const url = typeof args.url === 'string' ? args.url : '';
+      try {
+        const urlObj = new URL(url);
+        const shortUrl = urlObj.hostname + (urlObj.pathname !== '/' ? urlObj.pathname : '');
+        return shortUrl ? `${displayName} (${shortUrl})` : displayName;
+      } catch {
+        return url ? `${displayName} (${url})` : displayName;
+      }
+    }
+    case 'plan':
+      return displayName;
     default:
       return displayName;
   }
@@ -136,18 +161,36 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
       return { name: displayName, info: pattern || null };
     }
     case 'grep': {
-      const pattern = typeof args.file_pattern === 'string' ? args.file_pattern : '';
-      return { name: displayName, info: pattern ? `pattern: ${pattern}` : null };
+      const query = typeof args.query === 'string' ? args.query : '';
+      const fileType = typeof args.file_type === 'string' ? args.file_type : '';
+      const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+      const fileInfo = fileType ? `*.${fileType}` : pattern;
+      const cleanQuery = query.replace(/[\r\n]+/g, ' ').trim();
+      const queryShort = cleanQuery.length > 30 ? cleanQuery.slice(0, 30) + '...' : cleanQuery;
+      const info = fileInfo ? `"${queryShort}" in ${fileInfo}` : `"${queryShort}"`;
+      return { name: displayName, info };
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
+      const cleanCommand = command.replace(/[\r\n]+/g, ' ').trim().replace(/\s+--timeout\s+\d+$/, '');
       return { name: displayName, info: cleanCommand || null };
     }
     case 'explore': {
       const purpose = typeof args.purpose === 'string' ? args.purpose : '';
       return { name: displayName, info: purpose || null };
     }
+    case 'fetch': {
+      const url = typeof args.url === 'string' ? args.url : '';
+      try {
+        const urlObj = new URL(url);
+        const shortUrl = urlObj.hostname + (urlObj.pathname !== '/' ? urlObj.pathname : '');
+        return { name: displayName, info: shortUrl || null };
+      } catch {
+        return { name: displayName, info: url || null };
+      }
+    }
+    case 'plan':
+      return { name: displayName, info: null };
     default:
       return { name: displayName, info: null };
   }
@@ -188,38 +231,18 @@ function formatListTree(result: unknown): string[] {
 }
 
 function formatGrepResult(result: unknown): string[] {
-  if (typeof result !== 'string') return [];
+  if (typeof result !== 'string') return ['No results returned'];
+
   try {
     const parsed = JSON.parse(result);
 
-    if (Array.isArray(parsed)) {
-      if (parsed.length === 0) return ['No results'];
-
-      if (typeof parsed[0] === 'string') {
-        return parsed.map(file => `  ${file}`);
-      }
-
-      if (typeof parsed[0] === 'object' && parsed[0] !== null) {
-        const lines: string[] = [];
-        for (const item of parsed) {
-          if (item.file) {
-            lines.push(`${item.file}:`);
-            if (Array.isArray(item.matches)) {
-              for (const match of item.matches) {
-                if (match.line && match.content) {
-                  lines.push(`  ${match.line}: ${match.content.trim()}`);
-                }
-              }
-            }
-          }
-        }
-        return lines.length > 0 ? lines : ['No matches'];
-      }
+    if (typeof parsed.total_matches === 'number' && typeof parsed.files_with_matches === 'number') {
+      return [`${parsed.total_matches} matches in ${parsed.files_with_matches} files`];
     }
 
-    return [result];
+    return ['No results returned'];
   } catch {
-    return typeof result === 'string' ? [result] : [];
+    return ['No results returned'];
   }
 }
 
@@ -316,6 +339,40 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
         }
       }
       return ['Exploration completed'];
+    }
+
+    case 'fetch': {
+      if (typeof result === 'string') {
+        const url = typeof args.url === 'string' ? args.url : 'URL';
+        return [`Fetched ${url}`];
+      }
+      return ['Fetch completed'];
+    }
+
+    case 'plan': {
+      if (result && typeof result === 'object') {
+        const obj = result as Record<string, unknown>;
+        const explanation = typeof obj.explanation === 'string' ? obj.explanation.trim() : '';
+        const planItems = Array.isArray(obj.plan) ? obj.plan : [];
+        const lines: string[] = [];
+
+        if (explanation) {
+          lines.push(explanation);
+        }
+
+        for (const item of planItems) {
+          if (!item || typeof item !== 'object') continue;
+          const entry = item as Record<string, unknown>;
+          const step = typeof entry.step === 'string' ? entry.step : '';
+          const status = typeof entry.status === 'string' ? entry.status : 'pending';
+          if (!step.trim()) continue;
+          const marker = status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]';
+          lines.push(`${marker} ${step}`);
+        }
+
+        return lines.length > 0 ? lines : ['(no steps)'];
+      }
+      return ['(no steps)'];
     }
 
     default: {

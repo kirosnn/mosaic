@@ -152,23 +152,16 @@ export class ModelsDevClient {
 
     async getModelById(modelId: ModelsDevModelId, options: { refresh?: boolean } = {}): Promise<ModelsDevSearchResult | null> {
         const data = await this.getAll(options);
-        // Try exact match first
         for (const provider of Object.values(data)) {
             const model = provider.models?.[modelId];
             if (model) return { provider, model };
         }
-
-        // Try semantic/partial match
-        // e.g. gpt-5.2-2025-12-11 should match gpt-5.2 or vice versa
         const lowerSearch = modelId.toLowerCase();
 
         for (const provider of Object.values(data)) {
             const models = provider.models ?? {};
             for (const [id, model] of Object.entries(models)) {
                 const lowerId = id.toLowerCase();
-                // If the known model ID is a prefix of our search (e.g. search gpt-5.2-v1 matches model gpt-5.2)
-                // OR if our search is a prefix of the known model ID (e.g. search gpt-5.2 matches model gpt-5.2-preview)
-                // OR if one contains the other
                 if (lowerSearch.includes(lowerId) || lowerId.includes(lowerSearch)) {
                     return { provider, model };
                 }
