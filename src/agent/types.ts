@@ -1,4 +1,4 @@
-import { CoreMessage, CoreTool } from 'ai';
+import { CoreMessage, CoreTool, UserContent } from 'ai';
 
 export type AgentEventType =
   | 'text-delta'
@@ -139,7 +139,7 @@ export interface AgentContext {
 
 export interface AgentMessage {
   role: 'user' | 'assistant';
-  content: string;
+  content: string | UserContent;
 }
 
 export interface ProviderSendOptions {

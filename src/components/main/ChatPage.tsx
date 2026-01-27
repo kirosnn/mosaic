@@ -4,10 +4,13 @@ import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdow
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
 import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
+import { subscribeApprovalMode } from "../../utils/approvalModeBridge";
+import { shouldRequireApprovals } from "../../utils/config";
 import { subscribeFileChanges } from "../../utils/fileChangesBridge";
 import type { FileChanges } from "../../utils/fileChangeTracker";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
+import type { ImageAttachment } from "../../utils/images";
 import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
@@ -17,9 +20,6 @@ import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRen
 function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number) {
   if (paragraphIndex === 0) {
     if (wrappedLineIndex === 0) {
-      // Try to match "Name (Info...)" pattern
-      // 1. Strict match including closing parenthesis (single line case or last line of wrap logic if passed full, but here we get lines)
-      // 2. Loose match: starts with Name then (
       const match = content.match(/^(.+?)\s*(\(.*)$/);
       if (match) {
         const [, toolName, toolInfo] = match;
@@ -31,9 +31,24 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
         );
       }
     } else {
-      // For wrapped lines of the header, use DIM and add a small indentation for visual hierarchy.
       return <text fg="white" attributes={TextAttributes.DIM}>{`  ${content || ' '}`}</text>;
     }
+  }
+
+  const planMatch = content.match(/^(\s*)>\s*(\[[~x ]\])?\s*(.*)$/);
+  if (planMatch) {
+    const [, leading, bracket, rest] = planMatch;
+    const bracketColor = bracket === '[~]' ? '#ffca38' : 'white';
+    return (
+      <>
+        <text fg="white">{leading || ''}</text>
+        <text fg="#ffca38">{'>'}</text>
+        <text fg="white"> </text>
+        {bracket ? <text fg={bracketColor}>{bracket}</text> : null}
+        {bracket ? <text fg="white"> </text> : null}
+        <text fg="white">{rest || ' '}</text>
+      </>
+    );
   }
 
 
@@ -43,6 +58,46 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
   }
 
   return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
+}
+
+function getPlanProgress(messages: Message[]): { inProgressStep?: string; nextStep?: string } {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.role !== 'tool' || message.toolName !== 'plan') continue;
+    const result = message.toolResult;
+    if (!result || typeof result !== 'object') continue;
+    const obj = result as Record<string, unknown>;
+    const planItems = Array.isArray(obj.plan) ? obj.plan : [];
+    const normalized = planItems
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const entry = item as Record<string, unknown>;
+        const step = typeof entry.step === 'string' ? entry.step.trim() : '';
+        const status = typeof entry.status === 'string' ? entry.status : 'pending';
+        if (!step) return null;
+        return { step, status };
+      })
+      .filter((item): item is { step: string; status: string } => !!item);
+
+    if (normalized.length === 0) return {};
+
+    const inProgressIndex = normalized.findIndex(item => item.status === 'in_progress');
+    const inProgressStep = inProgressIndex >= 0 ? normalized[inProgressIndex]?.step : undefined;
+    let nextStep: string | undefined;
+
+    if (inProgressIndex >= 0) {
+      const after = normalized.slice(inProgressIndex + 1).find(item => item.status === 'pending');
+      nextStep = after?.step;
+    }
+
+    if (!nextStep) {
+      nextStep = normalized.find(item => item.status === 'pending')?.step;
+    }
+
+    return { inProgressStep, nextStep };
+  }
+
+  return {};
 }
 
 interface ChatPageProps {
@@ -56,6 +111,7 @@ interface ChatPageProps {
   pasteRequestId: number;
   shortcutsOpen: boolean;
   onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
+  pendingImages: ImageAttachment[];
 }
 
 export function ChatPage({
@@ -69,12 +125,14 @@ export function ChatPage({
   pasteRequestId,
   shortcutsOpen,
   onSubmit,
+  pendingImages,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
   const [, setTimerTick] = useState(0);
+  const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
   const scrollboxRef = useRef<any>(null);
 
   useEffect(() => {
@@ -83,6 +141,12 @@ export function ChatPage({
 
   useEffect(() => {
     return subscribeApproval(setApprovalRequest);
+  }, []);
+
+  useEffect(() => {
+    return subscribeApprovalMode((require) => {
+      setRequireApprovals(require);
+    });
   }, []);
 
   useEffect(() => {
@@ -105,10 +169,15 @@ export function ChatPage({
     }
   }, []);
 
+  const planProgress = getPlanProgress(messages);
+  const extraInputLines = pendingImages.length > 0 ? 1 : 0;
+  const inputBarBaseLines = getInputBarBaseLines() + extraInputLines;
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
     hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
-  });
+    inProgressStep: planProgress.inProgressStep,
+    nextStep: planProgress.nextStep,
+  }) + extraInputLines;
   const viewportHeight = Math.max(5, terminalHeight - (bottomReservedLines + 2));
 
   interface RenderItem {
@@ -132,6 +201,7 @@ export function ChatPage({
     blendWord?: string;
     isRunning?: boolean;
     runningStartTime?: number;
+    isThinking?: boolean;
   }
 
   const allItems: RenderItem[] = [];
@@ -156,6 +226,49 @@ export function ChatPage({
     }
 
     if (messageRole === 'assistant') {
+      if (message.thinkingContent) {
+        const headerLines = wrapText('Thinking:', maxWidth);
+        for (let i = 0; i < headerLines.length; i++) {
+          allItems.push({
+            key: `${messageKey}-thinking-header-${i}`,
+            type: 'line',
+            content: headerLines[i] || '',
+            role: messageRole,
+            isFirst: false,
+            visualLines: 1,
+            isThinking: true
+          });
+        }
+
+        const thinkingLines = message.thinkingContent.split('\n');
+        for (let i = 0; i < thinkingLines.length; i++) {
+          const wrapped = wrapText(thinkingLines[i] || '', Math.max(10, maxWidth - 2));
+          for (let j = 0; j < wrapped.length; j++) {
+            allItems.push({
+              key: `${messageKey}-thinking-${i}-${j}`,
+              type: 'line',
+              content: wrapped[j] || '',
+              role: messageRole,
+              isFirst: false,
+              indent: 2,
+              visualLines: 1,
+              isThinking: true
+            });
+          }
+        }
+
+        allItems.push({
+          key: `${messageKey}-thinking-spacer`,
+          type: 'line',
+          content: '',
+          role: messageRole,
+          isFirst: false,
+          isSpacer: true,
+          visualLines: 1,
+          isThinking: true
+        });
+      }
+
       const blocks = parseAndWrapMarkdown(message.content, maxWidth);
       let isFirstContent = true;
 
@@ -184,6 +297,26 @@ export function ChatPage({
         }
       }
     } else {
+      if (messageRole === "user" && message.images && message.images.length > 0) {
+        for (let i = 0; i < message.images.length; i++) {
+          const image = message.images[i]!;
+          allItems.push({
+            key: `${messageKey}-image-${i}`,
+            type: "line",
+            content: `[image] ${image.name}`,
+            role: messageRole,
+            toolName: message.toolName,
+            isFirst: i === 0,
+            indent: 0,
+            paragraphIndex: 0,
+            wrappedLineIndex: 0,
+            success: (messageRole === "tool" || messageRole === "slash") ? message.success : undefined,
+            isSpacer: false,
+            visualLines: 1
+          });
+        }
+      }
+
       const messageText = message.displayContent ?? message.content;
       const paragraphs = messageText.split('\n');
       let isFirstContent = true;
@@ -461,7 +594,9 @@ export function ChatPage({
               {showErrorBar && (
                 <text fg="#ff3838">▎ </text>
               )}
-              {item.role === "tool" ? (
+              {item.isThinking ? (
+                <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
+              ) : item.role === "tool" ? (
                 isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
                   <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
                 ) : (
@@ -493,16 +628,23 @@ export function ChatPage({
         paddingTop={0}
         paddingBottom={0}
         flexShrink={0}
-        minHeight={getInputBarBaseLines()}
+        minHeight={inputBarBaseLines}
         minWidth="100%"
       >
+        {pendingImages.length > 0 && (
+          <box flexDirection="row" width="100%" marginBottom={1}>
+            <text fg="#ffca38">Images: </text>
+            <text fg="gray">{pendingImages.map((img) => img.name).join(", ")}</text>
+          </box>
+        )}
         <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
           <box flexGrow={1} flexShrink={1} minWidth={0}>
             <CustomInput
               onSubmit={onSubmit}
               placeholder="Type your message..."
-              focused={!isProcessing && !shortcutsOpen && !questionRequest && !approvalRequest}
+              focused={!shortcutsOpen && !questionRequest && !approvalRequest}
               pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
             />
           </box>
         </box>
@@ -510,15 +652,23 @@ export function ChatPage({
 
       <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
         <box flexDirection="row" gap={1}>
-          <text>—</text>
+          <text fg="#ffca38">{requireApprovals ? '' : '⏵⏵ auto-accept edits on'}</text>
+          <text attributes={TextAttributes.DIM}>{requireApprovals ? '' : ' — '}</text>
           <text fg="#4d8f29">+{fileChanges.linesAdded}</text>
           <text fg="#d73a49">-{fileChanges.linesRemoved}</text>
         </box>
         <text attributes={TextAttributes.DIM}>ctrl+o to see commands — ctrl+p to view shortcuts</text>
       </box>
 
-      <box position="absolute" bottom={getInputBarBaseLines() + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-        <ThinkingIndicatorBlock isProcessing={isProcessing} hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)} startTime={processingStartTime} tokens={currentTokens} />
+      <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <ThinkingIndicatorBlock
+          isProcessing={isProcessing}
+          hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
+          startTime={processingStartTime}
+          tokens={currentTokens}
+          inProgressStep={planProgress.inProgressStep}
+          nextStep={planProgress.nextStep}
+        />
       </box>
     </box>
   );

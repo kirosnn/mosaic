@@ -13,6 +13,9 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
   const shortcutsGeneral: ShortcutItem[] = [
     { keys: "Ctrl+P / Alt+P", description: "Open/close this shortcuts panel" },
     { keys: "Alt+V (or Ctrl+V)", description: "Paste from clipboard into the focused input" },
+    { keys: "Ctrl+C", description: "Cancel the current request" },
+    { keys: "Alt+C (or Cmd+C)", description: "Copy the last assistant message" },
+    { keys: "Shift+Tab", description: "Toggle auto-approve for agent changes" },
     { keys: "Enter", description: "Confirm / submit" },
     { keys: "↑/↓ (or j/k)", description: "Navigate lists" },
     { keys: "PageUp/PageDown", description: "Scroll chat faster" },

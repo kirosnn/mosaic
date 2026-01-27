@@ -5,7 +5,7 @@ import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
 import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord } from './utils';
-import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation } from './storage';
+import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation, mergeConversations } from './storage';
 import { QuestionRequest } from '../utils/questionBridge';
 import { ApprovalRequest } from '../utils/approvalBridge';
 import { parseRoute, navigateTo, replaceTo, Route } from './router';
@@ -44,6 +44,7 @@ function App() {
     const [workspace, setWorkspace] = useState<string | null>(null);
     const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
     const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
+    const [requireApprovals, setRequireApprovals] = useState(true);
 
     const refreshConversations = useCallback(() => {
         setConversations(getAllConversations());
@@ -76,6 +77,27 @@ function App() {
         fetch('/api/workspace')
             .then(res => res.json())
             .then(data => setWorkspace(data.workspace))
+            .catch(() => { });
+
+        fetch('/api/tui-conversations')
+            .then(res => res.ok ? res.json() : [])
+            .then((data: Conversation[]) => {
+                if (Array.isArray(data) && data.length > 0) {
+                    const changed = mergeConversations(data);
+                    if (changed) {
+                        refreshConversations();
+                    }
+                }
+            })
+            .catch(() => { });
+
+        fetch('/api/approvals')
+            .then(res => res.ok ? res.json() : null)
+            .then((data) => {
+                if (data && typeof data.requireApprovals === 'boolean') {
+                    setRequireApprovals(data.requireApprovals);
+                }
+            })
             .catch(() => { });
     }, [refreshConversations]);
 
@@ -135,13 +157,14 @@ function App() {
         }
     }, [messages, currentTitle]);
 
-    const handleSendMessage = async (content: string) => {
-        if (!content.trim() || isProcessing) return;
+    const handleSendMessage = async (content: string, images: Message['images'] = []) => {
+        if ((!content.trim() && images.length === 0) || isProcessing) return;
 
         const userMessage: Message = {
             id: createId(),
             role: 'user',
             content: content,
+            images: images.length > 0 ? images : undefined,
         };
 
         let conversation = currentConversation;
@@ -168,9 +191,10 @@ function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: userMessage.content,
+                    images: userMessage.images || [],
                     history: messages
                         .filter((m) => m.role === 'user' || m.role === 'assistant')
-                        .map((m) => ({ role: m.role, content: m.content })),
+                        .map((m) => ({ role: m.role, content: m.content, images: m.images || [] })),
                 }),
             });
 
@@ -470,6 +494,13 @@ function App() {
     };
 
     const handleDeleteConversation = (conversationId: string) => {
+        if (conversationId.startsWith('tui_')) {
+            fetch('/api/tui-conversation/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: conversationId }),
+            }).catch(() => { });
+        }
         deleteConversation(conversationId);
         refreshConversations();
 
@@ -494,6 +525,33 @@ function App() {
                 setCurrentTitle(newTitle);
                 setDocumentTitle(newTitle);
             }
+
+            if (conversationId.startsWith('tui_')) {
+                fetch('/api/tui-conversation/rename', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: conversationId, title: newTitle }),
+                }).catch(() => { });
+            }
+        }
+    };
+
+    const handleToggleApprovals = async () => {
+        try {
+            const next = !requireApprovals;
+            const res = await fetch('/api/approvals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requireApprovals: next }),
+            });
+            if (res.ok) {
+                setRequireApprovals(next);
+                if (!next) {
+                    setApprovalRequest(null);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to toggle approvals:', error);
         }
     };
 
@@ -559,6 +617,8 @@ function App() {
                     workspace={workspace}
                     questionRequest={questionRequest}
                     approvalRequest={approvalRequest}
+                    requireApprovals={requireApprovals}
+                    onToggleApprovals={handleToggleApprovals}
                 />
             )}
 

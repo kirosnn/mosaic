@@ -1,6 +1,7 @@
 import { streamText, CoreMessage } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
+import { shouldEnableReasoning } from './reasoning';
 
 export class GoogleProvider implements Provider {
   async *sendMessage(
@@ -10,6 +11,7 @@ export class GoogleProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     const google = createGoogleGenerativeAI({
       apiKey: cleanApiKey,
@@ -22,13 +24,15 @@ export class GoogleProvider implements Provider {
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
-      providerOptions: {
-        google: {
-          thinkingConfig: {
-            style: 'THINKING_STYLE_DETAILED',
+      providerOptions: reasoningEnabled
+        ? {
+          google: {
+            thinkingConfig: {
+              style: 'THINKING_STYLE_DETAILED',
+            },
           },
-        },
-      },
+        }
+        : undefined,
     });
 
     try {

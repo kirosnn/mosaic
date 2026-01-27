@@ -7,6 +7,8 @@ import { undoCommand } from './undo';
 import { redoCommand } from './redo';
 import { sessionsCommand } from './sessions';
 import { webCommand } from './web';
+import { imageCommand } from './image';
+import { approvalsCommand } from './approvals';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -65,4 +67,6 @@ export function initializeCommands(): void {
   commandRegistry.register(redoCommand);
   commandRegistry.register(sessionsCommand);
   commandRegistry.register(webCommand);
+  commandRegistry.register(imageCommand);
+  commandRegistry.register(approvalsCommand);
 }

@@ -94,15 +94,20 @@ export function isToolSuccess(result: unknown): boolean {
 
 function formatToolHeader(toolName: string, args: Record<string, unknown>): string {
   const displayName = getToolDisplayName(toolName);
-  const path = typeof args.path === 'string' ? args.path : '';
 
   switch (toolName) {
     case 'read':
+      const readPath = typeof args.path === 'string' ? args.path : '';
+      return readPath ? `${displayName} (${readPath})` : displayName;
     case 'write':
+      const writePath = typeof args.path === 'string' ? args.path : '';
+      return writePath ? `${displayName} (${writePath})` : displayName;
     case 'edit':
+      const editPath = typeof args.path === 'string' ? args.path : '';
+      return editPath ? `${displayName} (${editPath})` : displayName;
     case 'list':
-    case 'create_directory':
-      return path ? `${displayName} (${path})` : displayName;
+      const listPath = typeof args.path === 'string' ? args.path : '';
+      return listPath ? `${displayName} (${listPath})` : displayName;
     case 'glob': {
       const pattern = typeof args.pattern === 'string' ? args.pattern : '';
       return pattern ? `${displayName} (${pattern})` : displayName;
@@ -141,6 +146,29 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     default:
       return displayName;
   }
+}
+
+function formatPlanHeader(result: unknown): string {
+  const displayName = getToolDisplayName('plan');
+  if (!result || typeof result !== 'object') return displayName;
+  const obj = result as Record<string, unknown>;
+  const planItems = Array.isArray(obj.plan) ? obj.plan : [];
+  const total = planItems.length;
+  if (total === 0) return displayName;
+
+  let completed = 0;
+  let inProgress = 0;
+
+  for (const item of planItems) {
+    if (!item || typeof item !== 'object') continue;
+    const status = typeof (item as Record<string, unknown>).status === 'string'
+      ? (item as Record<string, unknown>).status
+      : 'pending';
+    if (status === 'completed') completed += 1;
+    if (status === 'in_progress') inProgress += 1;
+  }
+
+  return `${displayName} (${completed}/${total} done, ${inProgress} in progress)`;
 }
 
 export function parseToolHeader(toolName: string, args: Record<string, unknown>): { name: string; info: string | null } {
@@ -370,15 +398,38 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
           lines.push(explanation);
         }
 
-        for (const item of planItems) {
-          if (!item || typeof item !== 'object') continue;
-          const entry = item as Record<string, unknown>;
-          const step = typeof entry.step === 'string' ? entry.step : '';
-          const status = typeof entry.status === 'string' ? entry.status : 'pending';
-          if (!step.trim()) continue;
-          const marker = status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]';
-          lines.push(`${marker} ${step}`);
-        }
+        const normalized = planItems
+          .map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const entry = item as Record<string, unknown>;
+            const step = typeof entry.step === 'string' ? entry.step : '';
+            const status = typeof entry.status === 'string' ? entry.status : 'pending';
+            if (!step.trim()) return null;
+            return { step: step.trim(), status };
+          })
+          .filter((item): item is { step: string; status: string } => !!item);
+
+        const inProgressItems = normalized.filter(item => item.status === 'in_progress');
+        const pendingItems = normalized.filter(item => item.status === 'pending');
+        const completedItems = normalized.filter(item => item.status === 'completed');
+
+        const sectionPrefix = '  ';
+        const itemPrefix = '      ';
+        const arrowPrefix = '> ';
+
+        const addSection = (label: string, items: Array<{ step: string; status: string }>, activeStep: string | null, marker: string) => {
+          if (items.length === 0) return;
+          lines.push(`${sectionPrefix}${label} (${items.length})`);
+          for (const item of items) {
+            const isActive = activeStep !== null && item.step === activeStep;
+            const prefix = isActive ? arrowPrefix : arrowPrefix;
+            lines.push(`${itemPrefix}${prefix}${marker} ${item.step}`);
+          }
+        };
+
+        addSection('In progress', inProgressItems, inProgressItems[0]?.step ?? null, '[~]');
+        addSection('Todo', pendingItems, null, '[ ]');
+        addSection('Completed', completedItems, null, '[✓]');
 
         return lines.length > 0 ? lines : ['(no steps)'];
       }
@@ -401,7 +452,8 @@ export function formatToolContent(
     maxLines?: number;
   }
 ): string {
-  const lines: string[] = [formatToolHeader(toolName, args)];
+  const header = toolName === 'plan' ? formatPlanHeader(result) : formatToolHeader(toolName, args);
+  const lines: string[] = [header];
 
   const argsLine = formatKnownToolArgs(toolName, args);
   if (argsLine) lines.push(argsLine);
@@ -409,7 +461,7 @@ export function formatToolContent(
   const bodyLines = formatToolBodyLines(toolName, args, result);
   for (const line of bodyLines) lines.push(line);
 
-  const skipTruncate = toolName === 'write' || toolName === 'edit';
+  const skipTruncate = toolName === 'write' || toolName === 'edit' || toolName === 'plan';
   if (skipTruncate) {
     return lines.join('\n');
   }

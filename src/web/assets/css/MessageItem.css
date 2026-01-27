@@ -66,6 +66,25 @@
     flex: 1;
 }
 
+.message-images {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.4rem;
+}
+
+.message-images img {
+    width: 140px;
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border-code);
+    background: var(--bg-code);
+}
+
+.message-text {
+    white-space: pre-wrap;
+}
+
 .thinking-section {
     margin-bottom: 0.35rem;
     border: 1px solid var(--border-code);
@@ -95,7 +114,6 @@
     font-size: 0.8rem;
     color: var(--text-muted);
     overflow-x: auto;
-    line-height: 1.4;
 }
 
 .assistant-text {
@@ -136,25 +154,4 @@
     40% {
         transform: scale(1);
     }
-}
-
-.blend-indicator {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1rem 1.5rem;
-    margin: 0.75rem 0;
-}
-
-.blend-icon {
-    width: 48px;
-    height: 48px;
-    fill: var(--text-muted);
-    flex-shrink: 0;
-}
-
-.blend-text {
-    font-size: 1.5rem;
-    color: var(--text-muted);
-    font-weight: 400;
 }

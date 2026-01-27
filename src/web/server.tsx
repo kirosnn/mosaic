@@ -6,12 +6,14 @@ import { createCliRenderer, TextAttributes } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import React from "react";
 import { exec } from "child_process";
+import type { ImagePart, TextPart, UserContent } from "ai";
+import type { ImageAttachment } from "../utils/images";
 
 const PORT = 8192;
 const HOST = "127.0.0.1";
 
 import { subscribeQuestion, answerQuestion } from "../utils/questionBridge";
-import { subscribeApproval, respondApproval } from "../utils/approvalBridge";
+import { subscribeApproval, respondApproval, getCurrentApproval } from "../utils/approvalBridge";
 
 let currentAbortController: AbortController | null = null;
 
@@ -111,6 +113,31 @@ installExternalLogCapture();
 
 let appJsContent: string | null = null;
 let appCssContent: string | null = null;
+
+function buildUserContent(text: string, images?: ImageAttachment[]): UserContent {
+    if (!images || images.length === 0) return text;
+    const parts: Array<TextPart | ImagePart> = [];
+    parts.push({ type: "text", text });
+    for (const img of images) {
+        parts.push({ type: "image", image: img.data, mimeType: img.mimeType });
+    }
+    return parts;
+}
+
+function buildConversationHistory(
+    history: Array<{ role: string; content: string; images?: ImageAttachment[] }>,
+    allowImages: boolean
+) {
+    return history
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => {
+            if (m.role === "user") {
+                const content = allowImages ? buildUserContent(m.content, m.images) : m.content;
+                return { role: "user" as const, content };
+            }
+            return { role: "assistant" as const, content: m.content };
+        });
+}
 
 async function buildApp() {
     const appPath = join(__dirname, "app.tsx");
@@ -340,8 +367,103 @@ async function startServer(port: number, maxRetries = 10) {
                         const config = readConfig();
                         return new Response(JSON.stringify({
                             provider: config.provider,
-                            model: config.model
+                            model: config.model,
+                            requireApprovals: config.requireApprovals !== false
                         }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/approvals" && request.method === "GET") {
+                        const { readConfig } = await import("../utils/config");
+                        const config = readConfig();
+                        return new Response(JSON.stringify({
+                            requireApprovals: config.requireApprovals !== false
+                        }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/approvals" && request.method === "POST") {
+                        const body = (await request.json()) as { requireApprovals?: boolean };
+                        if (typeof body.requireApprovals !== "boolean") {
+                            return new Response(JSON.stringify({ error: "Invalid requireApprovals value" }), {
+                                status: 400,
+                                headers: { "Content-Type": "application/json" },
+                            });
+                        }
+                        const { setRequireApprovals } = await import("../utils/config");
+                        setRequireApprovals(body.requireApprovals);
+                        if (!body.requireApprovals && getCurrentApproval()) {
+                            respondApproval(true);
+                        }
+                        return new Response(JSON.stringify({ success: true, requireApprovals: body.requireApprovals }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/tui-conversations" && request.method === "GET") {
+                        const { loadConversations } = await import("../utils/history");
+                        const historyConversations = loadConversations();
+                        const mapped = historyConversations.map((conv) => {
+                            const steps = Array.isArray(conv.steps) ? conv.steps : [];
+                            const baseTimestamp = typeof conv.timestamp === "number" ? conv.timestamp : Date.now();
+                            const messages = steps.map((step, index) => ({
+                                id: `${conv.id}_${index}`,
+                                role: step.type === "tool" ? "tool" : step.type,
+                                content: step.content,
+                                images: step.images,
+                                toolName: step.toolName,
+                                toolArgs: step.toolArgs,
+                                toolResult: step.toolResult,
+                                timestamp: step.timestamp,
+                                responseDuration: step.responseDuration,
+                                blendWord: step.blendWord
+                            }));
+
+                            return {
+                                id: `tui_${conv.id}`,
+                                title: conv.title ?? null,
+                                messages,
+                                workspace: conv.workspace ?? null,
+                                createdAt: baseTimestamp,
+                                updatedAt: baseTimestamp
+                            };
+                        });
+
+                        return new Response(JSON.stringify(mapped), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/tui-conversation/rename" && request.method === "POST") {
+                        const body = (await request.json()) as { id: string; title: string | null };
+                        if (!body?.id || typeof body.id !== "string") {
+                            return new Response(JSON.stringify({ error: "Invalid id" }), {
+                                status: 400,
+                                headers: { "Content-Type": "application/json" },
+                            });
+                        }
+                        const historyId = body.id.startsWith("tui_") ? body.id.slice(4) : body.id;
+                        const { updateConversationTitle } = await import("../utils/history");
+                        const success = updateConversationTitle(historyId, body.title ?? null);
+                        return new Response(JSON.stringify({ success }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/tui-conversation/delete" && request.method === "POST") {
+                        const body = (await request.json()) as { id: string };
+                        if (!body?.id || typeof body.id !== "string") {
+                            return new Response(JSON.stringify({ error: "Invalid id" }), {
+                                status: 400,
+                                headers: { "Content-Type": "application/json" },
+                            });
+                        }
+                        const historyId = body.id.startsWith("tui_") ? body.id.slice(4) : body.id;
+                        const { deleteConversation } = await import("../utils/history");
+                        const success = deleteConversation(historyId);
+                        return new Response(JSON.stringify({ success }), {
                             headers: { "Content-Type": "application/json" },
                         });
                     }
@@ -394,17 +516,28 @@ async function startServer(port: number, maxRetries = 10) {
 
                     if (url.pathname === "/api/message" && request.method === "POST") {
                         const body = (await request.json()) as {
-                            message: string;
-                            history: Array<{ role: string; content: string }>;
+                            message?: string;
+                            images?: ImageAttachment[];
+                            history?: Array<{ role: string; content: string; images?: ImageAttachment[] }>;
                         };
 
-                        if (!body.message || typeof body.message !== "string") {
+                        if (typeof body.message !== "string") {
                             addLog("Invalid message format");
                             return new Response(JSON.stringify({ error: "Invalid message format" }), {
                                 status: 400,
                                 headers: { "Content-Type": "application/json" },
                             });
+                        }
 
+                        const messageText = body.message ?? "";
+                        const images = Array.isArray(body.images) ? body.images : [];
+
+                        if (!messageText.trim() && images.length === 0) {
+                            addLog("Empty message");
+                            return new Response(JSON.stringify({ error: "Empty message" }), {
+                                status: 400,
+                                headers: { "Content-Type": "application/json" },
+                            });
                         }
 
                         addLog("Message received");
@@ -486,8 +619,23 @@ async function startServer(port: number, maxRetries = 10) {
                                     }
 
                                     const agent = new Agent();
-                                    const conversationHistory = body.history || [];
-                                    conversationHistory.push({ role: "user", content: body.message });
+                                    let allowImages = false;
+                                    try {
+                                        const { readConfig } = await import("../utils/config");
+                                        const config = readConfig();
+                                        if (config.model) {
+                                            const { findModelsDevModelById, modelAcceptsImages } = await import("../utils/models");
+                                            const result = await findModelsDevModelById(config.model);
+                                            allowImages = Boolean(result && result.model && modelAcceptsImages(result.model));
+                                        }
+                                    } catch { }
+
+                                    const conversationHistory = buildConversationHistory(body.history || [], allowImages);
+                                    const userImages = allowImages ? images : [];
+                                    conversationHistory.push({
+                                        role: "user",
+                                        content: allowImages ? buildUserContent(messageText, userImages) : messageText
+                                    });
 
 
                                     for await (const event of agent.streamMessages(conversationHistory as any, {})) {

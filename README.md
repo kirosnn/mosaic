@@ -187,5 +187,5 @@ MIT - see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  Made with [Bun](https://bun.sh), [React](https://react.dev), and [OpenTUI](https://opentui.com)
+  Made with <a href="https://bun.sh">Bun</a>, <a href="https://react.dev">React</a>, and <a href="https://opentui.com">OpenTUI</a>
 </p>

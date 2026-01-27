@@ -1,14 +1,17 @@
-import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
 export interface ConversationStep {
   type: 'user' | 'assistant' | 'tool';
   content: string;
+  images?: import("./images").ImageAttachment[];
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   toolResult?: unknown;
   timestamp: number;
+  responseDuration?: number;
+  blendWord?: string;
 }
 
 export interface ConversationHistory {
@@ -16,6 +19,8 @@ export interface ConversationHistory {
   timestamp: number;
   steps: ConversationStep[];
   totalSteps: number;
+  title?: string | null;
+  workspace?: string | null;
   totalTokens?: {
     prompt: number;
     completion: number;
@@ -44,6 +49,41 @@ export function saveConversation(conversation: ConversationHistory): void {
   writeFileSync(filepath, JSON.stringify(conversation, null, 2), 'utf-8');
 }
 
+export function updateConversationTitle(id: string, title: string | null): boolean {
+  const historyDir = getHistoryDir();
+  const filepath = join(historyDir, `${id}.json`);
+
+  if (!existsSync(filepath)) {
+    return false;
+  }
+
+  try {
+    const content = readFileSync(filepath, 'utf-8');
+    const data = JSON.parse(content) as ConversationHistory;
+    data.title = title;
+    writeFileSync(filepath, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+export function deleteConversation(id: string): boolean {
+  const historyDir = getHistoryDir();
+  const filepath = join(historyDir, `${id}.json`);
+
+  if (!existsSync(filepath)) {
+    return false;
+  }
+
+  try {
+    unlinkSync(filepath);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 export function loadConversations(): ConversationHistory[] {
   const historyDir = getHistoryDir();
 
@@ -51,13 +91,15 @@ export function loadConversations(): ConversationHistory[] {
     return [];
   }
 
-  const files = readdirSync(historyDir).filter(f => f.endsWith('.json'));
+  const files = readdirSync(historyDir).filter(f => f.endsWith('.json') && f !== 'inputs.json');
   const conversations: ConversationHistory[] = [];
 
   for (const file of files) {
     try {
       const content = readFileSync(join(historyDir, file), 'utf-8');
-      conversations.push(JSON.parse(content));
+      const parsed = JSON.parse(content) as ConversationHistory;
+      if (!parsed || !Array.isArray(parsed.steps)) continue;
+      conversations.push(parsed);
     } catch (error) {
       console.error(`Failed to load ${file}:`, error);
     }

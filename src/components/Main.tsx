@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import type { ImagePart, TextPart, UserContent } from "ai";
 import { useKeyboard } from "@opentui/react";
 import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
@@ -18,6 +19,9 @@ import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
+import type { ImageAttachment } from "../utils/images";
+import { subscribeImageCommand, setImageSupport } from "../utils/imageBridge";
+import { findModelsDevModelById, modelAcceptsImages } from "../utils/models";
 
 function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean } {
   const trimmed = content.trimStart();
@@ -56,6 +60,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [currentTitle, setCurrentTitle] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [imagesSupported, setImagesSupported] = useState(false);
   const currentTitleRef = useRef<string | null>(null);
   const titleExtractedRef = useRef(false);
   const shouldAutoScroll = useRef(true);
@@ -74,6 +80,27 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     initializeCommands();
     initializeSession();
+  }, []);
+
+  useEffect(() => {
+    const loadSupport = async () => {
+      const config = readConfig();
+      if (!config.model) {
+        setImagesSupported(false);
+        setImageSupport(false);
+        return;
+      }
+      try {
+        const result = await findModelsDevModelById(config.model);
+        const supported = Boolean(result && result.model && modelAcceptsImages(result.model));
+        setImagesSupported(supported);
+        setImageSupport(supported);
+      } catch {
+        setImagesSupported(false);
+        setImageSupport(false);
+      }
+    };
+    loadSupport();
   }, []);
 
   useEffect(() => {
@@ -120,6 +147,27 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       }
     });
   }, []);
+
+  useEffect(() => {
+    return subscribeImageCommand((event) => {
+      if (event.type === "clear") {
+        setPendingImages([]);
+        return;
+      }
+      if (event.type === "remove") {
+        setPendingImages((prev) => prev.filter((img) => img.id !== event.id));
+        return;
+      }
+      if (!imagesSupported) return;
+      setPendingImages((prev) => [...prev, event.image]);
+    });
+  }, [imagesSupported]);
+
+  useEffect(() => {
+    if (!imagesSupported) {
+      setPendingImages([]);
+    }
+  }, [imagesSupported]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -261,6 +309,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, [copyRequestId, onCopy, messages]);
 
   useKeyboard((key) => {
+    if ((key.name === 'c' && key.ctrl) || key.sequence === '\x03') {
+      if (getCurrentQuestion()) {
+        cancelQuestion();
+      }
+      if (getCurrentApproval()) {
+        cancelApproval();
+      }
+      abortControllerRef.current?.abort();
+      return;
+    }
+
     if (key.name === 'escape') {
       if (getCurrentQuestion()) {
         cancelQuestion();
@@ -273,11 +332,34 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }
   });
 
+  const buildUserContent = (text: string, images?: ImageAttachment[]): UserContent => {
+    if (!images || images.length === 0) return text;
+    const parts: Array<TextPart | ImagePart> = [];
+    parts.push({ type: "text", text });
+    for (const img of images) {
+      parts.push({ type: "image", image: img.data, mimeType: img.mimeType });
+    }
+    return parts;
+  };
+
+  const buildConversationHistory = (base: Message[], includeImages: boolean) => {
+    return base
+      .filter((m): m is Message & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant")
+      .map((m) => {
+        if (m.role === "user") {
+          const content = includeImages ? buildUserContent(m.content, m.images) : m.content;
+          return { role: "user" as const, content };
+        }
+        return { role: "assistant" as const, content: m.content };
+      });
+  };
+
   const handleSubmit = async (value: string, meta?: InputSubmitMeta) => {
     if (isProcessing) return;
 
     const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
-    if (!value.trim() && !hasPastedContent) return;
+    const hasImages = imagesSupported && pendingImages.length > 0;
+    if (!value.trim() && !hasPastedContent && !hasImages) return;
 
     if (isCommand(value)) {
       const result = await executeCommand(value);
@@ -342,6 +424,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             timestamp: Date.now()
           });
 
+          let responseDuration: number | null = null;
+          let responseBlendWord: string | null = null;
+
           try {
             const providerStatus = await Agent.ensureProviderReady();
             if (!providerStatus.ready) {
@@ -360,9 +445,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             }
 
             const agent = new Agent();
-            const conversationHistory = [...messages, userMessage]
-              .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
-              .map((m) => ({ role: m.role, content: m.content }));
+            const conversationHistory = buildConversationHistory([...messages, userMessage], imagesSupported);
             let assistantChunk = '';
             let thinkingChunk = '';
             const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
@@ -622,11 +705,28 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               });
             }
 
+            responseDuration = Date.now() - localStartTime;
+            if (responseDuration >= 60000) {
+              responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+              for (let i = conversationSteps.length - 1; i >= 0; i--) {
+                if (conversationSteps[i]?.type === 'assistant') {
+                  conversationSteps[i] = {
+                    ...conversationSteps[i]!,
+                    responseDuration,
+                    blendWord: responseBlendWord
+                  };
+                  break;
+                }
+              }
+            }
+
             const conversationData: ConversationHistory = {
               id: conversationId,
               timestamp: Date.now(),
               steps: conversationSteps,
               totalSteps: stepCount,
+              title: currentTitleRef.current ?? currentTitle ?? null,
+              workspace: process.cwd(),
               totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
               model: config.model,
               provider: config.provider
@@ -664,9 +764,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             if (abortControllerRef.current === abortController) {
               abortControllerRef.current = null;
             }
-            const duration = Date.now() - localStartTime;
+            const duration = responseDuration ?? (Date.now() - localStartTime);
             if (duration >= 60000) {
-              const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+              const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
               setMessages((prev: Message[]) => {
                 const newMessages = [...prev];
                 for (let i = newMessages.length - 1; i >= 0; i--) {
@@ -706,16 +806,23 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       ? `${meta!.pastedContent!}${value.trim() ? `\n\n${value}` : ''}`
       : value;
 
-    addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : value));
+    addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : (hasImages ? '[Image]' : value)));
 
     saveState(messages);
+
+    const imagesForMessage = imagesSupported ? pendingImages : [];
 
     const userMessage: Message = {
       id: createId(),
       role: "user",
       content: composedContent,
       displayContent: meta?.isPaste ? '[Pasted text]' : undefined,
+      images: imagesForMessage.length > 0 ? imagesForMessage : undefined,
     };
+
+    if (imagesForMessage.length > 0) {
+      setPendingImages([]);
+    }
 
     setMessages((prev: Message[]) => [...prev, userMessage]);
     setIsProcessing(true);
@@ -762,12 +869,16 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     conversationSteps.push({
       type: 'user',
       content: composedContent,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      images: imagesForMessage.length > 0 ? imagesForMessage : undefined
     });
 
-    try {
-      const providerStatus = await Agent.ensureProviderReady();
-      if (!providerStatus.ready) {
+          let responseDuration: number | null = null;
+          let responseBlendWord: string | null = null;
+
+          try {
+            const providerStatus = await Agent.ensureProviderReady();
+            if (!providerStatus.ready) {
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
           newMessages.push({
@@ -783,17 +894,40 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       }
 
       const agent = new Agent();
-      const conversationHistory = [...messages, userMessage]
-        .filter((m): m is Message & { role: 'user' | 'assistant' } => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role, content: m.content }));
+      const conversationHistory = buildConversationHistory([...messages, userMessage], imagesSupported);
       let assistantChunk = '';
+      let thinkingChunk = '';
       const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
       let assistantMessageId: string | null = null;
       let streamHadError = false;
       titleExtractedRef.current = false;
 
       for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
-        if (event.type === 'text-delta') {
+        if (event.type === 'reasoning-delta') {
+          thinkingChunk += event.content;
+          totalChars += event.content.length;
+          setCurrentTokens(estimateTokens());
+
+          if (assistantMessageId === null) {
+            assistantMessageId = createId();
+          }
+
+          const currentMessageId = assistantMessageId;
+          setMessages((prev: Message[]) => {
+            const newMessages = [...prev];
+            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+
+            if (messageIndex === -1) {
+              newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
+            } else {
+              newMessages[messageIndex] = {
+                ...newMessages[messageIndex]!,
+                thinkingContent: thinkingChunk
+              };
+            }
+            return newMessages;
+          });
+        } else if (event.type === 'text-delta') {
           assistantChunk += event.content;
           totalChars += event.content.length;
           setCurrentTokens(estimateTokens());
@@ -822,11 +956,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
 
             if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent });
+              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
             } else {
               newMessages[messageIndex] = {
                 ...newMessages[messageIndex]!,
-                content: displayContent
+                content: displayContent,
+                thinkingContent: thinkingChunk
               };
             }
             return newMessages;
@@ -948,6 +1083,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           });
 
           assistantChunk = '';
+          thinkingChunk = '';
           assistantMessageId = null;
         } else if (event.type === 'error') {
           if (abortController.signal.aborted) {
@@ -982,6 +1118,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           });
 
           assistantChunk = '';
+          thinkingChunk = '';
           assistantMessageId = null;
           streamHadError = true;
           break;
@@ -1002,25 +1139,42 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         return;
       }
 
-      if (!streamHadError && assistantChunk.trim()) {
-        conversationSteps.push({
-          type: 'assistant',
-          content: assistantChunk,
-          timestamp: Date.now()
-        });
-      }
+          if (!streamHadError && assistantChunk.trim()) {
+            conversationSteps.push({
+              type: 'assistant',
+              content: assistantChunk,
+              timestamp: Date.now()
+            });
+          }
 
-      const conversationData: ConversationHistory = {
-        id: conversationId,
-        timestamp: Date.now(),
-        steps: conversationSteps,
-        totalSteps: stepCount,
-        totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-        model: config.model,
-        provider: config.provider
-      };
+          responseDuration = Date.now() - localStartTime;
+          if (responseDuration >= 60000) {
+            responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+            for (let i = conversationSteps.length - 1; i >= 0; i--) {
+              if (conversationSteps[i]?.type === 'assistant') {
+                conversationSteps[i] = {
+                  ...conversationSteps[i]!,
+                  responseDuration,
+                  blendWord: responseBlendWord
+                };
+                break;
+              }
+            }
+          }
 
-      saveConversation(conversationData);
+          const conversationData: ConversationHistory = {
+            id: conversationId,
+            timestamp: Date.now(),
+            steps: conversationSteps,
+            totalSteps: stepCount,
+            title: currentTitleRef.current ?? currentTitle ?? null,
+            workspace: process.cwd(),
+            totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
+            model: config.model,
+            provider: config.provider
+          };
+
+          saveConversation(conversationData);
 
     } catch (error) {
       if (abortController.signal.aborted) {
@@ -1052,9 +1206,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
-      const duration = Date.now() - localStartTime;
+      const duration = responseDuration ?? (Date.now() - localStartTime);
       if (duration >= 60000) {
-        const blendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+        const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
           for (let i = newMessages.length - 1; i >= 0; i--) {
@@ -1107,6 +1261,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       pasteRequestId={pasteRequestId}
       shortcutsOpen={shortcutsOpen}
       onSubmit={handleSubmit}
+      pendingImages={pendingImages}
     />
   );
 }

@@ -9,6 +9,8 @@ import { QuestionPanel } from './QuestionPanel';
 import { ApprovalPanel } from './ApprovalPanel';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { findModelsDevModelById, modelAcceptsImages } from '../../utils/models';
+import type { ImageAttachment } from '../../utils/images';
+import { guessImageMimeType, toDataUrl } from '../../utils/images';
 import '../assets/css/global.css'
 
 interface ChatPageProps {
@@ -16,13 +18,15 @@ interface ChatPageProps {
     isProcessing: boolean;
     processingStartTime?: number;
     currentTokens?: number;
-    onSendMessage: (message: string) => void;
+    onSendMessage: (message: string, images?: ImageAttachment[]) => void;
     onStopAgent?: () => void;
     sidebarProps: SidebarProps;
     currentTitle?: string | null;
     workspace?: string | null;
     questionRequest?: QuestionRequest | null;
     approvalRequest?: ApprovalRequest | null;
+    requireApprovals: boolean;
+    onToggleApprovals: () => void;
 }
 
 function formatWorkspace(path: string | null | undefined): string {
@@ -55,11 +59,54 @@ function formatWorkspace(path: string | null | undefined): string {
     return normalized;
 }
 
-export function ChatPage({ messages, isProcessing, processingStartTime, currentTokens, onSendMessage, onStopAgent, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest }: ChatPageProps) {
+function getPlanProgress(messages: Message[]): { inProgressStep?: string; nextStep?: string } {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const message = messages[i];
+        if (!message || message.role !== 'tool' || message.toolName !== 'plan') continue;
+        const result = message.toolResult;
+        if (!result || typeof result !== 'object') continue;
+        const obj = result as Record<string, unknown>;
+        const planItems = Array.isArray(obj.plan) ? obj.plan : [];
+        const normalized = planItems
+            .map((item) => {
+                if (!item || typeof item !== 'object') return null;
+                const entry = item as Record<string, unknown>;
+                const step = typeof entry.step === 'string' ? entry.step.trim() : '';
+                const status = typeof entry.status === 'string' ? entry.status : 'pending';
+                if (!step) return null;
+                return { step, status };
+            })
+            .filter((item): item is { step: string; status: string } => !!item);
+
+        if (normalized.length === 0) return {};
+
+        const inProgressIndex = normalized.findIndex(item => item.status === 'in_progress');
+        const inProgressStep = inProgressIndex >= 0 ? normalized[inProgressIndex]?.step : undefined;
+        let nextStep: string | undefined;
+
+        if (inProgressIndex >= 0) {
+            const after = normalized.slice(inProgressIndex + 1).find(item => item.status === 'pending');
+            nextStep = after?.step;
+        }
+
+        if (!nextStep) {
+            nextStep = normalized.find(item => item.status === 'pending')?.step;
+        }
+
+        return { inProgressStep, nextStep };
+    }
+
+    return {};
+}
+
+export function ChatPage({ messages, isProcessing, processingStartTime, currentTokens, onSendMessage, onStopAgent, sidebarProps, currentTitle, workspace, questionRequest, approvalRequest, requireApprovals, onToggleApprovals }: ChatPageProps) {
     const [inputValue, setInputValue] = useState('');
     const [showAttachButton, setShowAttachButton] = useState(false);
+    const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const planProgress = getPlanProgress(messages);
 
     useEffect(() => {
         if (messagesEndRef.current) {
@@ -90,6 +137,12 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
     }, [isProcessing, onStopAgent]);
 
     useEffect(() => {
+        if (!showAttachButton) {
+            setPendingImages([]);
+        }
+    }, [showAttachButton]);
+
+    useEffect(() => {
         const checkModelSupport = async () => {
             try {
                 const configRes = await fetch('/api/config');
@@ -103,14 +156,7 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                     if (result && result.model) {
                         setShowAttachButton(modelAcceptsImages(result.model));
                     } else {
-                        const lowerId = model.toLowerCase();
-                        const likelySupportsImages =
-                            lowerId.includes('gpt-4') ||
-                            lowerId.includes('gpt-5') ||
-                            lowerId.includes('claude-3') ||
-                            lowerId.includes('gemini') ||
-                            lowerId.includes('vision');
-                        setShowAttachButton(likelySupportsImages);
+                        setShowAttachButton(false);
                     }
                 }
             } catch (err) {
@@ -123,9 +169,10 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
 
     const handleSubmit = (e?: React.FormEvent) => {
         if (e) e.preventDefault();
-        if (!inputValue.trim() || isProcessing) return;
-        onSendMessage(inputValue);
+        if ((!inputValue.trim() && pendingImages.length === 0) || isProcessing) return;
+        onSendMessage(inputValue, showAttachButton ? pendingImages : []);
         setInputValue('');
+        setPendingImages([]);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -133,6 +180,52 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
             e.preventDefault();
             handleSubmit();
         }
+    };
+
+    const toBase64 = async (file: File): Promise<string> => {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            const chunk = bytes.subarray(i, i + chunkSize);
+            binary += String.fromCharCode(...Array.from(chunk));
+        }
+        return btoa(binary);
+    };
+
+    const handleAttachClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!showAttachButton) {
+            e.target.value = '';
+            return;
+        }
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+        const attachments: ImageAttachment[] = [];
+        for (const file of files) {
+            const mimeType = file.type || guessImageMimeType(file.name);
+            if (!mimeType.startsWith('image/')) continue;
+            const data = await toBase64(file);
+            attachments.push({
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                name: file.name,
+                mimeType,
+                data,
+                size: file.size
+            });
+        }
+        if (attachments.length > 0) {
+            setPendingImages((prev) => [...prev, ...attachments]);
+        }
+        e.target.value = '';
+    };
+
+    const handleRemovePendingImage = (id: string) => {
+        setPendingImages((prev) => prev.filter((img) => img.id !== id));
     };
 
     const handleQuestionAnswer = async (index: number, customText?: string) => {
@@ -167,16 +260,24 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
 
             <div className="main-content" style={{ padding: 0 }}>
                 <div className="chat-page">
-                    {(currentTitle || workspace) && (
-                        <div className="chat-title-bar">
-                            <span className="chat-title">{currentTitle || ''}</span>
+                    <div className="chat-title-bar">
+                        <span className="chat-title">{currentTitle || ''}</span>
+                        <div className="chat-title-actions">
                             {formattedWorkspace && (
                                 <span className="chat-workspace" title={workspace || ''}>
                                     {formattedWorkspace}
                                 </span>
                             )}
+                            <button
+                                type="button"
+                                className={`approval-toggle ${requireApprovals ? '' : 'active'}`}
+                                onClick={onToggleApprovals}
+                                title={requireApprovals ? 'Enable auto-approve' : 'Disable auto-approve'}
+                            >
+                                {requireApprovals ? 'Approvals on' : 'Auto-approve'}
+                            </button>
                         </div>
-                    )}
+                    </div>
                     <div className="chat-container">
                         <div className="messages">
                             {messages.map((msg) => (
@@ -185,7 +286,12 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                             {isProcessing && !questionRequest && !approvalRequest && (
                                 <div className="message assistant">
                                     <div className="message-content">
-                                        <ThinkingIndicator startTime={processingStartTime} tokens={currentTokens} />
+                                        <ThinkingIndicator
+                                            startTime={processingStartTime}
+                                            tokens={currentTokens}
+                                            inProgressStep={planProgress.inProgressStep}
+                                            nextStep={planProgress.nextStep}
+                                        />
                                     </div>
                                 </div>
                             )}
@@ -216,6 +322,26 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                         </div>
 
                         <form onSubmit={handleSubmit} className="input-area">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                style={{ display: 'none' }}
+                                onChange={handleFilesSelected}
+                            />
+                            {pendingImages.length > 0 && (
+                                <div className="attachment-strip">
+                                    {pendingImages.map((img) => (
+                                        <div key={img.id} className="attachment-item">
+                                            <img src={toDataUrl(img)} alt={img.name} />
+                                            <button type="button" onClick={() => handleRemovePendingImage(img.id)} title="Remove">
+                                                x
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             <textarea
                                 ref={inputRef}
                                 value={inputValue}
@@ -223,12 +349,11 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                                 onKeyDown={handleKeyDown}
                                 placeholder="Type your message..."
                                 rows={2}
-                                disabled={!!questionRequest || !!approvalRequest}
                             />
                             <div className="input-actions">
                                 <div className="input-actions-left">
                                     {showAttachButton && (
-                                        <button type="button" className="send-btn" disabled={isProcessing} title="Attach file">
+                                        <button type="button" className="send-btn" title="Attach image" onClick={handleAttachClick}>
                                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: 'rotate(-45deg)' }}>
                                                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
                                             </svg>
@@ -251,7 +376,7 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                                         <button
                                             type="submit"
                                             className="send-btn"
-                                            disabled={!inputValue.trim() || !!questionRequest || !!approvalRequest}
+                                            disabled={(!inputValue.trim() && pendingImages.length === 0) || !!questionRequest || !!approvalRequest}
                                             title="Send"
                                         >
                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

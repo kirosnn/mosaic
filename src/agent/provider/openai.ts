@@ -2,6 +2,7 @@ import { streamText, CoreMessage, CoreTool } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { z } from 'zod';
+import { shouldEnableReasoning } from './reasoning';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -83,6 +84,7 @@ export class OpenAIProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     const openai = createOpenAI({
       apiKey: cleanApiKey,
@@ -120,7 +122,7 @@ export class OpenAIProvider implements Provider {
         providerOptions: {
           openai: {
             strictJsonSchema,
-            reasoningEffort: 'medium',
+            ...(reasoningEnabled ? { reasoningEffort: 'high' } : {}),
           },
         },
       });

@@ -719,6 +719,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
     switch (toolName) {
       case 'read': {
         const path = args.path as string;
+        const startLine = args.start_line as number | undefined;
+        const endLine = args.end_line as number | undefined;
         const fullPath = resolve(workspace, path);
 
         if (!validatePath(fullPath, workspace)) {
@@ -729,6 +731,26 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
 
         const content = await readFile(fullPath, 'utf-8');
+
+        if (startLine !== undefined || endLine !== undefined) {
+          const lines = content.split('\n');
+          const start = (startLine ?? 1) - 1;
+          const end = endLine ?? lines.length;
+
+          if (start < 0 || start >= lines.length) {
+            return {
+              success: false,
+              error: `Start line ${startLine} is out of bounds (1-${lines.length})`
+            };
+          }
+
+          const selectedLines = lines.slice(start, end);
+          return {
+            success: true,
+            result: selectedLines.join('\n')
+          };
+        }
+
         return {
           success: true,
           result: content
@@ -737,7 +759,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
       case 'write': {
         const path = args.path as string;
-        const content = typeof args.content === 'string' ? args.content : '';
+        let content = typeof args.content === 'string' ? args.content : '';
+        if (content) content = content.trimEnd(); // Ensure no trailing empty lines
         const append = args.append === true;
         const fullPath = resolve(workspace, path);
 
@@ -1132,7 +1155,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case 'edit': {
         const path = args.path as string;
         const oldContent = args.old_content as string;
-        const newContent = args.new_content as string;
+        let newContent = args.new_content as string;
+        if (newContent) newContent = newContent.trimEnd(); // Ensure no trailing empty lines
         const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
         const fullPath = resolve(workspace, path);
 

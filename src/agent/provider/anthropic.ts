@@ -1,6 +1,7 @@
 import { streamText, CoreMessage } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
+import { shouldEnableReasoning } from './reasoning';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
@@ -10,6 +11,7 @@ export class AnthropicProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     const anthropic = createAnthropic({
       apiKey: cleanApiKey,
@@ -22,11 +24,13 @@ export class AnthropicProvider implements Provider {
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
-      experimental_providerMetadata: {
-        anthropic: {
-          thinkingBudgetTokens: 10000,
-        },
-      },
+      experimental_providerMetadata: reasoningEnabled
+        ? {
+          anthropic: {
+            thinkingBudgetTokens: 10000,
+          },
+        }
+        : undefined,
     });
 
     try {

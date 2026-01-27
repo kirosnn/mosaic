@@ -17,6 +17,7 @@
     position: sticky;
     top: 0;
     z-index: 10;
+    gap: 0.75rem;
 }
 
 .chat-title {
@@ -28,11 +29,40 @@
 }
 
 .chat-workspace {
-    margin-left: auto;
     font-size: 0.9rem;
     font-family: 'Geist Medium Monospace', monospace;
     color: var(--text-secondary);
     cursor: default;
+}
+
+.chat-title-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.approval-toggle {
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.approval-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+.approval-toggle.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: white;
 }
 
 .chat-container {
@@ -90,6 +120,48 @@
 
 .input-area textarea::placeholder {
     color: var(--text-muted);
+}
+
+.attachment-strip {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding-bottom: 0.5rem;
+}
+
+.attachment-item {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border-code);
+    background: var(--bg-code);
+}
+
+.attachment-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.attachment-item button {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.attachment-item button:hover {
+    background: rgba(0, 0, 0, 0.8);
 }
 
 .input-area textarea:disabled {

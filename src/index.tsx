@@ -54,8 +54,9 @@ class CLI {
         parsed.directory = args[i + 1];
         i += 2;
       } else if (arg === 'run') {
-        parsed.initialMessage = args[i + 1];
-        i += 2;
+        const message = args.slice(i + 1).join(' ');
+        if (message) parsed.initialMessage = message;
+        i = args.length;
       } else if (arg === 'uninstall') {
         parsed.uninstall = true;
         if (args[i + 1] === '--force') {
@@ -82,9 +83,6 @@ class CLI {
     const gold = (text: string) => `\x1b[38;2;255;202;56m${text}\x1b[0m`;
 
     console.log('');
-    console.log(gold('███╗   ███╗'));
-    console.log(gold('████╗ ████║'));
-    console.log(gold('███╔████╔███║'));
     console.log(`
 Mosaic - AI-powered coding agent
 

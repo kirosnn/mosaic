@@ -19,6 +19,7 @@ const THINKING_WORDS = [
 interface ThinkingIndicatorProps {
     startTime?: number;
     tokens?: number;
+    nextStep?: string;
 }
 
 function formatElapsedTime(startTime: number | undefined): string {
@@ -36,7 +37,7 @@ function formatElapsedTime(startTime: number | undefined): string {
     return `${seconds}s`;
 }
 
-export function ThinkingIndicator({ startTime, tokens }: ThinkingIndicatorProps) {
+export function ThinkingIndicator({ startTime, tokens, nextStep }: ThinkingIndicatorProps) {
     const [shimmerPos, setShimmerPos] = useState(-2);
     const [, setTick] = useState(0);
     const thinkingWord = useMemo(
@@ -60,25 +61,43 @@ export function ThinkingIndicator({ startTime, tokens }: ThinkingIndicatorProps)
     const elapsedStr = formatElapsedTime(startTime);
 
     return (
-        <div className="thinking-indicator">
-            <span className="thinking-icon">&#x2058;</span>
-            <span className="thinking-text">
-                {text.split("").map((char, index) => {
-                    const inShimmer = index === shimmerPos || index === shimmerPos - 1;
-                    return (
-                        <span
-                            key={index}
-                            className={inShimmer ? "shimmer-active" : "shimmer-dim"}
-                        >
-                            {char}
-                        </span>
-                    );
-                })}
-            </span>
-            {elapsedStr && <span className="thinking-elapsed"> - {elapsedStr}</span>}
-            <span className="thinking-hint"> - esc to cancel</span>
-            {tokens !== undefined && tokens > 0 && (
-                <span className="thinking-tokens"> - {tokens.toLocaleString()} tokens</span>
+        <div className="thinking-block">
+            <div className="thinking-indicator">
+                <span className="thinking-icon">&#x2058;</span>
+                <span className="thinking-text">
+                    {text.split("").map((char, index) => {
+                        const inShimmer = index === shimmerPos || index === shimmerPos - 1;
+                        return (
+                            <span
+                                key={index}
+                                className={inShimmer ? "shimmer-active" : "shimmer-dim"}
+                            >
+                                {char}
+                            </span>
+                        );
+                    })}
+                </span>
+                {elapsedStr && (
+                    <>
+                        <span className="thinking-sep"> — </span>
+                        <span className="thinking-elapsed">{elapsedStr}</span>
+                    </>
+                )}
+                <span className="thinking-sep"> — </span>
+                <span className="thinking-hint">esc to cancel</span>
+                {tokens !== undefined && tokens > 0 && (
+                    <>
+                        <span className="thinking-sep"> — </span>
+                        <span className="thinking-tokens">{tokens.toLocaleString()} tokens</span>
+                    </>
+                )}
+            </div>
+            {nextStep && (
+                <div className="thinking-next-line">
+                    <span className="thinking-next-icon">⎿ </span>
+                    <span className="thinking-next-label">Next:</span>
+                    <span className="thinking-next-step">{nextStep}</span>
+                </div>
             )}
         </div>
     );

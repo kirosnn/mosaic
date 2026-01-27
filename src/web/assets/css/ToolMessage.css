@@ -17,6 +17,16 @@
     border: 1px solid var(--border-tool-error);
 }
 
+.message.tool.plan-tool,
+.message.tool.plan-tool.running,
+.message.tool.plan-tool.error,
+.message.tool.plan-tool.success {
+    background: transparent;
+    border: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
 .message.tool.success .message-bar {
     background: var(--status-success);
 }
@@ -111,6 +121,18 @@
     padding: 0.1rem 0.5rem;
     white-space: pre-wrap;
     word-break: break-all;
+}
+
+.tool-line.plan-line {
+    padding-left: 0.9rem;
+}
+
+.plan-prefix {
+    color: #ffca38;
+}
+
+.plan-bracket.active {
+    color: #ffca38;
 }
 
 .tool-line.diff-line {

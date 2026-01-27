@@ -7,7 +7,7 @@ const PlanStepSchema = z.object({
 });
 
 export const plan: CoreTool = tool({
-  description: 'Create or update a task plan for longer work, and keep it up to date as you progress.',
+  description: 'Create or update a task plan for longer work, and keep it up to date as you progress. Update the plan after each step.',
   parameters: z.object({
     explanation: z.string().optional().describe('Optional context about the plan or changes.'),
     plan: z.array(PlanStepSchema).min(1).describe('Ordered list of steps with statuses.'),

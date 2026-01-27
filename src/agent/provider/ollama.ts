@@ -4,6 +4,7 @@ import { CoreMessage, CoreTool } from 'ai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { z } from 'zod';
+import { shouldEnableReasoning } from './reasoning';
 
 let serveStartPromise: Promise<void> | null = null;
 const pullPromises = new Map<string, Promise<void>>();
@@ -220,6 +221,15 @@ function contentToString(content: CoreMessage['content']): string {
   }
 }
 
+function imagePartToBase64(image: any): string | undefined {
+  if (!image) return undefined;
+  if (typeof image === 'string') return image;
+  if (Buffer.isBuffer(image)) return image.toString('base64');
+  if (image instanceof Uint8Array) return Buffer.from(image).toString('base64');
+  if (image instanceof ArrayBuffer) return Buffer.from(new Uint8Array(image)).toString('base64');
+  return undefined;
+}
+
 function toOllamaTools(tools?: Record<string, CoreTool>): any[] | undefined {
   if (!tools) return undefined;
 
@@ -282,6 +292,21 @@ function coreMessagesToOllamaMessages(messages: CoreMessage[]): any[] {
         };
       }
 
+      if (message.role === 'user' && Array.isArray(message.content)) {
+        const textParts = message.content
+          .map((part: any) => (part && typeof part.text === 'string' ? part.text : ''))
+          .filter(Boolean)
+          .join('');
+        const images = message.content
+          .map((part: any) => (part && part.type === 'image' ? imagePartToBase64(part.image) : undefined))
+          .filter(Boolean);
+        const msg: any = { role: 'user', content: textParts };
+        if (images.length > 0) {
+          msg.images = images;
+        }
+        return msg;
+      }
+
       return {
         role: message.role,
         content: contentToString(message.content),
@@ -321,6 +346,7 @@ export class OllamaProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const apiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     if (options?.abortSignal?.aborted) {
       return;
@@ -414,7 +440,7 @@ export class OllamaProvider implements Provider {
               messages: ollamaMessages,
               tools: toolsSchema,
               stream: true,
-              think: true,
+              think: reasoningEnabled,
               signal: options?.abortSignal,
             } as any) as any,
           2,

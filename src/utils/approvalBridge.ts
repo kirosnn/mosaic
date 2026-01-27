@@ -28,6 +28,11 @@ let listeners = new Set<ApprovalListener>();
 let acceptedListeners = new Set<ApprovalAcceptedListener>();
 let pendingResolve: ((response: ApprovalResponse) => void) | null = null;
 let pendingReject: ((reason?: any) => void) | null = null;
+let queuedRequests: {
+  request: ApprovalRequest;
+  resolve: (response: ApprovalResponse) => void;
+  reject: (reason?: any) => void;
+}[] = [];
 
 function notify(): void {
   for (const listener of listeners) {
@@ -69,10 +74,6 @@ export async function requestApproval(
   args: Record<string, unknown>,
   preview: { title: string; content: string; details?: string[] }
 ): Promise<{ approved: boolean; customResponse?: string }> {
-  if (pendingResolve) {
-    throw new Error('An approval request is already pending');
-  }
-
   const request: ApprovalRequest = {
     id: createId(),
     toolName,
@@ -80,12 +81,16 @@ export async function requestApproval(
     args,
   };
 
-  currentRequest = request;
-  notify();
-
   const response = await new Promise<ApprovalResponse>((resolve, reject) => {
+    if (pendingResolve) {
+      queuedRequests.push({ request, resolve, reject });
+      return;
+    }
+
+    currentRequest = request;
     pendingResolve = resolve;
     pendingReject = reject;
+    notify();
   });
 
   return { approved: response.approved, customResponse: response.customResponse };
@@ -114,6 +119,14 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
   }
 
   resolve(response);
+
+  const next = queuedRequests.shift();
+  if (next) {
+    currentRequest = next.request;
+    pendingResolve = next.resolve;
+    pendingReject = next.reject;
+    notify();
+  }
 }
 
 export function cancelApproval(): void {
@@ -126,4 +139,12 @@ export function cancelApproval(): void {
   notify();
 
   reject(new Error('Interrupted by user'));
+
+  const next = queuedRequests.shift();
+  if (next) {
+    currentRequest = next.request;
+    pendingResolve = next.resolve;
+    pendingReject = next.reject;
+    notify();
+  }
 }

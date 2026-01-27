@@ -2,6 +2,7 @@ export interface Message {
     id: string;
     role: 'user' | 'assistant' | 'tool';
     content: string;
+    images?: import("../utils/images").ImageAttachment[];
     displayContent?: string;
     isError?: boolean;
     toolName?: string;

@@ -32,6 +32,7 @@ export interface Message {
   displayRole?: "user" | "assistant" | "tool" | "slash";
   displayContent?: string;
   content: string;
+  images?: import("../../utils/images").ImageAttachment[];
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   toolResult?: unknown;

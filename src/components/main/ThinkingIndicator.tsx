@@ -7,6 +7,7 @@ interface ThinkingIndicatorProps {
     hasQuestion: boolean;
     startTime?: number | null;
     tokens?: number;
+    nextStep?: string;
 }
 
 export function getInputBarBaseLines(): number {
@@ -22,7 +23,8 @@ export function shouldShowThinkingIndicator({ isProcessing, hasQuestion }: Think
 }
 
 export function getBottomReservedLinesForInputBar(props: ThinkingIndicatorProps): number {
-    return getInputBarBaseLines() + (shouldShowThinkingIndicator(props) ? 2 : 0) + 2;
+    const indicatorLines = shouldShowThinkingIndicator(props) ? (props.nextStep ? 3 : 2) : 0;
+    return getInputBarBaseLines() + indicatorLines + 2;
 }
 
 export function formatElapsedTime(ms: number | null | undefined, fromStartTime: boolean = true): string {
@@ -93,6 +95,14 @@ export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
     return (
         <box flexDirection="column" width="100%">
             <ThinkingIndicator {...props} />
+            {props.nextStep ? (
+                <box flexDirection="row" width="100%" paddingLeft={2}>
+                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>⎿ </text>
+                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>Next:</text>
+                    <text> </text>
+                    <text fg="white" attributes={TextAttributes.DIM}>{props.nextStep}</text>
+                </box>
+            ) : null}
             <box flexDirection="row" width="100%">
                 <text> </text>
             </box>

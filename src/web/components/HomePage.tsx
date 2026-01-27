@@ -12,7 +12,7 @@ interface RecentProject {
 }
 
 interface HomePageProps {
-    onStartChat: (message: string) => void;
+    onStartChat: (message: string, images?: import("../../utils/images").ImageAttachment[]) => void;
     onOpenProject: (path: string) => void;
     sidebarProps: SidebarProps;
 }

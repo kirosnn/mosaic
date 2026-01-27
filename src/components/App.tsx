@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { KeyEvent } from '@opentui/core';
 import { isFirstRun, markFirstRunComplete } from '../utils/config';
 import { useRenderer } from '@opentui/react';
@@ -10,6 +10,10 @@ import { CommandModal } from './CommandsModal';
 import { Notification, type NotificationData } from './Notification';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { subscribeNotifications } from '../utils/notificationBridge';
+import { shouldRequireApprovals, setRequireApprovals } from '../utils/config';
+import { getCurrentApproval, respondApproval } from '../utils/approvalBridge';
+import { emitApprovalMode } from '../utils/approvalModeBridge';
 
 const execAsync = promisify(exec);
 
@@ -29,6 +33,7 @@ export function App({ initialMessage }: AppProps) {
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [pendingMessage, setPendingMessage] = useState<string | undefined>(initialMessage);
+  const lastSelectionRef = useRef<{ text: string; at: number } | null>(null);
 
   const renderer = useRenderer();
 
@@ -41,11 +46,11 @@ export function App({ initialMessage }: AppProps) {
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = useCallback(async (text: string) => {
     try {
       if (process.platform === 'win32') {
-        const escaped = text.replace(/'/g, "''");
-        await execAsync(`powershell -command "Set-Clipboard -Value '${escaped}'"`);
+        const encoded = Buffer.from(text, 'utf8').toString('base64');
+        await execAsync(`powershell.exe -NoProfile -Command "$bytes=[Convert]::FromBase64String('${encoded}');$text=[System.Text.Encoding]::UTF8.GetString($bytes);Set-Clipboard -Value $text"`);
       } else if (process.platform === 'darwin') {
         await execAsync(`echo ${JSON.stringify(text)} | pbcopy`);
       } else {
@@ -54,7 +59,33 @@ export function App({ initialMessage }: AppProps) {
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const handler = (selection: any) => {
+      if (!selection || selection.isSelecting || !selection.isActive) return;
+      const text = typeof selection.getSelectedText === 'function' ? selection.getSelectedText() : '';
+      if (!text) return;
+      const now = Date.now();
+      const last = lastSelectionRef.current;
+      if (last && last.text === text && now - last.at < 400) return;
+      lastSelectionRef.current = { text, at: now };
+      copyToClipboard(text);
+      addNotification('Copied to clipboard', 'info', 2000);
+    };
+
+    const rendererAny = renderer as any;
+    rendererAny.on?.('selection', handler);
+    return () => {
+      rendererAny.off?.('selection', handler);
+    };
+  }, [renderer, copyToClipboard, addNotification]);
+
+  useEffect(() => {
+    return subscribeNotifications((payload) => {
+      addNotification(payload.message, payload.type ?? 'info', payload.duration);
+    });
+  }, [addNotification]);
 
   useEffect(() => {
     const isDarwin = process.platform === 'darwin';
@@ -65,6 +96,17 @@ export function App({ initialMessage }: AppProps) {
       if (k.name === 'escape') {
         setShortcutsOpen(false);
         setCommandsOpen(false);
+        return;
+      }
+
+      if (k.name === 'tab' && k.shift) {
+        const next = !shouldRequireApprovals();
+        setRequireApprovals(next);
+        if (!next && getCurrentApproval()) {
+          respondApproval(true);
+        }
+        emitApprovalMode(next);
+        addNotification(next ? 'Approvals enabled' : 'Auto-approve enabled', 'info', 2500);
         return;
       }
 
@@ -90,7 +132,7 @@ export function App({ initialMessage }: AppProps) {
         return;
       }
 
-      if (k.name === 'c' && !k.shift && (k.ctrl || (isDarwin && k.meta && !k.alt) || (!isDarwin && (k.alt || k.meta) && !k.ctrl)) || seq === '\x03') {
+      if (k.name === 'c' && !k.shift && ((isDarwin && k.meta && !k.ctrl && !k.alt) || (!isDarwin && k.alt && !k.ctrl))) {
         setCopyRequestId(prev => prev + 1);
         return;
       }

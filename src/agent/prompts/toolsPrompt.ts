@@ -6,6 +6,8 @@ export const TOOLS_PROMPT = `
 ### read
 Read file contents. ALWAYS read before modifying.
 - path (string, required): File path relative to workspace
+- start_line (number, optional): Start reading from this line (1-based)
+- end_line (number, optional): End reading at this line (1-based)
 
 ### write
 Create or overwrite a file. Creates parent directories automatically.
@@ -83,6 +85,7 @@ Track progress on multi-step tasks.
   - status: "pending" | "in_progress" | "completed"
 
 Use plan for tasks with 3+ steps. Update as you progress.
+Always update the plan after each step is completed.
 
 ## Web Access
 

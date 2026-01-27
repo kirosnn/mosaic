@@ -26,6 +26,28 @@ export function getAllConversations(): Conversation[] {
     }
 }
 
+export function mergeConversations(incoming: Conversation[]): boolean {
+    if (!incoming.length) return false;
+
+    const existing = getAllConversations();
+    const byId = new Map(existing.map((conv) => [conv.id, conv]));
+    let changed = false;
+
+    for (const conv of incoming) {
+        const current = byId.get(conv.id);
+        if (!current || conv.updatedAt > current.updatedAt) {
+            byId.set(conv.id, conv);
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(byId.values())));
+    }
+
+    return changed;
+}
+
 export function getConversation(id: string): Conversation | null {
     const conversations = getAllConversations();
     return conversations.find(c => c.id === id) || null;

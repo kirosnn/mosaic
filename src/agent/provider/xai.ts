@@ -1,6 +1,7 @@
 import { streamText, CoreMessage } from 'ai';
 import { createXai } from '@ai-sdk/xai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
+import { shouldEnableReasoning } from './reasoning';
 
 export class XaiProvider implements Provider {
   async *sendMessage(
@@ -10,6 +11,7 @@ export class XaiProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     const xai = createXai({
       apiKey: cleanApiKey,
@@ -22,11 +24,13 @@ export class XaiProvider implements Provider {
       tools: config.tools,
       maxSteps: config.maxSteps || 10,
       abortSignal: options?.abortSignal,
-      providerOptions: {
-        xai: {
-          reasoningEffort: 'high',
-        },
-      },
+      providerOptions: reasoningEnabled
+        ? {
+          xai: {
+            reasoningEffort: 'high',
+          },
+        }
+        : undefined,
     });
 
     try {

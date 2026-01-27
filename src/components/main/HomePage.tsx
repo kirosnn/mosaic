@@ -17,7 +17,11 @@ const TIPS = [
   "Use /clear to reset the current chat session.",
   "Use Tab to autocomplete commands and arguments.",
   "Use Ctrl + K to clear the current input line.",
+  "Use Ctrl + G to edit the current input in your system editor.",
   "Use /help to display the list of available commands.",
+  "Select text with the mouse to copy it automatically.",
+  "Attach an image with /image <path>.",
+  "Paste an image with Ctrl/Alt + V (or Cmd + V on macOS).",
 ];
 
 export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePageProps) {
