@@ -10,7 +10,7 @@ Scope: analyse du code Mosaic (providers + pipeline d execution) et recommandati
 - `src/agent/provider/ollama.ts` contient un retry pour erreurs transientes (ECONNREFUSED, ETIMEDOUT, 500, socket), mais pas de gestion 429 ni de respect d un `Retry-After`.
 
 ### 1.2 Boucle d agent / steps
-- `src/agent/Agent.ts` fixe `maxSteps: 60`. Avec tool calling, `streamText` peut declencher plusieurs requetes par message utilisateur. Plus de steps => plus de risques de rate limit.
+- `src/agent/Agent.ts` fixe `maxSteps: 100`. Avec tool calling, `streamText` peut declencher plusieurs requetes par message utilisateur. Plus de steps => plus de risques de rate limit.
 
 ### 1.3 Serveur web / concurrence
 - `src/web/server.tsx` ne met pas de limite de concurrence par provider ou par session. Plusieurs requetes paralleles peuvent partir sans limitation.
@@ -67,7 +67,7 @@ Scope: analyse du code Mosaic (providers + pipeline d execution) et recommandati
 ### Priorite C: Reduction de la charge par requete
 
 5) Ajuster `maxSteps` en dynamique
-- Aujourd hui: `maxSteps: 60` fixe dans `src/agent/Agent.ts`.
+- Aujourd hui: `maxSteps: 100` fixe dans `src/agent/Agent.ts`.
 - Propose:
   - base: 10-20
   - augmenter seulement si l agent justifie une longue sequence d outils

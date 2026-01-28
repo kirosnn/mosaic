@@ -74,7 +74,7 @@ export class AgentContextManager {
   }
 
   getMaxSteps(): number {
-    return this.config.maxSteps || 10;
+    return this.config.maxSteps || 100;
   }
 
   canContinue(): boolean {

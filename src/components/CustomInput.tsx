@@ -23,12 +23,15 @@ interface CustomInputProps {
   pasteRequestId?: number
   disableHistory?: boolean
   submitDisabled?: boolean
+  maxWidth?: number
 }
 
-export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false }: CustomInputProps) {
+export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth }: CustomInputProps) {
   const [value, setValue] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
+  const [selectionStart, setSelectionStart] = useState<number | null>(null)
+  const [selectionEnd, setSelectionEnd] = useState<number | null>(null)
   const [pasteBuffer, setPasteBuffer] = useState('')
   const [inPasteMode, setInPasteMode] = useState(false)
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -45,6 +48,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const lastPasteUndoRef = useRef<{ prevValue: string; prevCursor: number; nextValue: string; nextCursor: number } | null>(null)
   const valueRef = useRef(value)
   const cursorPositionRef = useRef(cursorPosition)
+  const selectionStartRef = useRef<number | null>(selectionStart)
+  const selectionEndRef = useRef<number | null>(selectionEnd)
 
   const renderer = useRenderer()
 
@@ -135,9 +140,13 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     const normalized = normalizePastedText(pastedText)
     if (!normalized) return
 
-    const insertAt = cursorPositionRef.current
     const prevValue = valueRef.current
-    const nextValue = prevValue.slice(0, insertAt) + normalized + prevValue.slice(insertAt)
+    const selStart = selectionStartRef.current
+    const selEnd = selectionEndRef.current
+    const hasSelection = typeof selStart === 'number' && typeof selEnd === 'number' && selEnd > selStart
+    const insertAt = hasSelection ? selStart! : cursorPositionRef.current
+    const deleteUntil = hasSelection ? selEnd! : insertAt
+    const nextValue = prevValue.slice(0, insertAt) + normalized + prevValue.slice(deleteUntil)
     lastPasteUndoRef.current = {
       prevValue,
       prevCursor: insertAt,
@@ -146,6 +155,10 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     }
     setValue(nextValue)
     setCursorPosition(insertAt + normalized.length)
+    if (hasSelection) {
+      setSelectionStart(null)
+      setSelectionEnd(null)
+    }
     pasteFlagRef.current = true
     pastedContentRef.current = normalized
   }
@@ -169,6 +182,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       setCursorPosition(normalized.length)
       setHistoryIndex(-1)
       desiredCursorColRef.current = null
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } catch (error) {
     } finally {
       try {
@@ -189,6 +204,14 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   useEffect(() => {
     cursorPositionRef.current = cursorPosition
   }, [cursorPosition])
+
+  useEffect(() => {
+    selectionStartRef.current = selectionStart
+  }, [selectionStart])
+
+  useEffect(() => {
+    selectionEndRef.current = selectionEnd
+  }, [selectionEnd])
 
   useEffect(() => {
     const handleResize = () => {
@@ -267,15 +290,23 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     }
   }, [focused, renderer.keyInput])
 
-  const wrapTextWithCursor = (text: string, cursorPos: number, maxWidth: number): { lines: string[], cursorLine: number, cursorCol: number } => {
+  const wrapTextWithCursor = (text: string, cursorPos: number, maxWidth: number): { lineStarts: number[], lineLengths: number[], cursorLine: number, cursorCol: number } => {
     const safeCursorPos = Math.max(0, Math.min(text.length, cursorPos))
-    const lines: string[] = ['']
+    const lineStarts: number[] = [0]
+    const lineLengths: number[] = [0]
     let lineIndex = 0
     let col = 0
     let cursorLine = 0
     let cursorCol = 0
 
     for (let i = 0; i <= text.length; i += 1) {
+      if (col >= maxWidth) {
+        lineStarts.push(i)
+        lineLengths.push(0)
+        lineIndex += 1
+        col = 0
+      }
+
       if (i === safeCursorPos) {
         cursorLine = lineIndex
         cursorCol = col
@@ -285,23 +316,28 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
 
       const ch = text[i]!
       if (ch === '\n') {
-        lines.push('')
+        lineStarts.push(i + 1)
+        lineLengths.push(0)
         lineIndex += 1
         col = 0
         continue
       }
 
-      if (col >= maxWidth) {
-        lines.push('')
-        lineIndex += 1
-        col = 0
-      }
-
-      lines[lineIndex] = (lines[lineIndex] || '') + ch
+      lineLengths[lineIndex] = (lineLengths[lineIndex] || 0) + 1
       col += 1
     }
 
-    return { lines, cursorLine, cursorCol }
+    return { lineStarts, lineLengths, cursorLine, cursorCol }
+  }
+
+  const buildDisplayLines = (displayText: string, lineStarts: number[], lineLengths: number[]) => {
+    const lines: string[] = []
+    for (let i = 0; i < lineStarts.length; i += 1) {
+      const start = lineStarts[i] ?? 0
+      const len = lineLengths[i] ?? 0
+      lines.push(displayText.slice(start, start + len))
+    }
+    return lines
   }
 
   useKeyboard((key) => {
@@ -342,6 +378,27 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         lastPasteUndoRef.current = null
         pasteFlagRef.current = false
         pastedContentRef.current = ''
+        setSelectionStart(null)
+        setSelectionEnd(null)
+      }
+      return
+    }
+
+    if (key.name === 'a' && (key.ctrl || key.meta)) {
+      if (value.length > 0) {
+        const selStart = selectionStartRef.current
+        const selEnd = selectionEndRef.current
+        const hasSelection = typeof selStart === 'number' && typeof selEnd === 'number' && selEnd > selStart
+        const fullSelection = hasSelection && selStart === 0 && selEnd === value.length
+        if (fullSelection) {
+          setSelectionStart(null)
+          setSelectionEnd(null)
+          setCursorPosition(value.length)
+        } else {
+          setSelectionStart(0)
+          setSelectionEnd(value.length)
+          setCursorPosition(value.length)
+        }
       }
       return
     }
@@ -361,6 +418,8 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       pasteFlagRef.current = false
       pastedContentRef.current = ''
       desiredCursorColRef.current = null
+      setSelectionStart(null)
+      setSelectionEnd(null)
       return
     }
 
@@ -383,34 +442,63 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       pasteFlagRef.current = false
       pastedContentRef.current = ''
       desiredCursorColRef.current = null
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.name === 'backspace') {
       desiredCursorColRef.current = null
+      const selStart = selectionStartRef.current
+      const selEnd = selectionEndRef.current
+      if (typeof selStart === 'number' && typeof selEnd === 'number' && selEnd > selStart) {
+        const prev = valueRef.current
+        const nextValue = prev.slice(0, selStart) + prev.slice(selEnd)
+        setValue(nextValue)
+        setCursorPosition(selStart)
+        setSelectionStart(null)
+        setSelectionEnd(null)
+        return
+      }
       if (cursorPosition > 0) {
         setValue(prev => prev.slice(0, cursorPosition - 1) + prev.slice(cursorPosition))
         setCursorPosition(prev => prev - 1)
       }
     } else if (key.name === 'delete') {
       desiredCursorColRef.current = null
+      const selStart = selectionStartRef.current
+      const selEnd = selectionEndRef.current
+      if (typeof selStart === 'number' && typeof selEnd === 'number' && selEnd > selStart) {
+        const prev = valueRef.current
+        const nextValue = prev.slice(0, selStart) + prev.slice(selEnd)
+        setValue(nextValue)
+        setCursorPosition(selStart)
+        setSelectionStart(null)
+        setSelectionEnd(null)
+        return
+      }
       if (key.ctrl || key.meta) {
         setValue('')
         setCursorPosition(0)
         pasteFlagRef.current = false
         pastedContentRef.current = ''
+        setSelectionStart(null)
+        setSelectionEnd(null)
       } else if (cursorPosition < value.length) {
         setValue(prev => prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1))
       }
     } else if (key.name === 'up') {
       const lineWidth = Math.max(10, terminalWidth - 4)
-      const { lines: displayLines, cursorLine: currentCursorLine, cursorCol: currentCursorCol } = wrapTextWithCursor(value, cursorPosition, lineWidth)
+      const { lineLengths, cursorLine: currentCursorLine, cursorCol: currentCursorCol, lineStarts } = wrapTextWithCursor(value, cursorPosition, lineWidth)
       if (currentCursorLine > 0) {
         if (desiredCursorColRef.current === null) {
           desiredCursorColRef.current = currentCursorCol
         }
         const targetLine = currentCursorLine - 1
         const targetCol = desiredCursorColRef.current
-        const targetLineLen = displayLines[targetLine]!.length
-        const newDisplayPos = (targetLine * lineWidth) + Math.min(targetCol, targetLineLen)
-        setCursorPosition(Math.min(value.length, newDisplayPos))
+        const targetLineLen = lineLengths[targetLine] ?? 0
+        const lineStart = lineStarts[targetLine] ?? 0
+        const newCursorPos = lineStart + Math.min(targetCol, targetLineLen)
+        setCursorPosition(Math.min(value.length, newCursorPos))
+        setSelectionStart(null)
+        setSelectionEnd(null)
         return
       }
 
@@ -425,24 +513,31 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
       } else if (historyIndex > 0) {
         const newIndex = historyIndex - 1
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
       }
     } else if (key.name === 'down') {
       const lineWidth = Math.max(10, terminalWidth - 4)
-      const { lines: displayLines, cursorLine: currentCursorLine, cursorCol: currentCursorCol } = wrapTextWithCursor(value, cursorPosition, lineWidth)
-      if (currentCursorLine < displayLines.length - 1) {
+      const { lineLengths, cursorLine: currentCursorLine, cursorCol: currentCursorCol, lineStarts } = wrapTextWithCursor(value, cursorPosition, lineWidth)
+      if (currentCursorLine < lineStarts.length - 1) {
         if (desiredCursorColRef.current === null) {
           desiredCursorColRef.current = currentCursorCol
         }
         const targetLine = currentCursorLine + 1
         const targetCol = desiredCursorColRef.current
-        const targetLineLen = displayLines[targetLine]!.length
-        const newDisplayPos = (targetLine * lineWidth) + Math.min(targetCol, targetLineLen)
-        setCursorPosition(Math.min(value.length, newDisplayPos))
+        const targetLineLen = lineLengths[targetLine] ?? 0
+        const lineStart = lineStarts[targetLine] ?? value.length
+        const newCursorPos = lineStart + Math.min(targetCol, targetLineLen)
+        setCursorPosition(Math.min(value.length, newCursorPos))
+        setSelectionStart(null)
+        setSelectionEnd(null)
         return
       }
 
@@ -456,31 +551,56 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
       } else {
         setHistoryIndex(-1)
         setValue(currentInput)
         setCursorPosition(currentInput.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
       }
     } else if (key.name === 'left') {
       desiredCursorColRef.current = null
       setCursorPosition(prev => Math.max(0, prev - 1))
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.name === 'right') {
       desiredCursorColRef.current = null
       setCursorPosition(prev => Math.min(value.length, prev + 1))
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.name === 'home') {
       desiredCursorColRef.current = null
       setCursorPosition(0)
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.name === 'end') {
       desiredCursorColRef.current = null
       setCursorPosition(value.length)
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.sequence && key.sequence.length > 1 && !key.ctrl && !key.meta && !key.name) {
       addPastedBlock(key.sequence)
       setHistoryIndex(-1)
       desiredCursorColRef.current = null
+      setSelectionStart(null)
+      setSelectionEnd(null)
     } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
       const char = key.sequence
-      setValue(prev => prev.slice(0, cursorPosition) + char + prev.slice(cursorPosition))
-      setCursorPosition(prev => prev + char.length)
+      const selStart = selectionStartRef.current
+      const selEnd = selectionEndRef.current
+      if (typeof selStart === 'number' && typeof selEnd === 'number' && selEnd > selStart) {
+        const prev = valueRef.current
+        const nextValue = prev.slice(0, selStart) + char + prev.slice(selEnd)
+        setValue(nextValue)
+        setCursorPosition(selStart + char.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
+      } else {
+        setValue(prev => prev.slice(0, cursorPosition) + char + prev.slice(cursorPosition))
+        setCursorPosition(prev => prev + char.length)
+      }
       setHistoryIndex(-1)
       desiredCursorColRef.current = null
     }
@@ -489,7 +609,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const displayValue = password && value ? Array.from(value, (char) => (char === '\n' ? '\n' : '•')).join('') : value
   const isEmpty = value.length === 0
 
-  const lineWidth = Math.max(10, terminalWidth - 4)
+  const lineWidth = Math.max(10, maxWidth ?? (terminalWidth - 4))
 
   if (isEmpty) {
     if (!placeholder) {
@@ -512,21 +632,79 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
     )
   }
 
-  const { lines, cursorLine, cursorCol } = wrapTextWithCursor(displayValue, cursorPosition, lineWidth)
+  const { lineStarts, lineLengths, cursorLine, cursorCol } = wrapTextWithCursor(value, cursorPosition, lineWidth)
+  const lines = buildDisplayLines(displayValue, lineStarts, lineLengths)
+  const selectionRange = (() => {
+    if (typeof selectionStart === 'number' && typeof selectionEnd === 'number') {
+      const start = Math.max(0, Math.min(selectionStart, selectionEnd))
+      const end = Math.max(0, Math.max(selectionStart, selectionEnd))
+      if (end > start) return { start, end }
+    }
+    return null
+  })()
+
+  const buildSelectionSegments = (text: string, absStart: number) => {
+    if (!selectionRange || text.length === 0) {
+      return [{ text, selected: false }]
+    }
+    const segStart = absStart
+    const segEnd = absStart + text.length
+    if (selectionRange.end <= segStart || selectionRange.start >= segEnd) {
+      return [{ text, selected: false }]
+    }
+    const parts: Array<{ text: string; selected: boolean }> = []
+    if (selectionRange.start > segStart) {
+      parts.push({ text: text.slice(0, selectionRange.start - segStart), selected: false })
+    }
+    const selFrom = Math.max(selectionRange.start, segStart) - segStart
+    const selTo = Math.min(selectionRange.end, segEnd) - segStart
+    parts.push({ text: text.slice(selFrom, selTo), selected: true })
+    if (selectionRange.end < segEnd) {
+      parts.push({ text: text.slice(selTo), selected: false })
+    }
+    return parts.filter(p => p.text.length > 0)
+  }
 
   return (
     <box flexDirection="column" flexGrow={1} width="100%">
       {lines.map((line, lineIndex) => (
         <box key={lineIndex} flexDirection="row">
-          {lineIndex === cursorLine ? (
-            <>
-              {line.slice(0, cursorCol) && <text>{line.slice(0, cursorCol)}</text>}
-              <text fg="black" bg="white">{line[cursorCol] || ' '}</text>
-              {line.slice(cursorCol + 1) && <text>{line.slice(cursorCol + 1)}</text>}
-            </>
-          ) : (
-            <text>{line || ' '}</text>
-          )}
+          {(() => {
+            const lineStart = lineStarts[lineIndex] ?? 0
+            if (lineIndex === cursorLine) {
+              const safeCursorCol = Math.max(0, Math.min(line.length, cursorCol))
+              const before = line.slice(0, safeCursorCol)
+              const cursorChar = line[safeCursorCol] || ' '
+              const after = line.slice(safeCursorCol + 1)
+              const beforeSegs = buildSelectionSegments(before, lineStart)
+              const afterSegs = buildSelectionSegments(after, lineStart + safeCursorCol + 1)
+              return (
+                <>
+                  {beforeSegs.map((seg, i) => (
+                    <text key={`b-${i}`} fg="white" bg={seg.selected ? "#3a3a3a" : undefined}>
+                      {seg.text}
+                    </text>
+                  ))}
+                  <text fg="black" bg="white">{cursorChar}</text>
+                  {afterSegs.map((seg, i) => (
+                    <text key={`a-${i}`} fg="white" bg={seg.selected ? "#3a3a3a" : undefined}>
+                      {seg.text}
+                    </text>
+                  ))}
+                </>
+              )
+            }
+            const segs = buildSelectionSegments(line || ' ', lineStart)
+            return (
+              <>
+                {segs.map((seg, i) => (
+                  <text key={`l-${i}`} fg="white" bg={seg.selected ? "#3a3a3a" : undefined}>
+                    {seg.text}
+                  </text>
+                ))}
+              </>
+            )
+          })()}
         </box>
       ))}
     </box>

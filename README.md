@@ -113,9 +113,6 @@ Open http://127.0.0.1:8192 in your browser.
 |-------------|--------------------------------------|
 | `/init`     | Initialize project context (MOSAIC.md) |
 | `/help`     | Show available commands              |
-| `/undo`     | Undo last file change                |
-| `/redo`     | Redo undone change                   |
-| `/sessions` | Manage conversation sessions         |
 | `/web`      | Open web interface                   |
 | `/echo`     | Echo a message (debug)               |
 
@@ -151,7 +148,6 @@ Mosaic relies on a tool registry that exposes safe, focused capabilities to the 
 
 **Safety Features:**
 - Write and edit operations require user approval before execution
-- Built-in undo/redo system tracks all file changes (SQLite-backed)
 - Project context via `MOSAIC.md` helps the agent understand your codebase
 
 ## AI Providers

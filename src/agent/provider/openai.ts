@@ -3,6 +3,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { z } from 'zod';
 import { shouldEnableReasoning } from './reasoning';
+import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -103,7 +104,7 @@ export class OpenAIProvider implements Provider {
       }
     };
 
-    const run = async function* (
+    const runOnce = async function* (
       endpoint: OpenAIEndpoint,
       strictJsonSchema: boolean
     ): AsyncGenerator<AgentEvent> {
@@ -117,7 +118,7 @@ export class OpenAIProvider implements Provider {
         messages: messages,
         system: config.systemPrompt,
         tools: toolsToUse,
-        maxSteps: config.maxSteps ?? 10,
+        maxSteps: config.maxSteps ?? 100,
         abortSignal: options?.abortSignal,
         providerOptions: {
           openai: {
@@ -191,21 +192,18 @@ export class OpenAIProvider implements Provider {
             };
             break;
 
-          case 'error':
-            {
-              const err = c.error;
-              const msg =
-                err instanceof Error
-                  ? err.message
-                  : typeof err === 'string'
-                    ? err
-                    : 'Unknown error';
+          case 'error': {
+            const err = normalizeError(c.error);
+            const decision = getRetryDecision(err);
+            if (decision.shouldRetry) {
+              throw err;
+            }
             yield {
               type: 'error',
-              error: msg,
+              error: err.message,
             };
-            }
             break;
+          }
         }
       }
 
@@ -230,7 +228,10 @@ export class OpenAIProvider implements Provider {
     };
 
     try {
-      yield* run('responses', false);
+      yield* runWithRetry(
+        () => runOnce('responses', false),
+        { abortSignal: options?.abortSignal }
+      );
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
@@ -238,7 +239,10 @@ export class OpenAIProvider implements Provider {
       const fallbackEndpoint = classifyEndpointError(msg);
       if (fallbackEndpoint && fallbackEndpoint !== 'responses') {
         try {
-          yield* run(fallbackEndpoint, false);
+          yield* runWithRetry(
+            () => runOnce(fallbackEndpoint, false),
+            { abortSignal: options?.abortSignal }
+          );
           return;
         } catch (endpointError) {
           if (options?.abortSignal?.aborted) return;

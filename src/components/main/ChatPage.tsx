@@ -529,6 +529,7 @@ export function ChatPage({
                   request={req}
                   disabled={shortcutsOpen}
                   onAnswer={(index, customText) => answerQuestion(index, customText)}
+                  maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
             );
@@ -543,6 +544,7 @@ export function ChatPage({
                   request={req}
                   disabled={shortcutsOpen}
                   onRespond={(approved, customResponse) => respondApproval(approved, customResponse)}
+                  maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
             );
@@ -637,17 +639,18 @@ export function ChatPage({
             <text fg="gray">{pendingImages.map((img) => img.name).join(", ")}</text>
           </box>
         )}
-        <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
-          <box flexGrow={1} flexShrink={1} minWidth={0}>
-            <CustomInput
-              onSubmit={onSubmit}
-              placeholder="Type your message..."
-              focused={!shortcutsOpen && !questionRequest && !approvalRequest}
-              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
-            />
-          </box>
+      <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
+        <box flexGrow={1} flexShrink={1} minWidth={0}>
+          <CustomInput
+            onSubmit={onSubmit}
+            placeholder="Type your message..."
+            focused={!shortcutsOpen && !questionRequest && !approvalRequest}
+            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+            submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
+            maxWidth={Math.max(10, terminalWidth - 6)}
+          />
         </box>
+      </box>
       </box>
 
       <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">

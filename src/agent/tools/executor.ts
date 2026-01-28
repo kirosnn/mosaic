@@ -5,7 +5,6 @@ import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
-import { captureFileSnapshot } from '../../utils/undoRedo';
 import { trackFileChange, trackFileCreated, trackFileDeleted } from '../../utils/fileChangeTracker';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
@@ -760,7 +759,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case 'write': {
         const path = args.path as string;
         let content = typeof args.content === 'string' ? args.content : '';
-        if (content) content = content.trimEnd(); // Ensure no trailing empty lines
+        if (content) content = content.trimEnd();
         const append = args.append === true;
         const fullPath = resolve(workspace, path);
 
@@ -770,8 +769,6 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             error: 'Access denied: path is outside workspace'
           };
         }
-
-        captureFileSnapshot(path);
 
         await mkdir(dirname(fullPath), { recursive: true });
 
@@ -1156,7 +1153,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const path = args.path as string;
         const oldContent = args.old_content as string;
         let newContent = args.new_content as string;
-        if (newContent) newContent = newContent.trimEnd(); // Ensure no trailing empty lines
+        if (newContent) newContent = newContent.trimEnd();
         const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
         const fullPath = resolve(workspace, path);
 
@@ -1166,8 +1163,6 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             error: 'Access denied: path is outside workspace'
           };
         }
-
-        captureFileSnapshot(path);
 
         await mkdir(dirname(fullPath), { recursive: true });
 

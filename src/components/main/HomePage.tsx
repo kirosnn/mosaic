@@ -25,6 +25,7 @@ const TIPS = [
 ];
 
 export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePageProps) {
+  const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [currentTipIndex, setCurrentTipIndex] = useState(0);
   const [displayedText, setDisplayedText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -36,6 +37,16 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
       setCursorVisible((v) => !v);
     }, 500);
     return () => clearInterval(cursorInterval);
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setTerminalWidth(process.stdout.columns || 80);
+    };
+    process.stdout.on('resize', handleResize);
+    return () => {
+      process.stdout.off('resize', handleResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -75,6 +86,9 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
     }
   }, [displayedText, isDeleting, isWaiting, currentTipIndex]);
 
+  const containerWidth = Math.min(80, Math.floor(terminalWidth * 0.8));
+  const inputWidth = Math.max(10, containerWidth - 4);
+
   return (
     <box flexDirection="column" width="100%" height="100%" justifyContent="center" alignItems="center">
       <box flexDirection="column" alignItems="center" marginBottom={2}>
@@ -97,6 +111,7 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
             placeholder="Ask anything..."
             focused={!shortcutsOpen}
             pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+            maxWidth={inputWidth}
           />
         </box>
       </box>

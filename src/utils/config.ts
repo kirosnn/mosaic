@@ -38,6 +38,8 @@ export interface MosaicConfig {
   model?: string;
   apiKey?: string;
   systemPrompt?: string;
+  maxSteps?: number;
+  maxContextTokens?: number;
   customProviders?: CustomProvider[];
   customModels?: { [providerId: string]: AIModel[] };
   requireApprovals?: boolean;

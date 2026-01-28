@@ -9,9 +9,10 @@ interface ApprovalPanelProps {
   request: ApprovalRequest;
   disabled?: boolean;
   onRespond: (approved: boolean, customResponse?: string) => void;
+  maxWidth?: number;
 }
 
-export function ApprovalPanel({ request, disabled = false, onRespond }: ApprovalPanelProps) {
+export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }: ApprovalPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const allOptions = ['Yes', 'No'];
@@ -127,7 +128,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
       </box>
 
       <box flexDirection="row" paddingLeft={1} >
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="> Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} />
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="> Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} maxWidth={maxWidth} />
       </box>
     </box>
   );

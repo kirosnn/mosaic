@@ -124,6 +124,7 @@ export interface ProviderConfig {
   systemPrompt: string;
   tools?: Record<string, CoreTool>;
   maxSteps?: number;
+  maxContextTokens?: number;
 }
 
 export interface AgentConfig {

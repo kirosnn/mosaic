@@ -37,6 +37,68 @@ type LogEntry = { message: string; timestamp: string };
 
 const logs: LogEntry[] = [];
 const listeners: Set<() => void> = new Set();
+const MAX_HISTORY_MESSAGES = 24;
+const PROVIDER_CONCURRENCY = 1;
+const PROVIDER_QUEUE_TIMEOUT_MS = 30000;
+
+type ReleaseFn = () => void;
+
+type QueueItem = {
+    resolve: (release: ReleaseFn) => void;
+    cancelled: boolean;
+};
+
+type QueueEntry = {
+    inflight: number;
+    queue: QueueItem[];
+};
+
+const providerQueues = new Map<string, QueueEntry>();
+
+function createRelease(entry: QueueEntry): ReleaseFn {
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        entry.inflight = Math.max(0, entry.inflight - 1);
+        while (entry.queue.length > 0) {
+            const next = entry.queue.shift();
+            if (!next || next.cancelled) continue;
+            entry.inflight += 1;
+            next.resolve(createRelease(entry));
+            break;
+        }
+    };
+}
+
+function acquireProviderSlot(key: string, limit = PROVIDER_CONCURRENCY): { promise: Promise<ReleaseFn>; cancel: () => void } {
+    let entry = providerQueues.get(key);
+    if (!entry) {
+        entry = { inflight: 0, queue: [] };
+        providerQueues.set(key, entry);
+    }
+
+    if (entry.inflight < limit) {
+        entry.inflight += 1;
+        return {
+            promise: Promise.resolve(createRelease(entry)),
+            cancel: () => { }
+        };
+    }
+
+    let item: QueueItem | null = null;
+    const promise = new Promise<ReleaseFn>((resolve) => {
+        item = { resolve, cancelled: false };
+        entry!.queue.push(item);
+    });
+
+    return {
+        promise,
+        cancel: () => {
+            if (item) item.cancelled = true;
+        }
+    };
+}
 
 function addLog(message: string) {
     const timestamp = new Date().toLocaleTimeString();
@@ -128,9 +190,9 @@ function buildConversationHistory(
     history: Array<{ role: string; content: string; images?: ImageAttachment[] }>,
     allowImages: boolean
 ) {
-    return history
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => {
+    const filtered = history.filter((m) => m.role === "user" || m.role === "assistant");
+    const sliced = filtered.slice(-MAX_HISTORY_MESSAGES);
+    return sliced.map((m) => {
             if (m.role === "user") {
                 const content = allowImages ? buildUserContent(m.content, m.images) : m.content;
                 return { role: "user" as const, content };
@@ -542,6 +604,28 @@ async function startServer(port: number, maxRetries = 10) {
 
                         addLog("Message received");
 
+                        const { readConfig } = await import("../utils/config");
+                        const config = readConfig();
+                        const providerKey = `${config.provider ?? "unknown"}:${config.model ?? "unknown"}`;
+                        const { promise, cancel } = acquireProviderSlot(providerKey, PROVIDER_CONCURRENCY);
+                        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+                        const release = await Promise.race([
+                            promise,
+                            new Promise<ReleaseFn | null>((resolve) => {
+                                timeoutId = setTimeout(() => resolve(null), PROVIDER_QUEUE_TIMEOUT_MS);
+                            })
+                        ]);
+                        if (timeoutId) clearTimeout(timeoutId);
+
+                        if (!release) {
+                            cancel();
+                            return new Response(JSON.stringify({ error: "Rate limit: too many concurrent requests. Try again shortly." }), {
+                                status: 429,
+                                headers: { "Content-Type": "application/json" },
+                            });
+                        }
+                        const releaseSlot = release;
+
                         currentAbortController = new AbortController();
                         const abortSignal = currentAbortController.signal;
 
@@ -550,10 +634,15 @@ async function startServer(port: number, maxRetries = 10) {
                             async start(controller) {
                                 let keepAlive: ReturnType<typeof setInterval> | null = null;
                                 let aborted = false;
+                                let released = false;
 
                                 const cleanup = () => {
                                     if (keepAlive) clearInterval(keepAlive);
                                     currentAbortController = null;
+                                    if (!released) {
+                                        released = true;
+                                        releaseSlot();
+                                    }
                                 };
 
                                 const safeEnqueue = (text: string) => {
@@ -621,8 +710,6 @@ async function startServer(port: number, maxRetries = 10) {
                                     const agent = new Agent();
                                     let allowImages = false;
                                     try {
-                                        const { readConfig } = await import("../utils/config");
-                                        const config = readConfig();
                                         if (config.model) {
                                             const { findModelsDevModelById, modelAcceptsImages } = await import("../utils/models");
                                             const result = await findModelsDevModelById(config.model);

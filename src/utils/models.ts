@@ -290,6 +290,28 @@ export async function searchModelsDev(query: ModelsDevSearchQuery, options: { re
     return modelsDev.search(query, options);
 }
 
+export async function getModelsDevContextLimit(
+    providerId: string,
+    modelId: string,
+    options: { refresh?: boolean } = {}
+): Promise<number | null> {
+    try {
+        const direct = await getModelsDevModel(providerId, modelId, options);
+        const limit = direct?.limit?.context;
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+    } catch {
+    }
+
+    try {
+        const byId = await findModelsDevModelById(modelId, options);
+        const limit = byId?.model?.limit?.context;
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+    } catch {
+    }
+
+    return null;
+}
+
 export function modelAcceptsImages(model: ModelsDevModel): boolean {
     if (!model.modalities) return false;
     const { input } = model.modalities;

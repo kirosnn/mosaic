@@ -153,6 +153,7 @@ When NOT to ask:
 # Error Handling
 
 - If a tool fails, analyze the error and retry with adjusted parameters
+- If a rate limit error occurs, wait with backoff before retrying and avoid immediate reattempts
 - Announce the error to the user and explain your retry strategy
 - Try 2-3 different approaches before giving up
 - Only ask the user for help after multiple failed attempts

@@ -10,10 +10,7 @@ import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
 import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
-import { subscribeUndoRedo } from "../utils/undoRedoBridge";
 import { setExploreAbortController, setExploreToolCallback, abortExplore } from "../utils/exploreBridge";
-import { initializeSession, saveState } from "../utils/undoRedo";
-import { resetFileChanges } from "../utils/fileChangeTracker";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
 import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
@@ -79,7 +76,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     initializeCommands();
-    initializeSession();
   }, []);
 
   useEffect(() => {
@@ -137,15 +133,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     return () => {
       setExploreToolCallback(null);
     };
-  }, []);
-
-  useEffect(() => {
-    return subscribeUndoRedo((state, action) => {
-      if (state) {
-        setMessages(state.messages);
-        resetFileChanges();
-      }
-    });
   }, []);
 
   useEffect(() => {
@@ -366,8 +353,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (result) {
         if (result.shouldAddToHistory === true) {
           addInputToHistory(value.trim());
-
-          saveState(messages);
 
           const userMessage: Message = {
             id: createId(),
@@ -807,8 +792,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       : value;
 
     addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : (hasImages ? '[Image]' : value)));
-
-    saveState(messages);
 
     const imagesForMessage = imagesSupported ? pendingImages : [];
 

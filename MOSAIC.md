@@ -1,188 +1,353 @@
-# MOSAIC.md - Mosaic CLI Context File
-
-This file provides contextual information about the Mosaic CLI project to help AI agents understand the codebase structure, patterns, and conventions.
+# Mosaic CLI - Project Context
 
 ## Project Overview
 
-**Mosaic CLI** is an open-source AI-powered coding agent built with Bun and React. It provides a terminal-based interface using OpenTUI to render React components directly in the terminal, offering seamless interaction with AI coding assistants.
+Mosaic is an open-source, AI-powered coding agent for the terminal that combines a React-based TUI with a tool-driven agent architecture. It provides both terminal and web interfaces for software development tasks, enabling developers to interact with their codebase through natural language commands.
 
 **Key Features:**
-- Multi-provider AI support (OpenAI, Anthropic, Google, Mistral, XAI, Ollama)
-- Terminal-first UI with React components rendered via OpenTUI
-- Web interface option on http://127.0.0.1:8192
-- Built-in tools for file operations, code search, and terminal commands
-- Slash commands for quick operations
-- Workspace context via MOSAIC.md files
+- Multi-provider AI support (OpenAI, Anthropic, Google, Mistral, xAI, Ollama)
+- Tool-driven agent architecture with 12+ tools
+- React-based TUI using OpenTUI framework
+- Web interface option for browser-based usage
+- Project context management via MOSAIC.md files
+- Safety features including user approvals and workspace validation
 
 ## Architecture
 
-### Core Architecture Patterns
+### Core Architecture Pattern
+Mosaic follows a modular, layered architecture with clear separation of concerns:
 
-1. **Modular Design**: The codebase is organized into clear modules:
-   - `src/agent/` - AI agent core logic and tools
-   - `src/components/` - React UI components
-   - `src/utils/` - Utility functions and helpers
-   - `src/web/` - Web interface components
+```
+CLI Layer → Agent Layer → UI Layer → Utility Layer
+```
 
-2. **Tool-Based System**: The AI agent uses a tool-based approach where each capability is implemented as a separate tool (read, write, edit, bash, grep, etc.)
+### Key Architectural Components
 
-3. **Provider Abstraction**: AI providers are abstracted behind a common interface, allowing easy switching between different AI models
+#### 1. CLI Layer (`src/index.tsx`)
+- Entry point for terminal usage
+- Argument parsing and routing
+- Command-line interface management
 
-4. **Event-Driven UI**: The terminal interface uses React with OpenTUI for rendering, creating a responsive terminal experience
+#### 2. Agent Layer (`src/agent/`)
+- **Agent Core**: Main agent class with message handling (`Agent.ts`)
+- **Providers**: AI provider implementations (OpenAI, Anthropic, Google, etc.)
+- **Tools System**: 12+ tools for file operations, search, and execution
+- **Prompts**: System prompts defining agent behavior and capabilities
 
-### Key Design Decisions
+#### 3. UI Layer (`src/components/`, `src/web/`)
+- **Terminal UI**: React components using OpenTUI framework
+- **Web Interface**: Web server and browser-based UI
+- **Modals & Dialogs**: User interaction components
 
-- **Bun Runtime**: Uses Bun for fast execution and modern JavaScript features
-- **TypeScript**: Entire codebase is written in TypeScript for type safety
-- **Functional Components**: React components use functional style with hooks
-- **Tool Registry**: Tools are registered and managed through a central registry system
-- **Context Management**: MOSAIC.md files provide project-specific context to AI agents
+#### 4. Utility Layer (`src/utils/`)
+- Configuration management
+- User approval system
+- File change tracking
+- Exploration bridges
+- Diff generation
+
+### Design Decisions
+
+1. **Tool-Driven Architecture**: All operations are performed through a well-defined tool registry, ensuring consistency and safety
+2. **Multi-Provider Support**: Abstracted AI provider interface allows easy addition of new providers
+3. **Dual Interface**: Single codebase supports both terminal and web interfaces
+4. **Safety First**: User approvals for destructive operations, workspace validation, and rate limiting
+5. **Context Management**: MOSAIC.md files provide project-specific context for better AI understanding
 
 ## Development Guidelines
 
 ### Coding Standards
 
-- **TypeScript**: All code must be TypeScript with strict type checking
-- **React Functional Components**: Use functional components with hooks
-- **File Organization**: Group related files in subdirectories (e.g., agent tools, web components)
-- **Error Handling**: Comprehensive error handling with user-friendly messages
-- **Async/Await**: Use async/await for asynchronous operations
+- **Language**: TypeScript (strict mode)
+- **Framework**: React for UI components
+- **Runtime**: Bun (required for development)
+- **Code Style**: Follow existing patterns in the codebase
 
 ### Naming Conventions
 
-- **Files**: PascalCase for components (App.tsx), camelCase for utilities (config.ts)
-- **Variables**: camelCase for variables and functions
-- **Constants**: UPPER_CASE for constants
-- **Types/Interfaces**: PascalCase for type names
-- **Components**: PascalCase component names (e.g., `<App />`)
+- **Files**: `camelCase.ts` for most files, `PascalCase.tsx` for React components
+- **Functions**: `camelCase()` for regular functions, `PascalCase()` for React components
+- **Variables**: `camelCase` for variables and constants
+- **Types/Interfaces**: `PascalCase` for type definitions
+- **Tools**: Lowercase tool names (`read`, `write`, `edit`, etc.)
 
 ### Best Practices
 
-- **Tool Development**: New tools should follow the existing pattern in `src/agent/tools/`
-- **Provider Integration**: New AI providers should implement the standard interface
-- **Error Filtering**: Filter out common React/terminal errors in stderr/stdout
-- **Configuration**: Use the config system for persistent settings
-- **Undo/Redo**: Implement undo/redo functionality for file operations
+1. **Tool Usage**: Always use the appropriate tool for the task
+2. **File Operations**: Read files before modifying them
+3. **User Approval**: Request approval for destructive operations
+4. **Error Handling**: Implement robust error handling and recovery
+5. **Documentation**: Keep system prompts and MOSAIC.md files updated
+
+### Common Patterns
+
+```typescript
+// Tool definition pattern
+const toolName = {
+  name: 'toolName',
+  description: 'What the tool does',
+  parameters: { /* parameter schema */ },
+  execute: async (params) => { /* implementation */ }
+}
+
+// Agent interaction pattern
+const result = await agent.executeTool('toolName', { param: value })
+
+// User approval pattern
+const approved = await requestUserApproval('action description')
+if (!approved) return
+```
 
 ## Key Files & Directories
 
-### Root Files
+### Root Directory Structure
 
-- `package.json` - Project configuration and dependencies
-- `tsconfig.json` - TypeScript configuration
-- `README.md` - User documentation
-- `MOSAIC.md` - This context file for AI agents
+```
+.
+├── bin/                  # CLI entry point
+├── docs/                 # Documentation assets
+├── src/                  # Main source code
+│   ├── agent/            # Core AI agent functionality
+│   ├── components/       # React TUI components
+│   ├── utils/            # Utility functions
+│   ├── web/              # Web interface
+│   └── index.tsx         # CLI entry point
+├── package.json          # Project configuration
+├── README.md             # User documentation
+├── tsconfig.json         # TypeScript configuration
+└── MOSAIC.md             # Project context (this file)
+```
 
-### Source Structure
+### Critical Files
 
-#### `src/`
-- **index.tsx** - Main entry point and CLI parser
-- **components/` - React UI components for terminal interface
-- **agent/` - AI agent core functionality
-- **utils/` - Utility functions and helpers
-- **web/` - Web interface components and server
+#### Entry Points
+- `src/index.tsx` - CLI entry point with argument parsing
+- `src/web/server.tsx` - Web server entry point
 
-#### `src/agent/`
-- **Agent.ts** - Main agent class
-- **context.ts** - Context management
-- **types.ts** - Type definitions
-- **prompts/` - Prompt templates
-- **provider/` - AI provider implementations
-- **tools/` - Tool implementations (file operations, bash, etc.)
+#### Agent Core
+- `src/agent/Agent.ts` - Main agent class
+- `src/agent/types.ts` - Type definitions
+- `src/agent/context.ts` - Context management
+- `src/agent/index.ts` - Agent exports
 
-#### `src/components/`
-- **App.tsx** - Main application component
-- **Main.tsx** - Main UI container
-- **CustomInput.tsx** - Custom input component
-- **main/` - Main page components (ChatPage, HomePage, etc.)
+#### Tools System
+- `src/agent/tools/definitions.ts` - Tool registry
+- `src/agent/tools/executor.ts` - Tool execution engine
+- `src/agent/tools/explore.ts` - Exploration tool
+- `src/agent/tools/exploreExecutor.ts` - Exploration execution
+- Individual tool files: `bash.ts`, `read.ts`, `write.ts`, `edit.ts`, `list.ts`, `glob.ts`, `grep.ts`, `question.ts`, `fetch.ts`, `plan.ts`
 
-#### `src/utils/`
-- **config.ts** - Configuration management
-- **history.ts** - Chat history
-- **undoRedo.ts** - Undo/redo functionality
-- **commands/` - Slash command implementations
+#### Providers
+- `src/agent/provider/` - AI provider implementations
+  - `anthropic.ts`, `google.ts`, `mistral.ts`, `ollama.ts`, `openai.ts`, `xai.ts`
+  - `rateLimit.ts` - Rate limiting logic
+  - `reasoning.ts` - Reasoning capabilities
 
-#### `src/web/`
-- **app.tsx** - Web application entry point
-- **server.tsx** - Web server implementation
-- **components/` - Web UI components
-- **assets/` - Static assets (CSS, fonts, images)
+#### Prompts
+- `src/agent/prompts/systemPrompt.ts` - Main system prompt
+- `src/agent/prompts/toolsPrompt.ts` - Tools documentation
+
+#### Components
+- `src/components/App.tsx` - Main application component
+- `src/components/Main.tsx` - Main interface
+- `src/components/Setup.tsx` - Setup interface
+- `src/components/Welcome.tsx` - Welcome screen
+
+#### Utilities
+- `src/utils/config.ts` - Configuration management
+- `src/utils/approvalBridge.ts` - User approval system
+- `src/utils/diff.ts` - Diff generation
+- `src/utils/fileChangeTracker.ts` - File change tracking
+- `src/utils/exploreBridge.ts` - Exploration communication
 
 ## Common Tasks
 
+### Starting the CLI
+
+```bash
+# From source
+bun run src/index.tsx
+
+# Using npx
+npx mosaic-cli
+
+# With arguments
+bun run src/index.tsx --help
+```
+
+### Starting the Web Interface
+
+```bash
+# Start web server
+bun run src/web/server.tsx
+
+# Access at http://localhost:3000
+```
+
 ### Adding a New Tool
 
-1. Create a new file in `src/agent/tools/` following the existing pattern
-2. Implement the tool function with proper TypeScript types
-3. Register the tool in the tool registry
-4. Add appropriate error handling and validation
+1. Create new tool file in `src/agent/tools/`
+2. Define tool schema and execution logic
+3. Register tool in `src/agent/tools/definitions.ts`
+4. Update `src/agent/prompts/toolsPrompt.ts` with documentation
+5. Test tool functionality
 
 ### Adding a New AI Provider
 
-1. Create a new provider file in `src/agent/provider/`
-2. Implement the standard provider interface
-3. Add provider-specific configuration options
-4. Update the provider selection logic
+1. Create provider file in `src/agent/provider/`
+2. Implement provider interface methods
+3. Register provider in agent configuration
+4. Update documentation
 
-### Creating a New Slash Command
-
-1. Create a new command file in `src/utils/commands/`
-2. Implement the command handler function
-3. Register the command in the command registry
-4. Add command documentation
-
-### Building the Web Interface
-
-1. Develop components in `src/web/components/`
-2. Add styles in `src/web/assets/css/`
-3. Update the web app entry point in `src/web/app.tsx`
-4. Ensure the server handles new routes in `src/web/server.tsx`
-
-### Running the Project
+### Running Tests
 
 ```bash
-# Development mode with auto-reload
-bun run dev
+# Check for test files
+bun test
 
-# Production mode
-bun run start
-
-# Web interface
-mosaic web
+# Run specific tests
+bun test src/agent/tools/*.test.ts
 ```
 
-### Testing Tools
+### Building the Project
 
-The project includes various tools that can be tested:
-- File operations (read, write, edit)
-- Directory listing and filtering
-- Code search with grep
-- Terminal command execution
-- User interaction via questions
+```bash
+# Build for production
+bun build
 
-## Technical Stack
+# Build with specific target
+bun build --target node
+```
 
-- **Runtime**: Bun
+### Updating Documentation
+
+1. Update `README.md` for user-facing documentation
+2. Update `MOSAIC.md` for project context
+3. Update system prompts in `src/agent/prompts/` for agent behavior
+4. Update tool documentation in `src/agent/prompts/toolsPrompt.ts`
+
+## Development Workflow
+
+### Typical Development Cycle
+
+1. **Understand**: Use `explore` tool to understand codebase context
+2. **Plan**: Use `plan` tool to outline development steps
+3. **Implement**: Make code changes using appropriate tools
+4. **Test**: Verify changes work as expected
+5. **Document**: Update MOSAIC.md and other documentation
+
+### Best Practices for Changes
+
+- Always read files before modifying them
+- Use targeted edits rather than full rewrites when possible
+- Request user approval for destructive operations
+- Update MOSAIC.md when adding new features or patterns
+- Keep system prompts updated with new capabilities
+
+## Technologies Used
+
+### Core Stack
+- **Runtime**: Bun (required)
 - **Language**: TypeScript
 - **UI Framework**: React with OpenTUI
-- **AI Integration**: Vercel AI SDK
-- **Database**: Better SQLite 3
-- **Build System**: Bun
+- **AI SDK**: Vercel AI SDK
 
-## AI Provider Support
+### Key Dependencies
+- `@ai-sdk/*`: AI provider SDKs
+- `@opentui/core`, `@opentui/react`: Terminal UI
+- `better-sqlite3`: Database
+- `linkedom`: HTML parsing
+- `react-markdown`: Markdown rendering
+- `turndown`: HTML to Markdown conversion
+- `zod`: Schema validation
+- `react-syntax-highlighter`: Code syntax highlighting
 
-Mosaic supports multiple AI providers:
+### AI Providers Supported
 - OpenAI (GPT models)
 - Anthropic (Claude models)
 - Google (Gemini models)
 - Mistral (Mistral/Mixtral models)
-- XAI (Grok models)
-- Ollama (local/cloud models)
+- xAI (Grok)
+- Ollama (local models)
 
-## Important Notes
+## Configuration
 
-- The project uses a custom error filtering system to suppress common React/terminal errors
-- Configuration is stored in `~/.mosaic/` directory
-- MOSAIC.md files are automatically created/updated in project directories
-- The system includes comprehensive undo/redo functionality for file operations
-- Web interface runs on port 8192 by default
+### Configuration Files
+- Global: `~/.mosaic/mosaic.jsonc`
+- Project: `.mosaic/` directory
+- Context: `MOSAIC.md` files
+
+### Configuration Management
+- Use `src/utils/config.ts` for configuration operations
+- Configuration is automatically loaded and validated
+- Supports JSONC format for comments
+
+## Safety Features
+
+### Workspace Validation
+- Prevents path traversal attacks
+- Validates all file operations
+- Restricts operations to workspace directory
+
+### User Approval System
+- Requires approval for destructive operations
+- Uses `src/utils/approvalBridge.ts`
+- Clear user prompts for critical actions
+
+### Rate Limiting
+- Implemented in `src/agent/provider/rateLimit.ts`
+- Prevents API abuse
+- Configurable limits per provider
+
+### Error Handling
+- Comprehensive error handling throughout
+- Graceful degradation on failures
+- User-friendly error messages
+
+## Project Context Management
+
+### MOSAIC.md Files
+- Provide project-specific context for AI agents
+- Help agents understand codebase structure and conventions
+- Should be updated when new features or patterns are added
+- Located in project root or relevant subdirectories
+
+### System Prompts
+- Define agent behavior and capabilities
+- Located in `src/agent/prompts/`
+- Should be updated when new tools or features are added
+- Serve as both documentation and runtime configuration
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Bun not installed**: Install Bun runtime
+2. **Missing dependencies**: Run `bun install`
+3. **Configuration errors**: Check `~/.mosaic/mosaic.jsonc`
+4. **Tool failures**: Check tool parameters and permissions
+5. **AI provider issues**: Check API keys and rate limits
+
+### Debugging Tips
+
+- Use `bun run src/index.tsx --debug` for debug mode
+- Check logs in `~/.mosaic/logs/`
+- Use `explore` tool to understand codebase context
+- Review system prompts for expected behavior
+
+## Future Enhancements
+
+### Potential Improvements
+- Additional AI provider support
+- Enhanced tool capabilities
+- Improved error recovery
+- Better performance optimization
+- Additional safety features
+- Expanded documentation
+
+### Contribution Guidelines
+- Follow existing code patterns
+- Update MOSAIC.md with new features
+- Add tests for new functionality
+- Update system prompts as needed
+- Document new tools and capabilities

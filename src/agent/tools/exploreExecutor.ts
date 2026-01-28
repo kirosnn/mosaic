@@ -36,7 +36,7 @@ IMPORTANT RULES:
 5. Summarize findings clearly and include relevant file paths and code snippets
 6. You MUST call the "done" tool when finished - this is the only way to complete the exploration`;
 
-const MAX_STEPS = 50;
+const MAX_STEPS = 100;
 
 interface ExploreResult {
   success: boolean;

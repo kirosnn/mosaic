@@ -8,9 +8,10 @@ interface QuestionPanelProps {
   request: QuestionRequest;
   disabled?: boolean;
   onAnswer: (index: number, customText?: string) => void;
+  maxWidth?: number;
 }
 
-export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionPanelProps) {
+export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }: QuestionPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useEffect(() => {
@@ -78,7 +79,7 @@ export function QuestionPanel({ request, disabled = false, onAnswer }: QuestionP
       </box>
 
       <box flexDirection="row">
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} disableHistory={true} />
+        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} disableHistory={true} maxWidth={maxWidth} />
       </box>
     </box>
   );

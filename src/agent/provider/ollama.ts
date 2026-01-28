@@ -5,6 +5,7 @@ import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../ty
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { z } from 'zod';
 import { shouldEnableReasoning } from './reasoning';
+import { getErrorSignature, getRetryDecision } from './rateLimit';
 
 let serveStartPromise: Promise<void> | null = null;
 const pullPromises = new Map<string, Promise<void>>();
@@ -12,6 +13,8 @@ const pullPromises = new Map<string, Promise<void>>();
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function isTransientError(error: unknown): boolean {
+  const decision = getRetryDecision(error);
+  if (decision.shouldRetry) return true;
   const msg = error instanceof Error ? error.message : String(error);
   return (
     msg.includes('ECONNREFUSED') ||
@@ -24,13 +27,27 @@ function isTransientError(error: unknown): boolean {
 
 async function retry<T>(fn: () => Promise<T>, retries: number, baseDelayMs: number): Promise<T> {
   let lastError: unknown;
+  let lastSignature: string | null = null;
+  let sameSignatureCount = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
     } catch (e) {
       lastError = e;
       if (attempt >= retries || !isTransientError(e)) throw e;
-      await sleep(baseDelayMs * Math.max(1, attempt + 1));
+      const signature = getErrorSignature(e);
+      if (signature === lastSignature) {
+        sameSignatureCount += 1;
+      } else {
+        lastSignature = signature;
+        sameSignatureCount = 0;
+      }
+      if (sameSignatureCount >= 1) {
+        throw e;
+      }
+      const decision = getRetryDecision(e);
+      const delay = decision.retryAfterMs ?? (baseDelayMs * Math.max(1, attempt + 1));
+      await sleep(delay);
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Request failed');
@@ -413,7 +430,7 @@ export class OllamaProvider implements Provider {
     }
 
     const toolsSchema = toOllamaTools(config.tools);
-    const maxSteps = config.maxSteps || 10;
+    const maxSteps = config.maxSteps || 100;
 
     const baseMessages = config.systemPrompt
       ? [{ role: 'system' as const, content: config.systemPrompt }, ...messages]
