@@ -109,10 +109,18 @@ USE glob/grep for TARGETED searches:
 
 CRITICAL: NEVER modify code you haven't read. Always use read before edit/write.
 
-## 2. PLAN (for multi-step tasks)
+## 2. PLAN (Default for non-trivial tasks)
 
-Use the plan tool to outline steps and track progress.
-Always update the plan after each step.
+Use the plan tool for any task that isn't a single obvious step.
+Default to planning when there are 2+ actions, file changes, or when success criteria are unclear.
+Keep plans short (3-6 steps), and make steps outcome-focused.
+Always update the plan after each step:
+- Exactly one step can be "in_progress" at a time
+- Mark a step "completed" before starting the next
+- Keep remaining steps "pending" until started
+Never mark multiple future steps as completed in a single update. Progress must be shown step-by-step as work happens.
+Skip the plan tool only for truly trivial, single-action tasks.
+Never output a plan as plain text, JSON, or tags. The only valid way to create or update a plan is the plan tool call.
 
 ## 3. EXECUTE
 

@@ -17,6 +17,125 @@ import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 
+type CodeToken = { text: string; color: string };
+
+const CODE_THEME = {
+  text: "#d4d4d4",
+  keyword: "#569cd6",
+  string: "#ce9178",
+  number: "#b5cea8",
+  comment: "#6a9955",
+  type: "#4ec9b0",
+  builtin: "#9cdcfe",
+  function: "#dcdcaa",
+  header: "#d7ba7d",
+};
+
+const JS_KEYWORDS = new Set([
+  "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
+  "do", "else", "export", "extends", "finally", "for", "function", "if", "import", "in",
+  "instanceof", "let", "new", "return", "super", "switch", "this", "throw", "try", "typeof",
+  "var", "void", "while", "with", "yield", "await", "async", "of", "as"
+]);
+
+const JS_TYPES = new Set([
+  "string", "number", "boolean", "any", "unknown", "never", "void", "object", "symbol",
+  "bigint", "null", "undefined", "Array", "Record", "Map", "Set", "Promise"
+]);
+
+const JS_BUILTINS = new Set([
+  "console", "Math", "JSON", "Date", "Intl", "Number", "String", "Boolean", "Object",
+  "Array", "Set", "Map", "WeakMap", "WeakSet", "RegExp", "Error", "Promise", "Reflect",
+  "Proxy", "Symbol", "BigInt", "URL", "URLSearchParams"
+]);
+
+function isIdentifierStart(char: string) {
+  return /[A-Za-z_$]/.test(char);
+}
+
+function isIdentifierChar(char: string) {
+  return /[A-Za-z0-9_$]/.test(char);
+}
+
+function tokenizeCodeLine(line: string, language?: string): CodeToken[] {
+  if (!line) return [{ text: "", color: CODE_THEME.text }];
+  const lang = (language || "").toLowerCase();
+  const isJs = lang === "js" || lang === "jsx" || lang === "ts" || lang === "tsx";
+  if (!isJs) return [{ text: line, color: CODE_THEME.text }];
+
+  const tokens: CodeToken[] = [];
+  let i = 0;
+
+  const push = (text: string, color: string) => {
+    if (text.length === 0) return;
+    tokens.push({ text, color });
+  };
+
+  while (i < line.length) {
+    const ch = line[i]!;
+
+    if (ch === "/" && line[i + 1] === "/") {
+      push(line.slice(i), CODE_THEME.comment);
+      break;
+    }
+
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const quote = ch;
+      let j = i + 1;
+      while (j < line.length) {
+        const c = line[j]!;
+        if (c === "\\" && j + 1 < line.length) {
+          j += 2;
+          continue;
+        }
+        if (c === quote) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      push(line.slice(i, j), CODE_THEME.string);
+      i = j;
+      continue;
+    }
+
+    if (/\d/.test(ch)) {
+      let j = i + 1;
+      while (j < line.length && /[\d._xXa-fA-F]/.test(line[j]!)) {
+        j += 1;
+      }
+      push(line.slice(i, j), CODE_THEME.number);
+      i = j;
+      continue;
+    }
+
+    if (isIdentifierStart(ch)) {
+      let j = i + 1;
+      while (j < line.length && isIdentifierChar(line[j]!)) {
+        j += 1;
+      }
+      const word = line.slice(i, j);
+      let color = CODE_THEME.text;
+      if (JS_KEYWORDS.has(word)) color = CODE_THEME.keyword;
+      else if (JS_TYPES.has(word)) color = CODE_THEME.type;
+      else if (JS_BUILTINS.has(word)) color = CODE_THEME.builtin;
+      else {
+        let k = j;
+        while (k < line.length && line[k] === " ") k += 1;
+        if (line[k] === "(") color = CODE_THEME.function;
+      }
+      push(word, color);
+      i = j;
+      continue;
+    }
+
+    push(ch, CODE_THEME.text);
+    i += 1;
+  }
+
+  return tokens.length > 0 ? tokens : [{ text: line, color: CODE_THEME.text }];
+}
+
 function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number) {
   if (paragraphIndex === 0) {
     if (wrappedLineIndex === 0) {
@@ -202,6 +321,10 @@ export function ChatPage({
     isRunning?: boolean;
     runningStartTime?: number;
     isThinking?: boolean;
+    isCodeBlock?: boolean;
+    isCodeHeader?: boolean;
+    codeLanguage?: string;
+    codeTokens?: CodeToken[];
   }
 
   const allItems: RenderItem[] = [];
@@ -274,6 +397,40 @@ export function ChatPage({
 
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         const block = blocks[blockIndex]!;
+        if (block.type === 'code' && block.codeLines) {
+          const langLabel = (block.language || 'code').trim();
+          allItems.push({
+            key: `${messageKey}-code-${blockIndex}-header`,
+            type: 'line',
+            content: `${langLabel}`,
+            role: messageRole,
+            toolName: message.toolName,
+            isFirst: isFirstContent,
+            isCodeBlock: true,
+            isCodeHeader: true,
+            codeLanguage: block.language,
+            visualLines: 1
+          });
+          for (let j = 0; j < block.codeLines.length; j++) {
+            allItems.push({
+              key: `${messageKey}-code-${blockIndex}-${j}`,
+              type: 'line',
+              content: block.codeLines[j] || '',
+              role: messageRole,
+              toolName: message.toolName,
+              isFirst: isFirstContent && j === 0,
+              isCodeBlock: true,
+              codeLanguage: block.language,
+              codeTokens: tokenizeCodeLine(block.codeLines[j] || '', block.language),
+              visualLines: 1
+            });
+          }
+          if (block.codeLines.some(line => line.trim().length > 0)) {
+            isFirstContent = false;
+          }
+          continue;
+        }
+
         if (block.type !== 'line' || !block.wrappedLines) continue;
 
         for (let j = 0; j < block.wrappedLines.length; j++) {
@@ -553,9 +710,15 @@ export function ChatPage({
           if (item.type === 'blend') {
             if (item.blendDuration && item.blendDuration > 60000) {
               const timeStr = formatElapsedTime(item.blendDuration, false);
+              const label = `${item.blendWord} for ${timeStr}`;
+              const innerWidth = Math.max(10, terminalWidth - 2);
+              const leftSegment = `─ `;
+              const rightCount = Math.max(0, innerWidth - (leftSegment.length + label.length + 1));
               return (
-                <box key={item.key} flexDirection="row" width="100%" paddingLeft={1} marginBottom={1}>
-                  <text attributes={TextAttributes.DIM}>⁘ {item.blendWord} for {timeStr}</text>
+                <box key={item.key} flexDirection="row" width="100%" marginBottom={1}>
+                  <text attributes={TextAttributes.DIM}>{leftSegment}</text>
+                  <text attributes={TextAttributes.DIM}>{label} </text>
+                  <text attributes={TextAttributes.DIM}>{'─'.repeat(rightCount)}</text>
                 </box>
               );
             }
@@ -571,7 +734,10 @@ export function ChatPage({
 
           const diffBackground = getDiffLineBackground(item.content || '');
 
-          const runningBackground = isRunningTool ? "#2a2a2a" : (diffBackground || (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"));
+          const codeBackground = item.isCodeBlock ? "#1e1e1e" : null;
+          const runningBackground = isRunningTool
+            ? "#2a2a2a"
+            : (codeBackground || diffBackground || (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"));
 
           return (
             <box
@@ -598,6 +764,20 @@ export function ChatPage({
               )}
               {item.isThinking ? (
                 <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
+              ) : item.isCodeBlock ? (
+                item.isCodeHeader ? (
+                  <text fg={CODE_THEME.header} attributes={TextAttributes.DIM}>{item.content || ' '}</text>
+                ) : (
+                  (item.codeTokens && item.codeTokens.length > 0)
+                    ? (
+                      <>
+                        {item.codeTokens.map((token, tokenIndex) => (
+                          <text key={tokenIndex} fg={token.color}>{token.text}</text>
+                        ))}
+                      </>
+                    )
+                    : <text fg={CODE_THEME.text}>{item.content || ' '}</text>
+                )
               ) : item.role === "tool" ? (
                 isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
                   <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>

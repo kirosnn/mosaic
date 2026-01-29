@@ -6,6 +6,8 @@ import { initCommand } from './init';
 import { webCommand } from './web';
 import { imageCommand } from './image';
 import { approvalsCommand } from './approvals';
+import { newCommand } from './new';
+import { compactCommand } from './compact';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -63,4 +65,6 @@ export function initializeCommands(): void {
   commandRegistry.register(webCommand);
   commandRegistry.register(imageCommand);
   commandRegistry.register(approvalsCommand);
+  commandRegistry.register(newCommand);
+  commandRegistry.register(compactCommand);
 }

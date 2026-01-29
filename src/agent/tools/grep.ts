@@ -22,6 +22,7 @@ const FILE_TYPE_EXTENSIONS: Record<string, string[]> = {
   json: ['.json', '.jsonc'],
   yaml: ['.yaml', '.yml'],
   md: ['.md', '.markdown'],
+  txt: ['.txt'],
   sh: ['.sh', '.bash', '.zsh'],
   sql: ['.sql'],
   vue: ['.vue'],
@@ -43,7 +44,7 @@ Examples:
 - grep(query="handleClick", output_mode="files") - Just list matching files`,
   parameters: z.object({
     query: z.string().describe('Regular expression pattern to search for'),
-    file_type: z.string().optional().describe('File type: ts, js, tsx, jsx, py, java, go, rust, c, cpp, rb, php, json, yaml, md, html, css'),
+    file_type: z.string().optional().describe('File type or extension (e.g. ts, tsx, js, txt, .env). Unknown types are treated as extensions.'),
     pattern: z.string().optional().describe('Glob pattern for files (e.g., "**/*.config.ts"). Usually file_type is easier.'),
     path: z.string().optional().describe('Directory to search (defaults to workspace root)'),
     case_sensitive: z.boolean().optional().describe('Case-sensitive (default: false)'),

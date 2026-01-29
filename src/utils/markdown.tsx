@@ -219,14 +219,65 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 }
 
 export interface WrappedMarkdownBlock {
-  type: 'line';
+  type: 'line' | 'code';
   wrappedLines?: { text: string; segments: MarkdownSegment[] }[];
+  codeLines?: string[];
+  language?: string;
+}
+
+function wrapCodeLine(line: string, maxWidth: number): string[] {
+  if (!line) return [''];
+  if (maxWidth <= 0) return [line];
+  if (line.length <= maxWidth) return [line];
+
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    chunks.push(line.slice(i, i + maxWidth));
+    i += maxWidth;
+  }
+  return chunks;
 }
 
 export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMarkdownBlock[] {
   const lines = text.split('\n');
-  return lines.map((line) => ({
-    type: 'line',
-    wrappedLines: wrapMarkdownText(line, maxWidth)
-  }));
+  const blocks: WrappedMarkdownBlock[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let language: string | undefined;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^```([A-Za-z0-9_-]+)?\s*$/);
+    if (fenceMatch) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        language = fenceMatch[1];
+        codeLines = [];
+      } else {
+        const wrapped = codeLines.flatMap(codeLine => wrapCodeLine(codeLine, maxWidth));
+        blocks.push({ type: 'code', codeLines: wrapped, language });
+        inCodeBlock = false;
+        codeLines = [];
+        language = undefined;
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    blocks.push({
+      type: 'line',
+      wrappedLines: wrapMarkdownText(line, maxWidth)
+    });
+  }
+
+  if (inCodeBlock) {
+    const wrapped = codeLines.flatMap(codeLine => wrapCodeLine(codeLine, maxWidth));
+    blocks.push({ type: 'code', codeLines: wrapped, language });
+  }
+
+  return blocks;
 }

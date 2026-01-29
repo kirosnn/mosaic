@@ -993,22 +993,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           };
         }
 
+        const normalizedFileType = typeof fileType === 'string' ? fileType.trim().toLowerCase() : undefined;
+        const fileTypeParts = normalizedFileType
+          ? normalizedFileType.split(',').map(p => p.trim()).filter(Boolean)
+          : [];
+        const resolvedExtensions = fileTypeParts.length > 0
+          ? Array.from(new Set(fileTypeParts.flatMap((part) => {
+            const mapped = FILE_TYPE_EXTENSIONS[part];
+            if (mapped && mapped.length > 0) return mapped;
+            if (part.startsWith('.')) return [part];
+            return [`.${part}`];
+          })))
+          : undefined;
+
         let finalPattern: string;
         if (pattern) {
           finalPattern = pattern.includes('**') ? pattern : `**/${pattern}`;
-        } else if (fileType) {
-          const extensions = FILE_TYPE_EXTENSIONS[fileType.toLowerCase()];
-          if (!extensions) {
-            return {
-              success: false,
-              error: `Unknown file type: ${fileType}. Available types: ${Object.keys(FILE_TYPE_EXTENSIONS).join(', ')}`
-            };
-          }
-          if (extensions.length === 1) {
-            finalPattern = `**/*${extensions[0]}`;
-          } else {
-            finalPattern = '**/*';
-          }
+        } else if (resolvedExtensions && resolvedExtensions.length === 1) {
+          finalPattern = `**/*${resolvedExtensions[0]}`;
         } else {
           finalPattern = '**/*';
         }
@@ -1019,11 +1021,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           allFiles = allFiles.filter(f => !f.split('/').some(part => part.startsWith('.')));
         }
 
-        if (fileType && !pattern) {
-          const extensions = FILE_TYPE_EXTENSIONS[fileType.toLowerCase()];
-          if (extensions) {
-            allFiles = allFiles.filter(f => extensions.some(ext => f.toLowerCase().endsWith(ext)));
-          }
+        if (resolvedExtensions && !pattern) {
+          allFiles = allFiles.filter(f => resolvedExtensions.some(ext => f.toLowerCase().endsWith(ext)));
         }
 
         if (excludePattern) {

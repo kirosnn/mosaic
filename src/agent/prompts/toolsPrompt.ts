@@ -60,7 +60,7 @@ IMPORTANT: Use "**/" prefix for recursive search:
 ### grep
 Search for text within files.
 - query (string, required): Text to search for
-- file_type (string, optional): ts, tsx, js, jsx, py, java, go, etc.
+- file_type (string, optional): language or extension (ts, tsx, js, txt, .env)
 - pattern (string, optional): Glob pattern for files
 - regex (boolean, optional): Treat query as regex
 - context (number, optional): Lines around matches
@@ -84,8 +84,16 @@ Track progress on multi-step tasks.
   - step (string): Action description
   - status: "pending" | "in_progress" | "completed"
 
-Use plan for tasks with 3+ steps. Update as you progress.
-Always update the plan after each step is completed.
+Use plan for any task that is not a single obvious step. Default to planning when unsure.
+Use plan when there are 2+ actions, file changes, or unclear success criteria.
+Plan rules:
+- Keep plans short (3-6 steps) and outcome-focused
+- Exactly one step can be "in_progress" at a time
+- Mark a step "completed" before starting the next
+- Keep unstarted steps "pending"
+Always update the plan after each step.
+Never output a plan as plain text, JSON, or tags. Use the plan tool call only.
+Never mark multiple future steps as completed in a single update. Show progress incrementally as each step is done.
 
 ## Web Access
 
@@ -210,11 +218,12 @@ NEVER ask questions in plain text. The question tool is MANDATORY.
 
 # Workflow Summary
 
-1. COMMUNICATE: Say what you're about to do
-2. READ: Always read files before modifying
-3. ACT: Use the appropriate tool
-4. VERIFY: Run tests/builds to confirm
-5. REPORT: Summarize what was done`;
+1. PLAN: Use plan unless the task is trivial (single obvious action)
+2. COMMUNICATE: Say what you're about to do
+3. READ: Always read files before modifying
+4. ACT: Use the appropriate tool
+5. VERIFY: Run tests/builds to confirm
+6. REPORT: Summarize what was done`;
 
 export function getToolsPrompt(): string {
   return TOOLS_PROMPT;

@@ -2,6 +2,9 @@ export interface CommandResult {
   success: boolean;
   content: string;
   shouldAddToHistory?: boolean;
+  shouldClearMessages?: boolean;
+  shouldCompactMessages?: boolean;
+  compactMaxTokens?: number;
 }
 
 export interface Command {

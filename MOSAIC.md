@@ -351,3 +351,7 @@ bun build --target node
 - Add tests for new functionality
 - Update system prompts as needed
 - Document new tools and capabilities
+
+## User instructions
+
+Code en anglais, parle moi en français, n'annote/commente pas mon code mais tu peux me parler a moi en français. Et ne mets pas d'emoji dans mon code. Tu dois suivre ces règles durant toutes la conversation.
