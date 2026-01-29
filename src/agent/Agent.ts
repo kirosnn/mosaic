@@ -175,7 +175,18 @@ export class Agent {
     }
 
     const rawSystemPrompt = userConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-    const systemPrompt = processSystemPrompt(rawSystemPrompt, true);
+
+    let mcpToolInfos: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }> | undefined;
+    try {
+      const { getMcpCatalog, isMcpInitialized } = require('../mcp/index');
+      if (isMcpInitialized()) {
+        mcpToolInfos = getMcpCatalog().getMcpToolInfos();
+      }
+    } catch {
+      // MCP not available
+    }
+
+    const systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos);
     const tools = getTools();
 
     this.config = {

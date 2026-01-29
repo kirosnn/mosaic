@@ -27,5 +27,15 @@ export const tools: Record<string, CoreTool> = {
 };
 
 export function getTools(): Record<string, CoreTool> {
+  try {
+    const { getMcpCatalog, isMcpInitialized } = require('../../mcp/index');
+    if (isMcpInitialized()) {
+      const catalog = getMcpCatalog();
+      const mcpTools = catalog.getExposedTools();
+      return { ...tools, ...mcpTools };
+    }
+  } catch {
+    // MCP not available, return internal tools only
+  }
   return tools;
 }

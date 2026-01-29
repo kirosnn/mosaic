@@ -225,6 +225,57 @@ NEVER ask questions in plain text. The question tool is MANDATORY.
 5. VERIFY: Run tests/builds to confirm
 6. REPORT: Summarize what was done`;
 
-export function getToolsPrompt(): string {
-  return TOOLS_PROMPT;
+export function getToolsPrompt(mcpToolInfos?: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
+  if (!mcpToolInfos || mcpToolInfos.length === 0) {
+    return TOOLS_PROMPT;
+  }
+
+  const mcpSection = buildMcpToolsSection(mcpToolInfos);
+  return TOOLS_PROMPT + '\n\n' + mcpSection;
+}
+
+function buildMcpToolsSection(tools: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
+  const lines: string[] = [];
+  lines.push('## External Tools (MCP)');
+  lines.push('');
+  lines.push('These tools are provided by external MCP servers. Call them by their tool name.');
+  lines.push('They may require approval before execution.');
+  lines.push('');
+
+  const byServer = new Map<string, typeof tools>();
+  for (const t of tools) {
+    const list = byServer.get(t.serverId) || [];
+    list.push(t);
+    byServer.set(t.serverId, list);
+  }
+
+  for (const [serverId, serverTools] of byServer) {
+    lines.push(`### Server: ${serverId}`);
+    lines.push('');
+    for (const t of serverTools) {
+      lines.push(`#### ${t.safeId}`);
+      if (t.description) {
+        lines.push(t.description);
+      }
+      const schema = t.inputSchema;
+      if (schema && typeof schema === 'object' && schema.properties) {
+        const props = schema.properties as Record<string, Record<string, unknown>>;
+        const required = (schema.required || []) as string[];
+        const paramLines: string[] = [];
+        for (const [key, propSchema] of Object.entries(props)) {
+          const type = propSchema.type || 'unknown';
+          const desc = propSchema.description || '';
+          const req = required.includes(key) ? 'required' : 'optional';
+          paramLines.push(`- ${key} (${type}, ${req})${desc ? ': ' + desc : ''}`);
+        }
+        if (paramLines.length > 0) {
+          lines.push('Parameters:');
+          lines.push(...paramLines);
+        }
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
 }

@@ -37,6 +37,8 @@ interface ParsedArgs {
   uninstall?: boolean;
   forceUninstall?: boolean;
   webServer?: boolean;
+  mcpCommand?: boolean;
+  mcpArgs?: string[];
 }
 
 class CLI {
@@ -65,6 +67,10 @@ class CLI {
         } else {
           i++;
         }
+      } else if (arg === 'mcp') {
+        parsed.mcpCommand = true;
+        parsed.mcpArgs = args.slice(i + 1);
+        i = args.length;
       } else if (arg === 'web') {
         parsed.webServer = true;
         i++;
@@ -81,28 +87,40 @@ class CLI {
 
   showHelp(): void {
     const gold = (text: string) => `\x1b[38;2;255;202;56m${text}\x1b[0m`;
+    const gray = (text: string) => `\x1b[90m${text}\x1b[0m`;
+    const cyan = (text: string) => `\x1b[36m${text}\x1b[0m`;
 
     console.log('');
     console.log(`
-Mosaic - AI-powered coding agent
+${gold('Mosaic')}
 
-Usage:
-  mosaic [options] [directory]
+${gold('Usage')}
+  $ mosaic [options] [path]
+  $ mosaic <command> [options]
 
-Options:
-  -h, --help              Show this help message
-  -d, --directory <path>  Open in specific directory
-  run "<message>"         Launch with a message to execute
-  web                     Start the web interface server
-  uninstall [--force]     Uninstall Mosaic
+${gold('Options')}
+  -h, --help                ${gray('Show this help message')}
+  -d, --directory <path>    ${gray('Open Mosaic in a specific directory (default: current)')}
 
-Examples:
-  mosaic                              Start in current directory
-  mosaic ./my-project                 Start in specific directory
-  mosaic run "fix the bug"            Launch with a task
-  mosaic web                          Start web server on http://127.0.0.1:8192
-  mosaic uninstall                    Interactive uninstall
-  mosaic uninstall --force            Force uninstall (removes all data)
+${gold('Commands')}
+  run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
+  web                       ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
+  mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
+  uninstall [--force]       ${gray('Uninstall Mosaic from your system')}
+
+${gold('MCP Subcommands')}
+  mosaic mcp list           ${gray('List configured MCP servers')}
+  mosaic mcp add [name]     ${gray('Add a new MCP server')}
+  mosaic mcp doctor         ${gray('Run diagnostics')}
+  mosaic mcp help           ${gray('View full list of MCP commands')}
+
+${gold('Examples')}
+  ${gray('mosaic')}                              # Start in current directory
+  ${gray('mosaic ./my-project')}                 # Start in specific directory
+  ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
+  ${gray('mosaic web')}                          # Start the web UI
+  ${gray('mosaic mcp list')}                     # Check connected tools
+  ${gray('mosaic uninstall --force')}            # Completely remove Mosaic
 `);
   }
 
@@ -123,6 +141,12 @@ if (parsed.help) {
 
 if (parsed.uninstall) {
   await cli.uninstall(parsed.forceUninstall);
+  process.exit(0);
+}
+
+if (parsed.mcpCommand) {
+  const { runMcpCli } = await import('./mcp/cli/index');
+  await runMcpCli(parsed.mcpArgs ?? []);
   process.exit(0);
 }
 
@@ -187,9 +211,16 @@ if (parsed.directory) {
 import { addRecentProject } from './utils/config';
 addRecentProject(process.cwd());
 
+const { initializeMcp } = await import('./mcp/index');
+await initializeMcp().catch(() => { });
+
 process.title = '⁘ Mosaic';
 
-const cleanup = (code = 0) => {
+const cleanup = async (code = 0) => {
+  try {
+    const { shutdownMcp } = await import('./mcp/index');
+    await shutdownMcp();
+  } catch { }
   process.stdout.write('\x1b[?25h');
   process.exit(code);
 };

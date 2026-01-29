@@ -217,7 +217,7 @@ When you discover useful commands or preferences, offer to save them to MOSAIC.m
 All requests refer to the current workspace ({{WORKSPACE}}), never to Mosaic itself.
 `;
 
-export function processSystemPrompt(prompt: string, includeTools: boolean = true): string {
+export function processSystemPrompt(prompt: string, includeTools: boolean = true, mcpToolInfos?: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
   const now = new Date();
   const workspace = process.cwd();
   const os = platform();
@@ -268,7 +268,7 @@ ${mosaicContent}`;
   }
 
   if (includeTools) {
-    const toolsPrompt = getToolsPrompt();
+    const toolsPrompt = getToolsPrompt(mcpToolInfos);
     const processedToolsPrompt = toolsPrompt.replace(new RegExp('{{WORKSPACE}}', 'g'), workspace);
     processed = `${processed}\n\n${processedToolsPrompt}`;
   }

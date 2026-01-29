@@ -1,12 +1,19 @@
 export interface ApprovalRequest {
   id: string;
-  toolName: 'write' | 'edit' | 'bash';
+  toolName: string;
   preview: {
     title: string;
     content: string;
     details?: string[];
   };
   args: Record<string, unknown>;
+  mcpMeta?: {
+    serverId: string;
+    serverName: string;
+    canonicalId: string;
+    riskHint: string;
+    payloadSize: number;
+  };
 }
 
 export interface ApprovalResponse {
@@ -16,7 +23,7 @@ export interface ApprovalResponse {
 }
 
 export interface ApprovalAccepted {
-  toolName: 'write' | 'edit' | 'bash';
+  toolName: string;
   args: Record<string, unknown>;
 }
 
@@ -59,7 +66,7 @@ export function subscribeApprovalAccepted(listener: ApprovalAcceptedListener): (
   };
 }
 
-function notifyApprovalAccepted(toolName: 'write' | 'edit' | 'bash', args: Record<string, unknown>): void {
+function notifyApprovalAccepted(toolName: string, args: Record<string, unknown>): void {
   for (const listener of acceptedListeners) {
     listener({ toolName, args });
   }
@@ -70,15 +77,20 @@ export function getCurrentApproval(): ApprovalRequest | null {
 }
 
 export async function requestApproval(
-  toolName: 'write' | 'edit' | 'bash',
+  toolName: string,
   args: Record<string, unknown>,
   preview: { title: string; content: string; details?: string[] }
 ): Promise<{ approved: boolean; customResponse?: string }> {
+  const mcpMeta = (args as any).__mcpMeta;
+  const cleanArgs = { ...args };
+  delete (cleanArgs as any).__mcpMeta;
+
   const request: ApprovalRequest = {
     id: createId(),
     toolName,
     preview,
-    args,
+    args: cleanArgs,
+    ...(mcpMeta && { mcpMeta }),
   };
 
   const response = await new Promise<ApprovalResponse>((resolve, reject) => {
