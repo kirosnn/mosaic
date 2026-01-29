@@ -49,42 +49,42 @@ function setTerminalTitle(title: string) {
   process.title = `⁘ ${title}`;
 }
 
-function normalizeWhitespace(text: string): string {
+export function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function truncateText(text: string, maxChars: number): string {
+export function truncateText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return text.slice(0, Math.max(0, maxChars - 3)) + "...";
 }
 
-function estimateTokensFromText(text: string): number {
+export function estimateTokensFromText(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
 }
 
-function estimateTokensForMessage(message: CompactableMessage): number {
+export function estimateTokensForMessage(message: CompactableMessage): number {
   const contentTokens = estimateTokensFromText(message.content || "");
   const thinkingTokens = estimateTokensFromText(message.thinkingContent || "");
   return contentTokens + thinkingTokens + 4;
 }
 
-function estimateTokensForMessages(messages: CompactableMessage[]): number {
+export function estimateTokensForMessages(messages: CompactableMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokensForMessage(message), 0);
 }
 
-function estimateTotalTokens(messages: CompactableMessage[], systemPrompt: string): number {
+export function estimateTotalTokens(messages: CompactableMessage[], systemPrompt: string): number {
   const systemTokens = estimateTokensFromText(systemPrompt) + 8;
   return systemTokens + estimateTokensForMessages(messages);
 }
 
-function shouldAutoCompact(totalTokens: number, maxContextTokens: number): boolean {
+export function shouldAutoCompact(totalTokens: number, maxContextTokens: number): boolean {
   if (!Number.isFinite(maxContextTokens) || maxContextTokens <= 0) return false;
   const threshold = Math.floor(maxContextTokens * 0.95);
   return totalTokens >= threshold;
 }
 
-function summarizeMessage(message: CompactableMessage, maxChars: number): string {
+export function summarizeMessage(message: CompactableMessage, maxChars: number): string {
   if (message.role === "tool") {
     const name = message.toolName || "tool";
     const cleaned = normalizeWhitespace(message.content || "");
@@ -94,7 +94,7 @@ function summarizeMessage(message: CompactableMessage, maxChars: number): string
   return `${message.role}: ${truncateText(cleaned, maxChars)}`;
 }
 
-function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
+export function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
   const maxChars = Math.max(0, maxTokens * 4);
   const lines: string[] = [];
   for (const message of messages) {
@@ -107,7 +107,7 @@ function buildSummary(messages: CompactableMessage[], maxTokens: number): string
   return truncateText(full, maxChars);
 }
 
-function collectContextFiles(messages: Message[]): string[] {
+export function collectContextFiles(messages: Message[]): string[] {
   const files = new Set<string>();
   for (const message of messages) {
     if (message.role !== "tool") continue;
@@ -126,7 +126,7 @@ function collectContextFiles(messages: Message[]): string[] {
   return Array.from(files.values()).sort((a, b) => a.localeCompare(b));
 }
 
-function appendContextFiles(summary: string, files: string[], maxTokens: number): string {
+export function appendContextFiles(summary: string, files: string[], maxTokens: number): string {
   if (files.length === 0) return summary;
   const maxChars = Math.max(0, maxTokens * 4);
   const list = files.map(f => `- ${f}`).join("\n");
@@ -134,7 +134,7 @@ function appendContextFiles(summary: string, files: string[], maxTokens: number)
   return truncateText(`${summary}${block}`, maxChars);
 }
 
-function compactMessagesForUi(
+export function compactMessagesForUi(
   messages: Message[],
   systemPrompt: string,
   maxContextTokens: number,
