@@ -16,6 +16,7 @@ import { MistralProvider } from './provider/mistral';
 import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit } from '../utils/models';
+import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -41,15 +42,10 @@ function contentToText(content: CoreMessage['content']): string {
   }
 }
 
-function estimateTokensFromText(text: string): number {
-  if (!text) return 0;
-  return Math.ceil(text.length / 4);
-}
-
 function estimateTokensForMessages(messages: CoreMessage[]): number {
   let total = 0;
   for (const message of messages) {
-    total += estimateTokensFromText(contentToText(message.content)) + 4;
+    total += estimateTokensForContent(contentToText(message.content));
   }
   return total;
 }
@@ -63,7 +59,7 @@ function truncateText(text: string, maxChars: number): string {
   return text.slice(0, Math.max(0, maxChars - 3)) + '...';
 }
 
-function summarizeMessage(message: CoreMessage, maxChars: number): string {
+function summarizeMessage(message: CoreMessage, isLastUser: boolean): string {
   if (message.role === 'tool') {
     const content: any = message.content;
     const part = Array.isArray(content) ? content[0] : undefined;
@@ -81,24 +77,43 @@ function summarizeMessage(message: CoreMessage, maxChars: number): string {
     } else {
       resultText = contentToText(message.content);
     }
+    const isError = resultText.toLowerCase().includes('error') || resultText.toLowerCase().includes('failed');
+    const status = isError ? 'FAILED' : 'OK';
     const cleaned = normalizeWhitespace(resultText);
-    return `tool ${toolName}: ${truncateText(cleaned, maxChars)}`;
+    return `[tool:${toolName} ${status}] ${truncateText(cleaned, 120)}`;
   }
 
-  const role = message.role;
+  if (message.role === 'assistant') {
+    const text = contentToText(message.content);
+    const cleaned = normalizeWhitespace(text);
+    const sentenceMatch = cleaned.match(/^[^.!?\n]{10,}[.!?]/);
+    const summary = sentenceMatch ? sentenceMatch[0] : cleaned;
+    return `assistant: ${truncateText(summary, 200)}`;
+  }
+
   const cleaned = normalizeWhitespace(contentToText(message.content));
-  return `${role}: ${truncateText(cleaned, maxChars)}`;
+  const limit = isLastUser ? cleaned.length : 400;
+  return `user: ${truncateText(cleaned, limit)}`;
 }
 
 function buildSummary(messages: CoreMessage[], maxTokens: number): string {
-  const maxChars = Math.max(0, maxTokens * 4);
+  const maxChars = Math.max(0, maxTokens * 3);
+  const header = 'CONVERSATION SUMMARY (auto):';
+  let charCount = header.length + 1;
   const lines: string[] = [];
-  for (const message of messages) {
-    if (lines.join('\n').length >= maxChars) break;
-    lines.push(`- ${summarizeMessage(message, 240)}`);
+
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') { lastUserIndex = i; break; }
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    if (charCount >= maxChars) break;
+    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex)}`;
+    charCount += line.length + 1;
+    lines.push(line);
   }
   const body = lines.join('\n');
-  const header = 'CONVERSATION SUMMARY (auto):';
   const full = `${header}\n${body}`.trim();
   return truncateText(full, maxChars);
 }
@@ -106,9 +121,10 @@ function buildSummary(messages: CoreMessage[], maxTokens: number): string {
 function compactMessages(
   messages: CoreMessage[],
   systemPrompt: string,
-  maxContextTokens?: number
+  maxContextTokens?: number,
+  provider?: string
 ): CoreMessage[] {
-  const budget = maxContextTokens ?? 12000;
+  const budget = maxContextTokens ?? getDefaultContextBudget(provider);
   const systemTokens = estimateTokensFromText(systemPrompt) + 8;
   const messagesTokens = estimateTokensForMessages(messages);
   const total = systemTokens + messagesTokens;
@@ -122,7 +138,7 @@ function compactMessages(
   const recent: CoreMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
-    const msgTokens = estimateTokensFromText(contentToText(message.content)) + 4;
+    const msgTokens = estimateTokensForContent(contentToText(message.content));
     if (recentTokens + msgTokens > recentBudget && recent.length > 0) break;
     recent.unshift(message);
     recentTokens += msgTokens;
@@ -240,7 +256,8 @@ export class Agent {
       const compacted = compactMessages(
         this.messageHistory,
         this.config.systemPrompt,
-        this.config.maxContextTokens ?? this.resolvedMaxContextTokens
+        this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
+        this.config.provider
       );
       yield* this.provider.sendMessage(compacted, this.config, options);
     } catch (error) {
@@ -270,7 +287,8 @@ export class Agent {
       const compacted = compactMessages(
         this.messageHistory,
         this.config.systemPrompt,
-        this.config.maxContextTokens ?? this.resolvedMaxContextTokens
+        this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
+        this.config.provider
       );
       yield* this.provider.sendMessage(compacted, this.config, options);
     } catch (error) {

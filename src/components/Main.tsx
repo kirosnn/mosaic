@@ -20,6 +20,7 @@ import type { ImageAttachment } from "../utils/images";
 import { subscribeImageCommand, setImageSupport } from "../utils/imageBridge";
 import { findModelsDevModelById, modelAcceptsImages, getModelsDevContextLimit } from "../utils/models";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/systemPrompt";
+import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
 
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
@@ -58,15 +59,8 @@ export function truncateText(text: string, maxChars: number): string {
   return text.slice(0, Math.max(0, maxChars - 3)) + "...";
 }
 
-export function estimateTokensFromText(text: string): number {
-  if (!text) return 0;
-  return Math.ceil(text.length / 4);
-}
-
 export function estimateTokensForMessage(message: CompactableMessage): number {
-  const contentTokens = estimateTokensFromText(message.content || "");
-  const thinkingTokens = estimateTokensFromText(message.thinkingContent || "");
-  return contentTokens + thinkingTokens + 4;
+  return estimateTokensForContent(message.content || "", message.thinkingContent || undefined);
 }
 
 export function estimateTokensForMessages(messages: CompactableMessage[]): number {
@@ -84,25 +78,46 @@ export function shouldAutoCompact(totalTokens: number, maxContextTokens: number)
   return totalTokens >= threshold;
 }
 
-export function summarizeMessage(message: CompactableMessage, maxChars: number): string {
+export function summarizeMessage(message: CompactableMessage, isLastUser: boolean): string {
   if (message.role === "tool") {
     const name = message.toolName || "tool";
-    const cleaned = normalizeWhitespace(message.content || "");
-    return `tool ${name}: ${truncateText(cleaned, maxChars)}`;
+    const text = message.content || "";
+    const isError = text.toLowerCase().includes('error') || text.toLowerCase().includes('failed');
+    const status = isError ? 'FAILED' : 'OK';
+    const cleaned = normalizeWhitespace(text);
+    return `[tool:${name} ${status}] ${truncateText(cleaned, 120)}`;
   }
+
+  if (message.role === "assistant") {
+    const cleaned = normalizeWhitespace(message.content || "");
+    const sentenceMatch = cleaned.match(/^[^.!?\n]{10,}[.!?]/);
+    const summary = sentenceMatch ? sentenceMatch[0] : cleaned;
+    return `assistant: ${truncateText(summary, 200)}`;
+  }
+
   const cleaned = normalizeWhitespace(message.content || "");
-  return `${message.role}: ${truncateText(cleaned, maxChars)}`;
+  const limit = isLastUser ? cleaned.length : 400;
+  return `user: ${truncateText(cleaned, limit)}`;
 }
 
 export function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
-  const maxChars = Math.max(0, maxTokens * 4);
+  const maxChars = Math.max(0, maxTokens * 3);
+  const header = "Résumé de conversation (compact):";
+  let charCount = header.length + 1;
   const lines: string[] = [];
-  for (const message of messages) {
-    if (lines.join("\n").length >= maxChars) break;
-    lines.push(`- ${summarizeMessage(message, 240)}`);
+
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === 'user') { lastUserIndex = i; break; }
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    if (charCount >= maxChars) break;
+    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex)}`;
+    charCount += line.length + 1;
+    lines.push(line);
   }
   const body = lines.join("\n");
-  const header = "Résumé de conversation (compact):";
   const full = `${header}\n${body}`.trim();
   return truncateText(full, maxChars);
 }
@@ -198,6 +213,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const commandsOpenRef = useRef(commandsOpen);
   const questionRequestRef = useRef<QuestionRequest | null>(questionRequest);
   const initialMessageProcessed = useRef(false);
+  const lastPromptTokensRef = useRef<number>(0);
   const exploreMessageIdRef = useRef<string | null>(null);
   const exploreToolsRef = useRef<Array<{ tool: string; info: string; success: boolean }>>([]);
   const explorePurposeRef = useRef<string>('');
@@ -502,7 +518,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               maxContextTokens = resolved;
             }
           }
-          const targetTokens = maxContextTokens ?? 12000;
+          const targetTokens = maxContextTokens ?? getDefaultContextBudget(config.provider);
           let nextTokens = currentTokens;
           setMessages(prev => {
             const compacted = compactMessagesForUi(prev, systemPrompt, targetTokens, createId, true);
@@ -528,6 +544,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const localStartTime = Date.now();
           setProcessingStartTime(localStartTime);
           setCurrentTokens(0);
+          lastPromptTokensRef.current = 0;
           shouldAutoScroll.current = true;
 
           const conversationId = createId();
@@ -834,6 +851,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                     completion: event.usage.completionTokens,
                     total: event.usage.totalTokens
                   };
+                  lastPromptTokensRef.current = event.usage.promptTokens;
                   setCurrentTokens(event.usage.totalTokens);
                 }
               }
@@ -974,6 +992,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const localStartTime = Date.now();
     setProcessingStartTime(localStartTime);
     setCurrentTokens(0);
+    lastPromptTokensRef.current = 0;
     shouldAutoScroll.current = true;
 
     const conversationId = createId();
@@ -1286,6 +1305,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               completion: event.usage.completionTokens,
               total: event.usage.totalTokens
             };
+            lastPromptTokensRef.current = event.usage.promptTokens;
             setCurrentTokens(event.usage.totalTokens);
           }
         }
@@ -1332,12 +1352,16 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           };
 
           saveConversation(conversationData);
-          const maxContextTokens = await resolveMaxContextTokens();
-          if (!abortController.signal.aborted && maxContextTokens) {
+          const resolvedMax = await resolveMaxContextTokens();
+          const maxContextTokens = resolvedMax ?? getDefaultContextBudget(config.provider);
+          if (!abortController.signal.aborted) {
+            const realPromptTokens = lastPromptTokensRef.current;
             const systemPrompt = buildSystemPrompt();
             setMessages(prev => {
-              const totalTokens = estimateTotalTokens(prev, systemPrompt);
-              if (!shouldAutoCompact(totalTokens, maxContextTokens)) return prev;
+              const usedTokens = realPromptTokens > 0
+                ? realPromptTokens
+                : estimateTotalTokens(prev, systemPrompt);
+              if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
               const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
               setCurrentTokens(compacted.estimatedTokens);
               return compacted.messages;
