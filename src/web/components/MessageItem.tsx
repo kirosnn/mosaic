@@ -57,7 +57,7 @@ function renderToolLine(line: string, index: number): React.ReactElement {
         return (
             <div key={index} className="tool-line plan-line">
                 <span className="plan-indent">{leading || ''}</span>
-                <span className="plan-prefix">></span>
+                <span className="plan-prefix">{'>'}</span>
                 <span> </span>
                 {bracket && <span className={`plan-bracket${isActive ? ' active' : ''}`}>{bracket}</span>}
                 {bracket && <span> </span>}

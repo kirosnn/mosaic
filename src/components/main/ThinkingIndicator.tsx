@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { TextAttributes } from "@opentui/core";
 import { THINKING_WORDS } from "./types";
 
@@ -7,6 +7,7 @@ interface ThinkingIndicatorProps {
     hasQuestion: boolean;
     startTime?: number | null;
     tokens?: number;
+    inProgressStep?: string;
     nextStep?: string;
 }
 

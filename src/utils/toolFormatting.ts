@@ -61,7 +61,7 @@ export function formatToolResult(result: unknown): string {
   }
 }
 
-function getMcpHeaderInfo(tool: string, args: Record<string, unknown>): string {
+function getMcpHeaderInfo(_tool: string, args: Record<string, unknown>): string {
   const query = args.query ?? args.search ?? args.prompt ?? args.input ?? args.text ?? args.q;
   if (typeof query === 'string' && query.trim()) {
     const clean = query.replace(/[\r\n]+/g, ' ').trim();

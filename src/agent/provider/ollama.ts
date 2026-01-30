@@ -77,7 +77,7 @@ function createCloudOllamaClient(apiKey: string): Ollama {
   } as any);
 }
 
-async function ensureOllamaServe(apiKey?: string): Promise<void> {
+async function ensureOllamaServe(_apiKey?: string): Promise<void> {
   if (serveStartPromise) return serveStartPromise;
 
   serveStartPromise = (async () => {

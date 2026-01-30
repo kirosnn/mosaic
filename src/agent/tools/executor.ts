@@ -5,7 +5,7 @@ import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
-import { trackFileChange, trackFileCreated, trackFileDeleted } from '../../utils/fileChangeTracker';
+import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
@@ -282,15 +282,6 @@ interface SearchOptions {
 }
 
 const DEFAULT_MAX_FILE_SIZE = 1024 * 1024;
-
-function isValidRegex(pattern: string): { valid: boolean; error?: string } {
-  try {
-    new RegExp(pattern);
-    return { valid: true };
-  } catch (e) {
-    return { valid: false, error: e instanceof Error ? e.message : 'Invalid regular expression' };
-  }
-}
 
 function isBinaryFile(buffer: Buffer, bytesToCheck = 8000): boolean {
   const checkLength = Math.min(buffer.length, bytesToCheck);

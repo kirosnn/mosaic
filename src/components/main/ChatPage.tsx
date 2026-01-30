@@ -467,7 +467,7 @@ export function ChatPage({
             indent: 0,
             paragraphIndex: 0,
             wrappedLineIndex: 0,
-            success: (messageRole === "tool" || messageRole === "slash") ? message.success : undefined,
+            success: undefined,
             isSpacer: false,
             visualLines: 1
           });

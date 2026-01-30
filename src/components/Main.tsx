@@ -9,8 +9,8 @@ import { initializeCommands, isCommand, executeCommand } from '../utils/commands
 import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
-import { subscribeApprovalAccepted, type ApprovalAccepted } from "../utils/approvalBridge";
-import { setExploreAbortController, setExploreToolCallback, abortExplore } from "../utils/exploreBridge";
+import { subscribeApprovalAccepted } from "../utils/approvalBridge";
+import { setExploreAbortController, setExploreToolCallback } from "../utils/exploreBridge";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
 import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
 import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
@@ -290,7 +290,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const handleResize = () => {
       const newWidth = process.stdout.columns || 80;
       const newHeight = process.stdout.rows || 24;
-      const oldWidth = terminalWidth;
       const oldHeight = terminalHeight;
 
       setTerminalWidth(newWidth);
@@ -573,7 +572,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           });
 
           let responseDuration: number | null = null;
-          let responseBlendWord: string | null = null;
+          let responseBlendWord: string | undefined = undefined;
 
           try {
             const providerStatus = await Agent.ensureProviderReady();
@@ -1032,7 +1031,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     });
 
           let responseDuration: number | null = null;
-          let responseBlendWord: string | null = null;
+          let responseBlendWord: string | undefined = undefined;
 
           try {
             const providerStatus = await Agent.ensureProviderReady();

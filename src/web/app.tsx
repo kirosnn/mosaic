@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';

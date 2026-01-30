@@ -9,7 +9,7 @@ interface WelcomeProps {
   commandsOpen?: boolean;
 }
 
-export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false, commandsOpen = false }: WelcomeProps) {
+export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false, commandsOpen: _commandsOpen = false }: WelcomeProps) {
   useKeyboard((key) => {
     if (shortcutsOpen) return;
     if (key.name === 'return') {

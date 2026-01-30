@@ -32,7 +32,7 @@ export function App({ initialMessage }: AppProps) {
   const [shortcutsTab, setShortcutsTab] = useState<0 | 1>(0);
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
-  const [pendingMessage, setPendingMessage] = useState<string | undefined>(initialMessage);
+  const [pendingMessage] = useState<string | undefined>(initialMessage);
   const lastSelectionRef = useRef<{ text: string; at: number } | null>(null);
 
   const renderer = useRenderer();

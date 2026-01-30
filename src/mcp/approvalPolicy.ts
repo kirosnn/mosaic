@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { requestApproval } from '../utils/approvalBridge';
-import type { McpApprovalCacheEntry, McpApprovalScope, McpRiskHint, McpServerConfig } from './types';
+import type { McpApprovalCacheEntry, McpRiskHint, McpServerConfig } from './types';
 
 const READ_KEYWORDS = ['read', 'get', 'list', 'search', 'find', 'show', 'describe', 'query', 'fetch', 'inspect', 'view', 'ls', 'cat'];
 const WRITE_KEYWORDS = ['write', 'set', 'create', 'update', 'put', 'save', 'modify', 'patch', 'upsert', 'insert', 'append'];
@@ -105,7 +105,7 @@ export class McpApprovalPolicy {
     return false;
   }
 
-  private addToCache(serverId: string, toolName: string, args: Record<string, unknown>, mode: McpServerConfig['approval']): void {
+  private addToCache(serverId: string, toolName: string, _args: Record<string, unknown>, mode: McpServerConfig['approval']): void {
     const ttl = 300000;
     const expiresAt = Date.now() + ttl;
 

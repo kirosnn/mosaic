@@ -88,7 +88,6 @@ class CLI {
   showHelp(): void {
     const gold = (text: string) => `\x1b[38;2;255;202;56m${text}\x1b[0m`;
     const gray = (text: string) => `\x1b[90m${text}\x1b[0m`;
-    const cyan = (text: string) => `\x1b[36m${text}\x1b[0m`;
 
     console.log('');
     console.log(`

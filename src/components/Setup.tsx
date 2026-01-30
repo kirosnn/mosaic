@@ -30,7 +30,7 @@ type SetupStep =
   | 'apikey'
   | 'confirm';
 
-export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, commandsOpen = false }: SetupProps) {
+export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, commandsOpen: _commandsOpen = false }: SetupProps) {
   const [step, setStep] = useState<SetupStep>('provider');
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');

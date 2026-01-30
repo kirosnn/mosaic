@@ -19,6 +19,7 @@ const THINKING_WORDS = [
 interface ThinkingIndicatorProps {
     startTime?: number;
     tokens?: number;
+    inProgressStep?: string;
     nextStep?: string;
 }
 

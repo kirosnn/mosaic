@@ -34,8 +34,6 @@ export function renderDiffLine(line: string, key: string) {
 
 export function renderInlineDiffLine(content: string) {
   const parsed = parseDiffLine(content);
-  const colors = getDiffLineColors(parsed);
-
   if (parsed.isDiffLine) {
     return (
       <>
@@ -56,6 +54,6 @@ export function renderInlineDiffLine(content: string) {
   return null;
 }
 
-export function getDiffLineBackground(content: string): string | null {
+export function getDiffLineBackground(_content: string): string | null {
   return null;
 }

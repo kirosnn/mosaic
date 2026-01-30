@@ -5,7 +5,7 @@ export const echoCommand: Command = {
   description: 'Echo the provided text back to the user',
   usage: '/echo <text>',
   aliases: ['e'],
-  execute: (args: string[], fullCommand: string): { success: boolean; content: string } => {
+  execute: (args: string[], _fullCommand: string): { success: boolean; content: string } => {
     if (args.length === 0) {
       return {
         success: false,

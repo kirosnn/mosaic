@@ -78,13 +78,6 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
 
 let exploreDoneResult: string | null = null;
 
-function getResultPreview(result: string | undefined): string {
-  if (!result) return '';
-  const lines = result.split('\n');
-  if (lines.length <= 3) return result.substring(0, 200);
-  return lines.slice(0, 3).join('\n').substring(0, 200) + '...';
-}
-
 function createExploreTools() {
   return {
     read: createTool({

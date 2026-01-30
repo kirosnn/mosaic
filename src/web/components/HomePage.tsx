@@ -31,7 +31,7 @@ function formatRelativeTime(timestamp: number): string {
     return `${days} day${days !== 1 ? 's' : ''} ago`;
 }
 
-export function HomePage({ onStartChat, onOpenProject, sidebarProps }: HomePageProps) {
+export function HomePage({ onStartChat: _onStartChat, onOpenProject, sidebarProps }: HomePageProps) {
     const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [showFileExplorer, setShowFileExplorer] = useState(false);

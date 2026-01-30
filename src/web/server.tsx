@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { join } from "path";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { build } from "bun";
 import { createCliRenderer, TextAttributes } from "@opentui/core";
 import { createRoot } from "@opentui/react";
@@ -264,9 +264,6 @@ async function startServer(port: number, maxRetries = 10) {
                 const url = new URL(request.url);
 
                 try {
-                    const isApiRoute = url.pathname.startsWith('/api/');
-                    const isStaticFile = url.pathname.match(/\.(js|css|svg|ico|png|jpg|jpeg|gif|webp|woff|woff2|ttf|eot)$/);
-
                     if (url.pathname === "/" || url.pathname === "/home" || url.pathname.startsWith("/chat")) {
                         addLog(`${request.method} ${url.pathname}`);
                         return new Response(HTML_TEMPLATE, {

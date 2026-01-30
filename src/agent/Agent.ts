@@ -1,4 +1,4 @@
-import { CoreMessage, CoreTool } from 'ai';
+import { CoreMessage } from 'ai';
 import {
   AgentEvent,
   AgentMessage,
@@ -255,7 +255,7 @@ export class Agent {
     this.messageHistory = messages.map(msg => ({
       role: msg.role,
       content: msg.content,
-    }));
+    })) as CoreMessage[];
 
     try {
       if (this.resolvedMaxContextTokens === undefined) {

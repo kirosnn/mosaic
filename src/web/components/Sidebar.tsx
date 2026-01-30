@@ -12,8 +12,6 @@ interface GroupedConversations {
 
 function getTimePeriod(timestamp: number): TimePeriod {
     const now = new Date();
-    const date = new Date(timestamp);
-
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
     const startOf7DaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;

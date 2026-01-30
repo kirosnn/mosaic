@@ -5,7 +5,7 @@ export const newCommand: Command = {
   description: 'Start a new chat',
   usage: '/new',
   aliases: ['clear'],
-  execute: (args: string[], fullCommand: string): CommandResult => {
+  execute: (_args: string[], _fullCommand: string): CommandResult => {
     return {
       success: true,
       content: 'Starting a new chat...',
