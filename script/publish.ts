@@ -11,6 +11,7 @@ type Options = {
   dryRun: boolean;
   noPublish: boolean;
   tag?: string;
+  token?: string;
 };
 
 const ignoredDirs = new Set([
@@ -47,6 +48,10 @@ function parseArgs(argv: string[]): Options {
     }
     if (arg === "--tag") {
       options.tag = argv[++i];
+      continue;
+    }
+    if (arg === "--token") {
+      options.token = argv[++i];
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -110,9 +115,17 @@ async function replaceVersionInFiles(
   return changed;
 }
 
-function run(command: string, args: string[]): Promise<void> {
+function run(
+  command: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit", shell: true });
+    const child = spawn(command, args, {
+      stdio: "inherit",
+      shell: true,
+      env,
+    });
     child.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`${command} exited with code ${code}`));
@@ -159,7 +172,9 @@ async function main() {
     if (options.dryRun) {
       args.push("--dry-run");
     }
-    await run("npm", args);
+    const token = options.token ?? process.env.NPM_TOKEN;
+    const env = token ? { ...process.env, NPM_TOKEN: token } : process.env;
+    await run("npm", args, env);
   }
 
   process.stdout.write(
