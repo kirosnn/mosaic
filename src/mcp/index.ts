@@ -32,13 +32,13 @@ export function getMcpApprovalPolicy(): McpApprovalPolicy {
   return approvalPolicy;
 }
 
-export async function initializeMcp(): Promise<void> {
-  if (initialized) return;
+export async function initializeMcp(): Promise<string[]> {
+  if (initialized) return [];
 
   const configs = loadMcpConfig();
   if (configs.length === 0) {
     initialized = true;
-    return;
+    return [];
   }
 
   manager = new McpProcessManager();
@@ -46,17 +46,23 @@ export async function initializeMcp(): Promise<void> {
   catalog = new McpToolCatalog(manager, approvalPolicy, configs);
 
   const startupServers = configs.filter(c => c.enabled && c.autostart === 'startup');
+  const failedServers: string[] = [];
 
   for (const config of startupServers) {
     try {
       await manager.startServer(config);
     } catch {
-      // log silently, server state tracks the error
+      failedServers.push(config.id || config.command || 'unknown');
     }
+  }
+
+  if (failedServers.length > 0) {
+    console.error(`MCP: failed to start servers: ${failedServers.join(', ')}`);
   }
 
   catalog.refreshTools();
   initialized = true;
+  return failedServers;
 }
 
 export async function shutdownMcp(): Promise<void> {

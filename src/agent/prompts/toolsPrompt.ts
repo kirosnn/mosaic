@@ -125,6 +125,11 @@ Ask user with predefined options. ONLY way to ask questions.
 - options (array, required): At least 2 options
   - label (string): Display text
   - value (string|null): Return value
+  - group (string, optional): Group header for consecutive options with the same group
+- timeout (number, optional): Seconds before the question auto-rejects
+- validation (object, optional): Regex validation for custom text input
+  - pattern (string): Regex pattern the custom text must match
+  - message (string, optional): Error message shown on validation failure
 
 CRITICAL: Never ask questions in plain text. Always use this tool.
 

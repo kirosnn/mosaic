@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, appendFile, stat, mkdir } from 'fs/promises';
+import { readFile, writeFile, readdir, appendFile, stat, mkdir, realpath } from 'fs/promises';
 import { join, resolve, dirname, extname, sep } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -188,24 +188,23 @@ export interface ToolResult {
   diff?: string[];
 }
 
-const pathValidationCache = new Map<string, boolean>();
 const globPatternCache = new Map<string, RegExp>();
 
+async function validatePath(fullPath: string, workspace: string): Promise<boolean> {
+  const normalizedWorkspace = workspace.endsWith(sep) ? workspace : workspace + sep;
 
-function validatePath(fullPath: string, workspace: string): boolean {
-  const cacheKey = `${fullPath}|${workspace}`;
-  const cached = pathValidationCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const result = fullPath.startsWith(workspace);
-  pathValidationCache.set(cacheKey, result);
-
-  if (pathValidationCache.size > 1000) {
-    const firstKey = pathValidationCache.keys().next().value;
-    if (firstKey) pathValidationCache.delete(firstKey);
+  try {
+    const resolved = await realpath(fullPath);
+    return resolved === workspace || resolved.startsWith(normalizedWorkspace);
+  } catch {
+    const parent = dirname(fullPath);
+    try {
+      const resolvedParent = await realpath(parent);
+      return resolvedParent === workspace || resolvedParent.startsWith(normalizedWorkspace);
+    } catch {
+      return fullPath === workspace || fullPath.startsWith(normalizedWorkspace);
+    }
   }
-
-  return result;
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
@@ -455,12 +454,18 @@ interface WalkResult {
   excluded?: boolean;
 }
 
-async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<WalkResult[]> {
+interface WalkOutput {
+  results: WalkResult[];
+  errors: string[];
+}
+
+async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<WalkOutput> {
   const results: WalkResult[] = [];
+  const errors: string[] = [];
 
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    const subDirPromises: Promise<WalkResult[]>[] = [];
+    const subDirPromises: Promise<WalkOutput>[] = [];
 
     for (const entry of entries) {
       if (!includeHidden && entry.name.startsWith('.')) continue;
@@ -481,27 +486,31 @@ async function walkDirectory(dir: string, filePattern?: string, includeHidden = 
     }
 
     if (subDirPromises.length > 0) {
-      const subResults = await Promise.all(subDirPromises);
-      for (const subResult of subResults) {
-        results.push(...subResult);
+      const subOutputs = await Promise.all(subDirPromises);
+      for (const sub of subOutputs) {
+        results.push(...sub.results);
+        errors.push(...sub.errors);
       }
     }
-  } catch {
-    return results;
+  } catch (e) {
+    errors.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  return results;
+  return { results, errors };
 }
 
-async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkResult[]> {
+async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkOutput> {
   const fullPath = resolve(workspace, dirPath);
-  const files = await walkDirectory(fullPath, filterPattern, includeHidden);
+  const { results, errors } = await walkDirectory(fullPath, filterPattern, includeHidden);
   const separator = workspace.endsWith(sep) ? '' : sep;
 
-  return files.map(file => ({
-    ...file,
-    path: file.path.replace(workspace + separator, '')
-  }));
+  return {
+    results: results.map(file => ({
+      ...file,
+      path: file.path.replace(workspace + separator, '')
+    })),
+    errors,
+  };
 }
 
 async function findFilesByPattern(pattern: string, searchPath: string): Promise<string[]> {
@@ -510,7 +519,7 @@ async function findFilesByPattern(pattern: string, searchPath: string): Promise<
   const hasDoubleStar = pattern.includes('**');
 
   if (hasDoubleStar) {
-    const files = await walkDirectory(searchPath, undefined, false);
+    const { results: files } = await walkDirectory(searchPath, undefined, false);
     const separator = searchPath.endsWith(sep) ? '' : sep;
     const root = searchPath + separator;
 
@@ -713,7 +722,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const endLine = args.end_line as number | undefined;
         const fullPath = resolve(workspace, path);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -754,7 +763,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const append = args.append === true;
         const fullPath = resolve(workspace, path);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -805,7 +814,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const includeHidden = args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined);
         const fullPath = resolve(workspace, path);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -813,7 +822,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
 
         if (recursive) {
-          const files = await listFilesRecursive(path, workspace, filter, includeHidden);
+          const { results: files, errors: walkErrors } = await listFilesRecursive(path, workspace, filter, includeHidden);
           const fileStats = await Promise.all(
             files.map(async (file) => {
               if (file.excluded) {
@@ -824,17 +833,29 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                 };
               }
               const filePath = resolve(workspace, file.path);
-              const stats = await stat(filePath);
-              return {
-                path: file.path,
-                type: stats.isDirectory() ? 'directory' : 'file',
-                size: stats.size,
-              };
+              try {
+                const stats = await stat(filePath);
+                return {
+                  path: file.path,
+                  type: stats.isDirectory() ? 'directory' : 'file',
+                  size: stats.size,
+                };
+              } catch {
+                return {
+                  path: file.path,
+                  type: 'unknown',
+                  error: 'access denied',
+                };
+              }
             })
           );
+          const output: Record<string, unknown> = { files: fileStats };
+          if (walkErrors.length > 0) {
+            output.errors = walkErrors.slice(0, 10);
+          }
           return {
             success: true,
-            result: JSON.stringify(fileStats, null, 2)
+            result: JSON.stringify(output, null, 2)
           };
         } else {
           const entries = await readdir(fullPath, { withFileTypes: true });
@@ -898,7 +919,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
 
             return {
-              success: true,
+              success: false,
               result: output
             };
           }
@@ -910,7 +931,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             : `Command failed: ${errorMessage}`;
 
           return {
-            success: true,
+            success: false,
             result: fullOutput
           };
         }
@@ -921,7 +942,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
         const fullPath = resolve(workspace, searchPath);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -959,7 +980,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const fullPath = resolve(workspace, searchPath);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1091,12 +1112,16 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         let formattedResult: string;
 
+        const skippedDetails = skippedFiles.length > 0
+          ? skippedFiles.slice(0, 5).map(s => ({ file: s.file, reason: s.reason }))
+          : undefined;
+
         if (outputMode === 'files') {
           const filesOnly = results.map(r => r.file);
           const summary = {
             files_found: filesOnly.length,
             files: filesOnly,
-            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length })
+            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length, skipped_details: skippedDetails })
           };
           formattedResult = JSON.stringify(summary, null, 2);
         } else if (outputMode === 'count') {
@@ -1105,7 +1130,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             total_matches: totalMatchCount,
             files_with_matches: counts.length,
             counts,
-            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length })
+            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length, skipped_details: skippedDetails })
           };
           formattedResult = JSON.stringify(summary, null, 2);
         } else {
@@ -1113,7 +1138,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             total_matches: totalMatchCount,
             files_searched: allFiles.length,
             files_with_matches: results.length,
-            ...(skippedFiles.length > 0 && { skipped_files: skippedFiles.length }),
+            ...(skippedFiles.length > 0 && { skipped_files: skippedFiles.length, skipped_details: skippedDetails }),
             ...(totalResults >= maxResults && { truncated: true, max_results: maxResults }),
             results: results.map(r => ({
               file: r.file,
@@ -1147,7 +1172,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
         const fullPath = resolve(workspace, path);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1225,7 +1250,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
         const fullPath = resolve(workspace, path);
 
-        if (!validatePath(fullPath, workspace)) {
+        if (!await validatePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'

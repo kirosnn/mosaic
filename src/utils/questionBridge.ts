@@ -1,12 +1,15 @@
 export interface QuestionOption {
   label: string;
   value?: string | null;
+  group?: string;
 }
 
 export interface QuestionRequest {
   id: string;
   prompt: string;
   options: QuestionOption[];
+  timeout?: number;
+  validation?: { pattern: string; message?: string };
 }
 
 export interface QuestionAnswer {
@@ -23,6 +26,7 @@ let currentRequest: QuestionRequest | null = null;
 let listeners = new Set<QuestionListener>();
 let pendingResolve: ((answer: QuestionAnswer) => void) | null = null;
 let pendingReject: ((reason?: any) => void) | null = null;
+let pendingTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 function notify(): void {
   for (const listener of listeners) {
@@ -46,7 +50,12 @@ export function getCurrentQuestion(): QuestionRequest | null {
   return currentRequest;
 }
 
-export async function askQuestion(prompt: string, options: QuestionOption[]): Promise<QuestionAnswer> {
+export async function askQuestion(
+  prompt: string,
+  options: QuestionOption[],
+  timeout?: number,
+  validation?: { pattern: string; message?: string },
+): Promise<QuestionAnswer> {
   if (pendingResolve) {
     throw new Error('A question is already pending');
   }
@@ -63,6 +72,8 @@ export async function askQuestion(prompt: string, options: QuestionOption[]): Pr
     id: createId(),
     prompt,
     options,
+    ...(timeout !== undefined && { timeout }),
+    ...(validation !== undefined && { validation }),
   };
 
   currentRequest = request;
@@ -71,6 +82,20 @@ export async function askQuestion(prompt: string, options: QuestionOption[]): Pr
   const answer = await new Promise<QuestionAnswer>((resolve, reject) => {
     pendingResolve = resolve;
     pendingReject = reject;
+
+    if (timeout !== undefined && timeout > 0) {
+      pendingTimeoutId = setTimeout(() => {
+        pendingTimeoutId = null;
+        if (pendingReject) {
+          const rej = pendingReject;
+          pendingResolve = null;
+          pendingReject = null;
+          currentRequest = null;
+          notify();
+          rej(new Error(`Question timed out after ${timeout}s`));
+        }
+      }, timeout * 1000);
+    }
   });
 
   return answer;
@@ -101,6 +126,11 @@ export function answerQuestion(index: number, customText?: string): void {
 
   if (!answer) return;
 
+  if (pendingTimeoutId !== null) {
+    clearTimeout(pendingTimeoutId);
+    pendingTimeoutId = null;
+  }
+
   const resolve = pendingResolve;
   pendingResolve = null;
   pendingReject = null;
@@ -111,6 +141,11 @@ export function answerQuestion(index: number, customText?: string): void {
 
 export function cancelQuestion(): void {
   if (!currentRequest || !pendingReject) return;
+
+  if (pendingTimeoutId !== null) {
+    clearTimeout(pendingTimeoutId);
+    pendingTimeoutId = null;
+  }
 
   const reject = pendingReject;
   pendingResolve = null;

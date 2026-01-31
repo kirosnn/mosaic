@@ -10,13 +10,40 @@ interface QuestionPanelProps {
 export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [customText, setCustomText] = useState('');
+    const [remaining, setRemaining] = useState<number | null>(request.timeout ?? null);
+    const [validationError, setValidationError] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         setSelectedIndex(0);
         setCustomText('');
+        setValidationError(null);
+        setRemaining(request.timeout ?? null);
         if (inputRef.current) inputRef.current.focus();
     }, [request.id]);
+
+    useEffect(() => {
+        if (remaining === null || remaining <= 0) return;
+        const id = setInterval(() => {
+            setRemaining(prev => (prev !== null && prev > 0 ? prev - 1 : prev));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [remaining !== null]);
+
+    const validateCustomText = (text: string): boolean => {
+        if (!request.validation) return true;
+        try {
+            if (!new RegExp(request.validation.pattern).test(text)) {
+                setValidationError(request.validation.message || `Input must match: ${request.validation.pattern}`);
+                return false;
+            }
+        } catch {
+            setValidationError('Invalid validation pattern');
+            return false;
+        }
+        setValidationError(null);
+        return true;
+    };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowUp') {
@@ -28,7 +55,9 @@ export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
         } else if (e.key === 'Enter') {
             e.preventDefault();
             if (customText.trim()) {
-                onAnswer(0, customText);
+                if (validateCustomText(customText)) {
+                    onAnswer(0, customText);
+                }
             } else {
                 onAnswer(selectedIndex);
             }
@@ -46,15 +75,22 @@ export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
 
     const handleSubmitCustom = (e: React.FormEvent) => {
         e.preventDefault();
-        if (customText.trim()) {
+        if (customText.trim() && validateCustomText(customText)) {
             onAnswer(0, customText);
         }
     };
+
+    let lastGroup: string | undefined;
 
     return (
         <div className="panel question-panel">
             <div className="panel-header">
                 <strong>Question</strong>
+                {remaining !== null && (
+                    <span style={{ marginLeft: '1rem', color: remaining <= 5 ? '#ff4444' : 'var(--text-muted)' }}>
+                        Timeout: {remaining}s
+                    </span>
+                )}
             </div>
             <div className="panel-content">
                 <div className="question-prompt">
@@ -63,17 +99,28 @@ export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
                     ))}
                 </div>
                 <div className="question-options">
-                    {request.options.map((option, index) => (
-                        <div
-                            key={index}
-                            className={`question-option ${index === selectedIndex ? 'selected' : ''}`}
-                            onClick={() => handleOptionClick(index)}
-                        >
-                            <span className="option-key">{index + 1}.</span>
-                            <span className="option-label">{option.label}</span>
-                        </div>
-                    ))}
+                    {request.options.map((option, index) => {
+                        const showGroupHeader = option.group && option.group !== lastGroup;
+                        lastGroup = option.group;
+                        return (
+                            <React.Fragment key={index}>
+                                {showGroupHeader && (
+                                    <div className="option-group-header">{option.group}</div>
+                                )}
+                                <div
+                                    className={`question-option ${index === selectedIndex ? 'selected' : ''}`}
+                                    onClick={() => handleOptionClick(index)}
+                                >
+                                    <span className="option-key">{index + 1}.</span>
+                                    <span className="option-label">{option.label}</span>
+                                </div>
+                            </React.Fragment>
+                        );
+                    })}
                 </div>
+                {validationError && (
+                    <div className="validation-error">{validationError}</div>
+                )}
                 <div className="custom-input-container">
                     <form onSubmit={handleSubmitCustom}>
                         <input
@@ -111,6 +158,13 @@ export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
                    gap: 0.5rem;
                    margin-bottom: 1rem;
                 }
+                .option-group-header {
+                   font-size: 0.85rem;
+                   color: var(--text-muted);
+                   font-weight: 600;
+                   margin-top: 0.5rem;
+                   padding-left: 0.25rem;
+                }
                 .question-option {
                    padding: 0.5rem;
                    border-radius: 4px;
@@ -129,6 +183,12 @@ export function QuestionPanel({ request, onAnswer }: QuestionPanelProps) {
                 .option-key {
                    color: var(--text-muted);
                    width: 1.5rem;
+                }
+                .validation-error {
+                   color: #ff4444;
+                   font-size: 0.85rem;
+                   margin-bottom: 0.5rem;
+                   padding-left: 0.25rem;
                 }
                 .panel-input {
                     width: 100%;
