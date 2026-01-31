@@ -7,7 +7,7 @@ import { createXai } from '@ai-sdk/xai';
 import { z } from 'zod';
 import { readConfig } from '../../utils/config';
 import { executeTool } from './executor';
-import { getExploreAbortSignal, isExploreAborted, notifyExploreTool } from '../../utils/exploreBridge';
+import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext } from '../../utils/exploreBridge';
 
 interface ExploreLog {
   tool: string;
@@ -233,6 +233,11 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     const tools = createExploreTools();
 
+    const parentContext = getExploreContext();
+    const systemPrompt = parentContext
+      ? `${EXPLORE_SYSTEM_PROMPT}\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`
+      : EXPLORE_SYSTEM_PROMPT;
+
     const result = streamText({
       model,
       messages: [
@@ -241,7 +246,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
           content: `Explore the codebase to: ${purpose}`,
         },
       ],
-      system: EXPLORE_SYSTEM_PROMPT,
+      system: systemPrompt,
       tools,
       maxSteps: MAX_STEPS,
       abortSignal,

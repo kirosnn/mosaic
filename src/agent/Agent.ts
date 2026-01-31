@@ -17,6 +17,7 @@ import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
+import { setExploreContext } from '../utils/exploreBridge';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -155,6 +156,43 @@ function compactMessages(
   return [summaryMessage, ...recent];
 }
 
+function buildExploreContext(messages: CoreMessage[]): string {
+  const parts: string[] = [];
+
+  const userMessages: string[] = [];
+  const recentFiles = new Set<string>();
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+
+    if (msg.role === 'user' && userMessages.length < 2) {
+      const text = normalizeWhitespace(contentToText(msg.content));
+      if (text) userMessages.unshift(truncateText(text, 300));
+    }
+
+    if (msg.role === 'tool' && recentFiles.size < 15) {
+      const content: any = msg.content;
+      const part = Array.isArray(content) ? content[0] : undefined;
+      const toolName = part?.toolName ?? part?.tool_name;
+      if (toolName === 'read' || toolName === 'write' || toolName === 'edit') {
+        const args = part?.args ?? part?.input;
+        const path = args?.path;
+        if (typeof path === 'string') recentFiles.add(path);
+      }
+    }
+  }
+
+  if (userMessages.length > 0) {
+    parts.push(`User intent:\n${userMessages.map(m => `- ${m}`).join('\n')}`);
+  }
+
+  if (recentFiles.size > 0) {
+    parts.push(`Files recently accessed:\n${[...recentFiles].map(f => `- ${f}`).join('\n')}`);
+  }
+
+  return parts.join('\n\n');
+}
+
 export class Agent {
   private messageHistory: CoreMessage[] = [];
   private provider: Provider;
@@ -259,6 +297,7 @@ export class Agent {
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
         this.config.provider
       );
+      setExploreContext(buildExploreContext(this.messageHistory));
       yield* this.provider.sendMessage(compacted, this.config, options);
     } catch (error) {
       yield {
@@ -290,6 +329,7 @@ export class Agent {
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
         this.config.provider
       );
+      setExploreContext(buildExploreContext(this.messageHistory));
       yield* this.provider.sendMessage(compacted, this.config, options);
     } catch (error) {
       yield {

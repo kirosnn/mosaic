@@ -15,6 +15,7 @@ interface ExploreBridgeGlobal {
   toolCallback: ExploreToolCallback | null;
   totalExploreTokens: number;
   subscribers: Set<ExploreToolSubscriber>;
+  parentContext: string;
 }
 
 const globalKey = '__mosaic_explore_bridge__';
@@ -26,6 +27,7 @@ if (!g[globalKey]) {
     toolCallback: null,
     totalExploreTokens: 0,
     subscribers: new Set<ExploreToolSubscriber>(),
+    parentContext: '',
   };
 }
 
@@ -84,4 +86,12 @@ export function subscribeExploreTool(callback: ExploreToolSubscriber): () => voi
 
 export function getExploreTokens(): number {
   return state.totalExploreTokens;
+}
+
+export function setExploreContext(context: string): void {
+  state.parentContext = context;
+}
+
+export function getExploreContext(): string {
+  return state.parentContext;
 }
