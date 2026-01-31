@@ -305,10 +305,25 @@ function getLineCount(text: string): number {
 function formatListTree(result: unknown): string[] {
   if (typeof result !== 'string') return [];
   try {
-    const parsed = JSON.parse(result) as Array<{ name?: string; path?: string; type?: string }>;
-    if (!Array.isArray(parsed)) return [];
+    const parsed = JSON.parse(result);
 
-    const entries = parsed
+    let items: Array<{ name?: string; path?: string; type?: string }>;
+    let errors: string[] = [];
+
+    if (Array.isArray(parsed)) {
+      items = parsed;
+    } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files)) {
+      items = parsed.files;
+      if (Array.isArray(parsed.errors)) {
+        errors = parsed.errors
+          .map((e: unknown) => (typeof e === 'string' ? e : ''))
+          .filter((e: string) => e);
+      }
+    } else {
+      return [];
+    }
+
+    const entries = items
       .map((e) => ({
         name: typeof e.name === 'string' ? e.name : (typeof e.path === 'string' ? e.path : ''),
         type: typeof e.type === 'string' ? e.type : '',
@@ -325,7 +340,16 @@ function formatListTree(result: unknown): string[] {
       .map((e) => e.name)
       .sort((a, b) => a.localeCompare(b));
 
-    return [...dirs, ...files];
+    const lines = [...dirs, ...files];
+
+    if (errors.length > 0) {
+      lines.push('', `Errors (${errors.length}):`);
+      for (const err of errors) {
+        lines.push(`  ${err}`);
+      }
+    }
+
+    return lines;
   } catch {
     return [];
   }
