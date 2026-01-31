@@ -23,10 +23,8 @@ export async function mcpDoctor(): Promise<void> {
   for (const config of configs) {
     console.log(`--- ${config.id} (${config.name}) ---`);
 
-    // 1. Config validation
     console.log('  [config] OK');
 
-    // 2. Check command resolves
     const commandExists = await checkCommand(config.command);
     if (commandExists) {
       console.log(`  [command] "${config.command}" found`);
@@ -40,7 +38,6 @@ export async function mcpDoctor(): Promise<void> {
       continue;
     }
 
-    // 3. Try start + init + list tools
     try {
       const state = await manager.startServer(config);
 

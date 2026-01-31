@@ -37,15 +37,24 @@ export function getDefaultServerConfig(): Partial<McpServerConfig> {
 }
 
 function getNavigationServerConfig(): Partial<McpServerConfig> {
-  const serverPath = fileURLToPath(new URL('./servers/navigation.ts', import.meta.url));
+  const serverPath = fileURLToPath(new URL('./servers/navigation/index.ts', import.meta.url));
   return {
     id: 'navigation',
     name: 'Navigation',
-    command: 'bun',
-    args: ['run', serverPath],
+    native: true,
+    command: 'npx',
+    args: ['tsx', serverPath],
     enabled: true,
     autostart: 'startup',
-    approval: 'always',
+    approval: 'never',
+    toolApproval: {
+      navigation_cookies: 'always',
+      navigation_headers: 'always',
+    },
+    timeouts: {
+      initialize: 30000,
+      call: 60000,
+    },
   };
 }
 
@@ -87,6 +96,7 @@ function mergeWithDefaults(partial: Partial<McpServerConfig>): McpServerConfig {
     id: partial.id!,
     name: partial.name || partial.id!,
     enabled: partial.enabled ?? defaults.enabled!,
+    native: partial.native,
     transport: partial.transport || defaults.transport!,
     command: partial.command!,
     args: partial.args || defaults.args!,
@@ -98,6 +108,7 @@ function mergeWithDefaults(partial: Partial<McpServerConfig>): McpServerConfig {
     logs: { ...defaults.logs!, ...partial.logs },
     tools: { ...defaults.tools, ...partial.tools },
     approval: partial.approval || defaults.approval!,
+    toolApproval: partial.toolApproval,
   };
 }
 

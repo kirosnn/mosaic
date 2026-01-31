@@ -185,12 +185,13 @@ export class McpProcessManager {
     try {
       const timeout = instance.config.timeouts.call;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeout);
 
       const result = await instance.client.callTool(
         { name: toolName, arguments: args },
         undefined,
-        { signal: controller.signal }
+        { signal: controller.signal, timeout: timeout }
       );
 
       clearTimeout(timer);
@@ -207,7 +208,11 @@ export class McpProcessManager {
         isError: result.isError === true,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const raw = error instanceof Error ? error.message : String(error);
+      const isAbort = raw.includes('AbortError') || raw.includes('aborted');
+      const message = isAbort
+        ? `Tool call timed out after ${Math.round(instance.config.timeouts.call / 1000)}s: ${toolName}`
+        : raw;
       instance.logBuffer.push({
         timestamp: Date.now(),
         level: 'error',

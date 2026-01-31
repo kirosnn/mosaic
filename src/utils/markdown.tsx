@@ -1,9 +1,21 @@
 import { TextAttributes } from "@opentui/core";
 
 export interface MarkdownSegment {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem' | 'link';
   content: string;
   level?: number;
+  href?: string;
+}
+
+const linkSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+function normalizeLinkUri(href: string) {
+  const trimmed = href.trim();
+  if (!trimmed) return trimmed;
+  if (linkSchemePattern.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('//')) return `https:${trimmed}`;
+  if (trimmed.startsWith('/') || trimmed.startsWith('#') || trimmed.startsWith('.') || trimmed.startsWith('?')) return trimmed;
+  return `https://${trimmed}`;
 }
 
 function parseInline(text: string): MarkdownSegment[] {
@@ -37,6 +49,21 @@ function parseInline(text: string): MarkdownSegment[] {
         segments.push({ type: 'bold', content: text.substring(i + 2, j) });
         i = j + 2;
         continue;
+      }
+    }
+
+    if (text[i] === '[') {
+      const labelEnd = text.indexOf(']', i + 1);
+      if (labelEnd !== -1 && text[labelEnd + 1] === '(') {
+        const urlEnd = text.indexOf(')', labelEnd + 2);
+        if (urlEnd !== -1) {
+          const label = text.substring(i + 1, labelEnd);
+          const href = text.substring(labelEnd + 2, urlEnd).trim();
+          flushText();
+          segments.push({ type: 'link', content: label, href });
+          i = urlEnd + 1;
+          continue;
+        }
       }
     }
 
@@ -87,6 +114,13 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
 
     case 'heading':
       return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
+
+    case 'link':
+      return (
+        <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>
+          <a href={normalizeLinkUri(segment.href || '')}>{segment.content}</a>
+        </text>
+      );
 
     case 'listitem':
       return (

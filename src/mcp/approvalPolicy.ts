@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { requestApproval } from '../utils/approvalBridge';
 import type { McpApprovalCacheEntry, McpRiskHint, McpServerConfig } from './types';
+import { isNativeMcpServer } from './types';
 
 const READ_KEYWORDS = ['read', 'get', 'list', 'search', 'find', 'show', 'describe', 'query', 'fetch', 'inspect', 'view', 'ls', 'cat'];
 const WRITE_KEYWORDS = ['write', 'set', 'create', 'update', 'put', 'save', 'modify', 'patch', 'upsert', 'insert', 'append'];
@@ -54,15 +55,22 @@ export class McpApprovalPolicy {
     const argsStr = formatArgs(request.args);
     const payloadSize = JSON.stringify(request.args).length;
 
+    const isNative = isNativeMcpServer(request.serverId);
     const preview = {
-      title: `MCP: ${request.serverName} / ${request.toolName}`,
+      title: isNative ? request.toolName : `MCP: ${request.serverName} / ${request.toolName}`,
       content: argsStr,
-      details: [
-        `Server: ${request.serverName} (${request.serverId})`,
-        `Tool: ${request.toolName}`,
-        `Risk: ${riskHint}`,
-        `Payload: ${payloadSize} bytes`,
-      ],
+      details: isNative
+        ? [
+            `Tool: ${request.toolName}`,
+            `Risk: ${riskHint}`,
+            `Payload: ${payloadSize} bytes`,
+          ]
+        : [
+            `Server: ${request.serverName} (${request.serverId})`,
+            `Tool: ${request.toolName}`,
+            `Risk: ${riskHint}`,
+            `Payload: ${payloadSize} bytes`,
+          ],
     };
 
     const mcpMeta = {

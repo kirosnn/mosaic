@@ -6,6 +6,7 @@ export interface McpServerConfig {
   id: string;
   name: string;
   enabled: boolean;
+  native?: boolean;
   transport: McpTransportConfig;
   command: string;
   args: string[];
@@ -30,6 +31,7 @@ export interface McpServerConfig {
     deny?: string[];
   };
   approval: McpApprovalMode;
+  toolApproval?: Record<string, McpApprovalMode>;
 }
 
 export type McpApprovalMode = 'always' | 'once-per-tool' | 'once-per-server' | 'never';
@@ -92,4 +94,23 @@ export function parseCanonicalId(canonicalId: string): { serverId: string; toolN
   const toolName = parts.pop()!;
   const serverId = parts.join(':');
   return { serverId, toolName };
+}
+
+export const NATIVE_SERVER_IDS = new Set(['navigation']);
+
+export function isNativeMcpServer(serverId: string): boolean {
+  return NATIVE_SERVER_IDS.has(serverId);
+}
+
+export function isNativeMcpTool(safeId: string): boolean {
+  const parsed = parseSafeId(safeId);
+  if (!parsed) return false;
+  return NATIVE_SERVER_IDS.has(parsed.serverId);
+}
+
+export function getNativeMcpToolName(safeId: string): string | null {
+  const parsed = parseSafeId(safeId);
+  if (!parsed) return null;
+  if (!NATIVE_SERVER_IDS.has(parsed.serverId)) return null;
+  return parsed.toolName;
 }

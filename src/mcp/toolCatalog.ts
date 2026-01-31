@@ -1,6 +1,6 @@
 import { tool, type CoreTool } from 'ai';
 import type { McpToolInfo, McpServerConfig } from './types';
-import { parseSafeId } from './types';
+import { parseSafeId, isNativeMcpServer } from './types';
 import { McpProcessManager } from './processManager';
 import { McpApprovalPolicy } from './approvalPolicy';
 import { jsonSchemaObjectToZodObject } from './schemaConverter';
@@ -90,13 +90,14 @@ export class McpToolCatalog {
       parameters: zodParams,
       execute: async (args: Record<string, unknown>) => {
         try {
+          const effectiveApproval = serverConfig.toolApproval?.[toolInfo.name] ?? serverConfig.approval;
           const approvalResult = await ap.requestMcpApproval({
             serverId: serverConfig.id,
             serverName: serverConfig.name,
             toolName: toolInfo.name,
             canonicalId: toolInfo.canonicalId,
             args,
-            approvalMode: serverConfig.approval,
+            approvalMode: effectiveApproval,
           });
 
           if (!approvalResult.approved) {
@@ -157,6 +158,18 @@ export class McpToolCatalog {
 
   parseMcpToolName(safeId: string): { serverId: string; toolName: string } | null {
     return parseSafeId(safeId);
+  }
+
+  isNative(safeId: string): boolean {
+    const parsed = parseSafeId(safeId);
+    if (!parsed) return false;
+    const config = this.configs.find(c => c.id === parsed.serverId);
+    if (config?.native) return true;
+    return isNativeMcpServer(parsed.serverId);
+  }
+
+  getServerConfig(serverId: string): McpServerConfig | null {
+    return this.configs.find(c => c.id === serverId) || null;
   }
 
   updateConfigs(configs: McpServerConfig[]): void {

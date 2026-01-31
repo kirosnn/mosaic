@@ -13,6 +13,24 @@ interface MessageItemProps {
     message: Message;
 }
 
+const linkSchemePattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+function normalizeLinkUri(href: string) {
+    const trimmed = href.trim();
+    if (!trimmed) return trimmed;
+    if (linkSchemePattern.test(trimmed)) return trimmed;
+    if (trimmed.startsWith('//')) return `https:${trimmed}`;
+    if (trimmed.startsWith('/') || trimmed.startsWith('#') || trimmed.startsWith('.') || trimmed.startsWith('?')) return trimmed;
+    return `https://${trimmed}`;
+}
+
+function handleMarkdownLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href?: string | null) {
+    if (!href) return;
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    window.open(href, "_blank", "noopener,noreferrer");
+}
+
 function renderDiffLine(line: string, index: number): React.ReactElement {
     const parsed = parseDiffLine(line);
 
@@ -128,7 +146,20 @@ export function MessageItem({ message }: MessageItemProps) {
                     <div className="markdown-content">
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
+                            transformLinkUri={normalizeLinkUri}
                             components={{
+                                a({ href, children, ...props }) {
+                                    const normalized = normalizeLinkUri(href || '');
+                                    return (
+                                        <a
+                                            href={normalized}
+                                            onClick={(event) => handleMarkdownLinkClick(event, normalized)}
+                                            {...props}
+                                        >
+                                            {children}
+                                        </a>
+                                    );
+                                },
                                 code({ node, className, children, ...props }) {
                                     const match = /language-(\w+)/.exec(className || '');
                                     const { ref, ...rest } = props as any;

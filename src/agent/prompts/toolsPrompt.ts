@@ -1,3 +1,9 @@
+import { NATIVE_SERVER_IDS } from '../../mcp/types';
+
+const NATIVE_SERVER_LABELS: Record<string, string> = {
+  navigation: 'Browser Navigation',
+};
+
 export const TOOLS_PROMPT = `
 # Available Tools
 
@@ -235,8 +241,63 @@ export function getToolsPrompt(mcpToolInfos?: Array<{ serverId: string; name: st
     return TOOLS_PROMPT;
   }
 
-  const mcpSection = buildMcpToolsSection(mcpToolInfos);
-  return TOOLS_PROMPT + '\n\n' + mcpSection;
+  const nativeTools = mcpToolInfos.filter(t => NATIVE_SERVER_IDS.has(t.serverId));
+  const externalTools = mcpToolInfos.filter(t => !NATIVE_SERVER_IDS.has(t.serverId));
+
+  let result = TOOLS_PROMPT;
+
+  if (nativeTools.length > 0) {
+    result += '\n\n' + buildNativeToolsSection(nativeTools);
+  }
+
+  if (externalTools.length > 0) {
+    result += '\n\n' + buildMcpToolsSection(externalTools);
+  }
+
+  return result;
+}
+
+function buildNativeToolsSection(tools: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
+  const lines: string[] = [];
+
+  const byServer = new Map<string, typeof tools>();
+  for (const t of tools) {
+    const list = byServer.get(t.serverId) || [];
+    list.push(t);
+    byServer.set(t.serverId, list);
+  }
+
+  for (const [serverId, serverTools] of byServer) {
+    const label = NATIVE_SERVER_LABELS[serverId] || serverId.charAt(0).toUpperCase() + serverId.slice(1);
+    lines.push(`## ${label}`);
+    lines.push('');
+
+    for (const t of serverTools) {
+      lines.push(`### ${t.safeId}`);
+      if (t.description) {
+        lines.push(t.description);
+      }
+      const schema = t.inputSchema;
+      if (schema && typeof schema === 'object' && schema.properties) {
+        const props = schema.properties as Record<string, Record<string, unknown>>;
+        const required = (schema.required || []) as string[];
+        const paramLines: string[] = [];
+        for (const [key, propSchema] of Object.entries(props)) {
+          const type = propSchema.type || 'unknown';
+          const desc = propSchema.description || '';
+          const req = required.includes(key) ? 'required' : 'optional';
+          paramLines.push(`- ${key} (${type}, ${req})${desc ? ': ' + desc : ''}`);
+        }
+        if (paramLines.length > 0) {
+          lines.push('Parameters:');
+          lines.push(...paramLines);
+        }
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
 }
 
 function buildMcpToolsSection(tools: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {

@@ -331,13 +331,27 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     return subscribeApprovalAccepted((accepted) => {
       const isBashTool = accepted.toolName === 'bash';
+      const isMcpTool = accepted.toolName.startsWith('mcp__');
 
-      if (isBashTool) {
+      if (isBashTool || isMcpTool) {
         const { name: toolDisplayName, info: toolInfo } = parseToolHeader(accepted.toolName, accepted.args);
         const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
+
+          if (isMcpTool) {
+            const existingIdx = newMessages.findIndex(m => m.isRunning && m.toolName === accepted.toolName);
+            if (existingIdx !== -1) {
+              newMessages[existingIdx] = {
+                ...newMessages[existingIdx]!,
+                content: runningContent,
+                runningStartTime: Date.now()
+              };
+              return newMessages;
+            }
+          }
+
           newMessages.push({
             id: createId(),
             role: "tool",
@@ -688,7 +702,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
                 const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
                 const isExploreTool = event.toolName === 'explore';
-                const showRunning = event.toolName === 'bash';
+                const isMcpTool = event.toolName.startsWith('mcp__');
+                const showRunning = event.toolName === 'bash' || isMcpTool;
                 let runningMessageId: string | undefined;
 
                 if (isExploreTool) {
@@ -775,8 +790,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   let runningIndex = -1;
                   if (runningMessageId) {
                     runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-                  } else if (toolName === 'bash' || toolName === 'explore') {
-                    runningIndex = newMessages.findIndex(m => m.toolName === toolName && m.isRunning === true);
+                  } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
+                    runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
                   }
 
                   if (runningIndex !== -1) {
@@ -1149,6 +1164,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           setCurrentTokens(estimateTokens());
 
           const isExploreTool = event.toolName === 'explore';
+          const isMcpTool = event.toolName.startsWith('mcp__');
           let runningMessageId: string | undefined;
 
           if (isExploreTool) {
@@ -1156,8 +1172,13 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             exploreToolsRef.current = [];
             const purpose = (event.args.purpose as string) || 'exploring...';
             explorePurposeRef.current = purpose;
+          }
+
+          if (isExploreTool || isMcpTool) {
             runningMessageId = createId();
-            exploreMessageIdRef.current = runningMessageId;
+            if (isExploreTool) {
+              exploreMessageIdRef.current = runningMessageId;
+            }
             const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
             const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
@@ -1229,7 +1250,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             let runningIndex = -1;
             if (runningMessageId) {
               runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-            } else if (toolName === 'bash' || toolName === 'explore') {
+            } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
               runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
             }
 

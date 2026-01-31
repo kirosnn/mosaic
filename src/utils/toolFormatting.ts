@@ -1,4 +1,5 @@
 import { formatWriteToolResult, formatEditToolResult } from './diff';
+import { isNativeMcpTool, getNativeMcpToolName } from '../mcp/types';
 
 const TOOL_BODY_INDENT = 2;
 
@@ -32,7 +33,21 @@ function getMcpToolDisplayName(tool: string): string {
   return words.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
+function getNativeToolDisplayName(safeId: string): string | null {
+  const toolName = getNativeMcpToolName(safeId);
+  if (!toolName) return null;
+  const mcp = parseMcpSafeId(safeId);
+  if (!mcp) return null;
+  const serverPrefix = mcp.serverId + '_';
+  const stripped = toolName.startsWith(serverPrefix) ? toolName.slice(serverPrefix.length) : toolName;
+  return getMcpToolDisplayName(stripped);
+}
+
 function getToolDisplayName(toolName: string): string {
+  if (isNativeMcpTool(toolName)) {
+    const nativeName = getNativeToolDisplayName(toolName);
+    if (nativeName) return nativeName;
+  }
   const mcp = parseMcpSafeId(toolName);
   if (mcp) {
     return getMcpToolDisplayName(mcp.tool);
@@ -143,6 +158,15 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
   }
 }
 
+function formatNativeMcpError(errorText: string): string[] {
+  const statusMatch = errorText.match(/status code (\d+)/i);
+  if (statusMatch) {
+    return [`Error ${statusMatch[1]}`];
+  }
+  const short = errorText.length > 80 ? errorText.slice(0, 80) + '...' : errorText;
+  return [`Error: ${short}`];
+}
+
 export function isToolSuccess(result: unknown): boolean {
   if (result === null || result === undefined) return false;
 
@@ -211,6 +235,9 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     default: {
       if (toolName.startsWith('mcp__')) {
         const info = getMcpHeaderInfo('', args);
+        if (isNativeMcpTool(toolName)) {
+          return info ? `${displayName} (${info})` : displayName;
+        }
         return info ? `${displayName} ("${info}")` : displayName;
       }
       return displayName;
@@ -295,6 +322,10 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
       return { name: displayName, info: null };
     }
   }
+}
+
+export function isNativeMcpToolName(toolName: string): boolean {
+  return isNativeMcpTool(toolName);
 }
 
 function getLineCount(text: string): number {
@@ -382,6 +413,24 @@ function getToolErrorText(result: unknown): string | null {
 
   const error = obj.error;
   return typeof error === 'string' && error.trim() ? error.trim() : null;
+}
+
+function formatSearchResultBody(result: unknown): string[] {
+  if (typeof result !== 'string') return [];
+  try {
+    const parsed = JSON.parse(result);
+    if (typeof parsed !== 'object' || parsed === null) return [];
+
+    if (typeof parsed.error === 'string') {
+      return [`Error: ${parsed.error}`];
+    }
+
+    const count = typeof parsed.resultCount === 'number' ? parsed.resultCount : 0;
+    if (count === 0) return ['No results'];
+    return [`${count} results`];
+  } catch {
+    return [];
+  }
 }
 
 function formatMcpResultBody(result: unknown): string[] {
@@ -545,12 +594,7 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
       }
     }
     if (toolName.startsWith('mcp__')) {
-      const statusMatch = errorText.match(/status code (\d+)/i);
-      if (statusMatch) {
-        return [`Error ${statusMatch[1]}`];
-      }
-      const short = errorText.length > 80 ? errorText.slice(0, 80) + '...' : errorText;
-      return [`Error: ${short}`];
+      return formatNativeMcpError(errorText);
     }
     return [`Tool error: ${errorText}`];
   }
@@ -696,6 +740,11 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
 
     default: {
       if (toolName.startsWith('mcp__')) {
+        const nativeName = getNativeMcpToolName(toolName);
+        if (nativeName === 'navigation_search') {
+          const searchLines = formatSearchResultBody(result);
+          if (searchLines.length > 0) return searchLines;
+        }
         return formatMcpResultBody(result);
       }
       const toolResultText = formatToolResult(result);
