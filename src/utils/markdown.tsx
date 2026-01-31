@@ -129,85 +129,52 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
   let currentLine = '';
   let currentSegments: MarkdownSegment[] = [];
 
+  const splitSegment = (segment: MarkdownSegment): MarkdownSegment[] => {
+    if (segment.type === 'code') return [segment];
+    const parts = segment.content.match(/\s+|[^\s]+/g);
+    if (!parts) return [segment];
+    return parts.map(part => ({ ...segment, content: part }));
+  };
+
+  const pushLine = () => {
+    if (!currentLine) return;
+    lines.push({ text: currentLine, segments: currentSegments });
+    currentLine = '';
+    currentSegments = [];
+  };
+
+  const addPiece = (piece: MarkdownSegment) => {
+    let remaining = piece.content;
+    while (remaining.length > 0) {
+      if (!currentLine) {
+        if (remaining.trim() === '') {
+          return;
+        }
+        if (remaining.length <= maxWidth) {
+          currentLine = remaining;
+          currentSegments = [{ ...piece, content: remaining }];
+          return;
+        }
+        const chunk = remaining.slice(0, maxWidth);
+        lines.push({ text: chunk, segments: [{ ...piece, content: chunk }] });
+        remaining = remaining.slice(maxWidth);
+        continue;
+      }
+
+      if ((currentLine + remaining).length <= maxWidth) {
+        currentLine += remaining;
+        currentSegments.push({ ...piece, content: remaining });
+        return;
+      }
+
+      pushLine();
+    }
+  };
+
   for (const segment of segments) {
-    const content = segment.content;
-    const fullText = content;
-
-    if (!currentLine) {
-      if (fullText.length <= maxWidth) {
-        currentLine = fullText;
-        currentSegments.push(segment);
-      } else {
-        let remaining = content;
-        while (remaining) {
-          if (remaining.length <= maxWidth) {
-            currentLine = remaining;
-            currentSegments.push({ ...segment, content: remaining });
-            remaining = '';
-          } else {
-            const breakPoint = remaining.lastIndexOf(' ', maxWidth);
-            if (breakPoint > 0) {
-              const chunk = remaining.slice(0, breakPoint);
-              currentLine = chunk;
-              currentSegments.push({ ...segment, content: chunk });
-              lines.push({ text: currentLine, segments: currentSegments });
-              currentLine = '';
-              currentSegments = [];
-              remaining = remaining.slice(breakPoint + 1);
-            } else {
-              const chunk = remaining.slice(0, maxWidth);
-              currentLine = chunk;
-              currentSegments.push({ ...segment, content: chunk });
-              lines.push({ text: currentLine, segments: currentSegments });
-              currentLine = '';
-              currentSegments = [];
-              remaining = remaining.slice(maxWidth);
-            }
-          }
-        }
-      }
-    } else {
-      const needsSpace = !currentLine.endsWith(' ') && !fullText.startsWith(' ');
-      const separator = needsSpace ? ' ' : '';
-
-      if ((currentLine + separator + fullText).length <= maxWidth) {
-        currentLine += separator + fullText;
-        currentSegments.push(segment);
-      } else {
-        lines.push({ text: currentLine, segments: currentSegments });
-        currentLine = fullText;
-        currentSegments = [segment];
-
-        if (fullText.length > maxWidth) {
-          let remaining = content;
-          while (remaining) {
-            if (remaining.length <= maxWidth) {
-              currentLine = remaining;
-              currentSegments = [{ ...segment, content: remaining }];
-              remaining = '';
-            } else {
-              const breakPoint = remaining.lastIndexOf(' ', maxWidth);
-              if (breakPoint > 0) {
-                const chunk = remaining.slice(0, breakPoint);
-                currentLine = chunk;
-                currentSegments = [{ ...segment, content: chunk }];
-                lines.push({ text: currentLine, segments: currentSegments });
-                currentLine = '';
-                currentSegments = [];
-                remaining = remaining.slice(breakPoint + 1);
-              } else {
-                const chunk = remaining.slice(0, maxWidth);
-                currentLine = chunk;
-                currentSegments = [{ ...segment, content: chunk }];
-                lines.push({ text: currentLine, segments: currentSegments });
-                currentLine = '';
-                currentSegments = [];
-                remaining = remaining.slice(maxWidth);
-              }
-            }
-          }
-        }
-      }
+    const pieces = splitSegment(segment);
+    for (const piece of pieces) {
+      addPiece(piece);
     }
   }
 
@@ -239,8 +206,54 @@ function wrapCodeLine(line: string, maxWidth: number): string[] {
   return chunks;
 }
 
+function reflowParagraphs(text: string): string {
+  const rawLines = text.split('\n');
+  const result: string[] = [];
+  let inCodeBlock = false;
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i]!;
+
+    if (/^```/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      result.push(line);
+      continue;
+    }
+
+    if (inCodeBlock) {
+      result.push(line);
+      continue;
+    }
+
+    if (line.trim() === '') {
+      result.push(line);
+      continue;
+    }
+
+    if (/^#{1,6}\s/.test(line) || /^[-*+]\s/.test(line) || /^\d+\.\s/.test(line)) {
+      result.push(line);
+      continue;
+    }
+
+    const prev = result.length > 0 ? result[result.length - 1]! : '';
+    const prevIsText = prev.trim() !== '' &&
+      !/^```/.test(prev) &&
+      !/^#{1,6}\s/.test(prev) &&
+      !/^[-*+]\s/.test(prev) &&
+      !/^\d+\.\s/.test(prev);
+
+    if (prevIsText) {
+      result[result.length - 1] = prev + ' ' + line;
+    } else {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
+}
+
 export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMarkdownBlock[] {
-  const lines = text.split('\n');
+  const lines = reflowParagraphs(text).split('\n');
   const blocks: WrappedMarkdownBlock[] = [];
   let inCodeBlock = false;
   let codeLines: string[] = [];
