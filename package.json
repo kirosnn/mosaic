@@ -1,6 +1,6 @@
 {
   "name": "@kirosnn/mosaic",
-  "version": "0.71.0",
+  "version": "0.72.0",
   "description": "The open source coding agent.",
   "license": "MIT",
   "type": "module",
@@ -42,6 +42,7 @@
     "better-sqlite3": "^12.6.0",
     "linkedom": "^0.18.12",
     "ollama": "^0.5.0",
+    "playwright": "^1.45.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",

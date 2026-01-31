@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import type { McpServerConfig, McpGlobalConfig } from './types';
 
 const MCP_DIR = join(homedir(), '.mosaic', 'mcp');
@@ -31,6 +32,19 @@ export function getDefaultServerConfig(): Partial<McpServerConfig> {
       bufferSize: 200,
     },
     tools: {},
+    approval: 'always',
+  };
+}
+
+function getNavigationServerConfig(): Partial<McpServerConfig> {
+  const serverPath = fileURLToPath(new URL('./servers/navigation.ts', import.meta.url));
+  return {
+    id: 'navigation',
+    name: 'Navigation',
+    command: 'bun',
+    args: ['run', serverPath],
+    enabled: true,
+    autostart: 'startup',
     approval: 'always',
   };
 }
@@ -143,6 +157,10 @@ export function loadMcpConfig(): McpServerConfig[] {
         configMap.set(server.id, server);
       }
     }
+  }
+
+  if (!configMap.has('navigation')) {
+    configMap.set('navigation', getNavigationServerConfig());
   }
 
   const results: McpServerConfig[] = [];
