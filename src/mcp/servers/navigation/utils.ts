@@ -14,7 +14,7 @@ export async function waitForStability(page: Page, timeout = 10000): Promise<voi
     try {
         await page.waitForLoadState('networkidle', { timeout });
     } catch {
-        await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+        await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => { });
         await randomDelay(300, 600);
     }
 }

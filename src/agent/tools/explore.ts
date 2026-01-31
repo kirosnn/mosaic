@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { executeExploreTool } from './exploreExecutor';
 
 export const explore: CoreTool = tool({
-  description: `Explore the codebase autonomously to gather information.
-This tool launches an exploration agent that will use read, glob, grep, and list tools iteratively.
-The agent will continue exploring until it has gathered enough information to answer the purpose.
-Use this for open-ended exploration tasks like understanding code structure, finding implementations, etc.`,
+  description: `Explore the codebase and web autonomously to gather information.
+This tool launches an exploration agent that will use read, glob, grep, list, fetch, and search tools iteratively.
+The agent can search the web for documentation and fetch web pages when needed.
+Use this for open-ended exploration tasks like understanding code structure, finding implementations, looking up documentation, etc.`,
   parameters: z.object({
     purpose: z.string().describe('The goal of the exploration - what information you need to gather'),
   }),

@@ -29,7 +29,7 @@ async function resolveRedirects(page: Page, results: SearchResult[]): Promise<Se
                         if (decoded.startsWith('http')) return { ...r, href: decoded };
                     }
                 }
-            } catch {}
+            } catch { }
             return r;
         });
     }, results);
@@ -160,7 +160,7 @@ async function dismissConsentDialogs(page: Page): Promise<void> {
         ).first();
         if (await consentButton.isVisible({ timeout: 1500 })) {
             await consentButton.click();
-            await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+            await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => { });
         }
     } catch {
         // No consent dialog
@@ -176,7 +176,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 export function registerTools(server: McpServer) {
     server.registerTool('navigation_search', {
-        description: 'Search the web and return top results (titles, links, snippets). Defaults to Bing. Supports bing, duckduckgo, and google engines.',
+        description: 'Search the web and return top results (titles, links, snippets). Defaults to Google. Supports bing, duckduckgo, and google engines.',
         inputSchema: {
             query: z.string(),
             limit: z.number().optional(),
@@ -184,9 +184,9 @@ export function registerTools(server: McpServer) {
             newTab: z.boolean().optional(),
         },
     }, async (args) => {
-        const engineName: SearchEngine = args.engine ?? 'bing';
+        const engineName: SearchEngine = args.engine ?? 'google';
         const engine = engines[engineName];
-        const limit = args.limit ?? 8;
+        const limit = args.limit ?? 10;
 
         const doSearch = async () => {
             const target = args.newTab ? await ensureContext().then(async ctx => {

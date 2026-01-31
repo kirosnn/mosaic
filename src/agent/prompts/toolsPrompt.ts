@@ -38,21 +38,28 @@ List directory contents.
 ## Search & Discovery
 
 ### explore (RECOMMENDED for understanding context)
-Autonomous exploration agent that intelligently searches the codebase.
+Autonomous exploration agent that intelligently searches the codebase and the web.
 - purpose (string, required): What to find/understand
+
+The explore agent has access to: read, glob, grep, list, fetch (web pages), and search (web search).
+It can look up external documentation, API references, and tutorials when needed.
 
 USE EXPLORE WHEN:
 - Starting work on an unfamiliar codebase
 - Understanding how something works
 - Finding related code, patterns, or architecture
 - You're unsure where to make changes
+- You need to look up library/framework documentation
+- You need to research an API or find usage examples online
 
 Examples:
 - explore(purpose="Find API endpoints and understand routing")
 - explore(purpose="Understand the authentication flow")
 - explore(purpose="Find UserService and all its usages")
+- explore(purpose="Look up the React Query documentation for useQuery options")
+- explore(purpose="Find the Playwright API docs for page.waitForSelector")
 
-The explore tool is INTELLIGENT - it autonomously reads files, follows imports, and builds understanding. This is MORE EFFICIENT than manual glob/grep/read cycles.
+The explore tool is INTELLIGENT - it autonomously reads files, follows imports, searches the web, reads documentation, and builds understanding. This is MORE EFFICIENT than manual glob/grep/read/fetch cycles.
 
 ### glob
 Find files by name pattern. Fast file discovery.
@@ -144,6 +151,7 @@ CRITICAL: Never ask questions in plain text. Always use this tool.
 | Task | Tool | Example |
 |------|------|---------|
 | Understand codebase/architecture | explore | explore(purpose="How does auth work?") |
+| Look up external documentation | explore | explore(purpose="Find React Query docs for useMutation") |
 | Find files by name | glob | glob(pattern="**/*.config.ts") |
 | Find specific text | grep | grep(query="handleSubmit", file_type="tsx") |
 | Read file contents | read | read(path="src/auth.ts") |
@@ -154,6 +162,7 @@ CRITICAL: Never ask questions in plain text. Always use this tool.
 | Need user input | question | question(prompt="...", options=[...]) |
 
 PREFER EXPLORE for understanding context before making changes.
+PREFER EXPLORE for looking up documentation - it can search the web and read doc pages.
 PREFER grep with file_type for targeted text searches.
 
 # Continuation - CRITICAL

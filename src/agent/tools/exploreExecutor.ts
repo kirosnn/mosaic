@@ -20,13 +20,15 @@ let exploreLogs: ExploreLog[] = [];
 
 const EXPLORE_TIMEOUT = 8 * 60 * 1000;
 
-const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase.
+const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase and the web.
 
-Your goal is to explore the codebase to fulfill the given purpose. You have access to these tools:
+Your goal is to explore the codebase and external documentation to fulfill the given purpose. You have access to these tools:
 - read: Read file contents
 - glob: Find files by pattern
 - grep: Search for text in files
 - list: List directory contents
+- fetch: Fetch a URL and return its content as markdown (for reading documentation pages, API docs, etc.)
+- search: Search the web for documentation, tutorials, API references, error solutions
 
 IMPORTANT RULES:
 1. Be thorough but efficient - don't repeat the same searches
@@ -34,7 +36,10 @@ IMPORTANT RULES:
 3. If you cannot find the information after reasonable exploration, call "done" with what you found
 4. Focus on the purpose - don't explore unrelated areas
 5. Summarize findings clearly and include relevant file paths and code snippets
-6. You MUST call the "done" tool when finished - this is the only way to complete the exploration`;
+6. You MUST call the "done" tool when finished - this is the only way to complete the exploration
+7. When the purpose involves understanding a library, framework, or external API, use search to find official documentation, then fetch to read the relevant pages
+8. Prefer official documentation over blog posts or Stack Overflow when possible
+9. If search is unavailable, you can still use fetch with known documentation URLs`;
 
 const MAX_STEPS = 100;
 
@@ -170,6 +175,53 @@ function createExploreTools() {
         return result.result;
       },
     }),
+    fetch: createTool({
+      description: 'Fetch a URL and return its content as markdown. Use this to read documentation pages, API references, tutorials, etc.',
+      parameters: z.object({
+        url: z.string().describe('The URL to fetch (must be a valid HTTP/HTTPS URL)'),
+        max_length: z.number().optional().describe('Maximum characters to return (default: 10000, max: 100000)'),
+      }),
+      execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const result = await executeTool('fetch', { ...args, max_length: args.max_length ?? 10000 });
+        const resultLen = result.result?.length || 0;
+        const preview = result.success ? `${resultLen} chars` : (result.error || 'error');
+        exploreLogs.push({ tool: 'fetch', args, success: result.success, resultPreview: preview });
+        notifyExploreTool('fetch', args, { success: result.success, preview }, resultLen);
+        if (!result.success) return { error: result.error };
+        return result.result;
+      },
+    }),
+    search: createTool({
+      description: 'Search the web and return top results. Use this to find documentation, API references, tutorials, or solutions to errors.',
+      parameters: z.object({
+        query: z.string().describe('Search query'),
+        engine: z.enum(['google', 'bing', 'duckduckgo']).optional().describe('Search engine to use (default: google)'),
+      }),
+      execute: async (args) => {
+        if (isExploreAborted()) return { error: 'Exploration aborted' };
+        try {
+          const { getMcpManager, isMcpInitialized } = require('../../mcp/index');
+          if (!isMcpInitialized()) {
+            return { error: 'Web search unavailable (MCP not initialized)' };
+          }
+          const pm = getMcpManager();
+          const callArgs = { query: args.query, engine: args.engine || 'google' };
+          const result = await pm.callTool('navigation', 'navigation_search', callArgs);
+          const resultLen = result.content?.length || 0;
+          const preview = result.isError ? (result.content || 'error') : `${resultLen} chars`;
+          exploreLogs.push({ tool: 'search', args: callArgs, success: !result.isError, resultPreview: preview });
+          notifyExploreTool('search', callArgs, { success: !result.isError, preview }, resultLen);
+          if (result.isError) return { error: result.content || 'Search failed' };
+          return result.content;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          exploreLogs.push({ tool: 'search', args, success: false, resultPreview: message });
+          notifyExploreTool('search', args, { success: false, preview: message }, 0);
+          return { error: `Web search failed: ${message}` };
+        }
+      },
+    }),
     done: createTool({
       description: 'Call this when you have gathered enough information. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
       parameters: z.object({
@@ -188,7 +240,7 @@ function formatExploreLogs(): string {
 
   const lines = ['Tools used:'];
   for (const log of exploreLogs) {
-    const argStr = log.args.path || log.args.pattern || log.args.query || '';
+    const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
     const status = log.success ? '→' : '-';
     lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
   }

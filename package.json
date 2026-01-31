@@ -1,6 +1,6 @@
 {
   "name": "@kirosnn/mosaic",
-  "version": "0.74.0",
+  "version": "0.75.0",
   "description": "The open source coding agent.",
   "license": "MIT",
   "type": "module",

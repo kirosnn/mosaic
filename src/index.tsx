@@ -208,14 +208,27 @@ if (parsed.directory) {
 }
 
 import { addRecentProject } from './utils/config';
+import { appendFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+
+const DEBUG_LOG = join(homedir(), '.mosaic', 'debug.log');
+const debugLog = (msg: string) => {
+  try { appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+};
+
+debugLog('--- Mosaic starting ---');
 addRecentProject(process.cwd());
 
+debugLog('MCP init...');
 const { initializeMcp } = await import('./mcp/index');
-await initializeMcp().catch(() => { });
+await initializeMcp().catch((e) => { debugLog(`MCP init error: ${e}`); });
+debugLog('MCP init done');
 
 process.title = '⁘ Mosaic';
 
 const cleanup = async (code = 0) => {
+  debugLog(`cleanup called with code=${code}`);
   try {
     const { shutdownMcp } = await import('./mcp/index');
     await shutdownMcp();
@@ -224,17 +237,31 @@ const cleanup = async (code = 0) => {
   process.exit(code);
 };
 
-process.on('SIGINT', () => cleanup(0));
-process.on('SIGTERM', () => cleanup(0));
-process.on('uncaughtException', () => cleanup(1));
-process.on('unhandledRejection', () => cleanup(1));
+process.on('SIGINT', () => { debugLog('SIGINT received'); cleanup(0); });
+process.on('SIGTERM', () => { debugLog('SIGTERM received'); cleanup(0); });
+process.on('uncaughtException', (err) => {
+  const msg = `Uncaught exception: ${err?.stack ?? err}`;
+  debugLog(msg);
+  originalStderrWrite(msg + '\n');
+  cleanup(1);
+});
+process.on('unhandledRejection', (reason) => {
+  const msg = `Unhandled rejection: ${reason instanceof Error ? reason.stack : reason}`;
+  debugLog(msg);
+  originalStderrWrite(msg + '\n');
+  cleanup(1);
+});
 
 await new Promise(resolve => setTimeout(resolve, 100));
 
+debugLog('Creating renderer...');
 try {
   const renderer = await createCliRenderer();
+  debugLog('Renderer created, mounting React...');
   createRoot(renderer).render(<App initialMessage={parsed.initialMessage} />);
+  debugLog('React mounted');
 } catch (error) {
+  debugLog(`Renderer/React error: ${error}`);
   console.error(error);
   cleanup(1);
 }
