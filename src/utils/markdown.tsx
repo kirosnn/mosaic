@@ -216,6 +216,19 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
     lines.push({ text: currentLine, segments: currentSegments });
   }
 
+  for (const line of lines) {
+    const merged: MarkdownSegment[] = [];
+    for (const seg of line.segments) {
+      const prev = merged.length > 0 ? merged[merged.length - 1] : undefined;
+      if (prev && prev.type === seg.type && prev.href === seg.href && prev.level === seg.level) {
+        prev.content += seg.content;
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+    line.segments = merged;
+  }
+
   return lines.length > 0 ? lines : [{ text: '', segments: [] }];
 }
 

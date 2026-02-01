@@ -3,6 +3,9 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { shouldEnableReasoning } from './reasoning';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { refreshAnthropicOAuthToken } from '../../auth/oauth';
+import { setOAuthTokenForProvider } from '../../utils/config';
+import { debugLog, maskToken } from '../../utils/debug';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
@@ -14,8 +17,79 @@ export class AnthropicProvider implements Provider {
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
     const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
+    let oauthAuth = config.auth?.type === 'oauth' ? config.auth : undefined;
+
+    const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
+      if (!oauthAuth?.refreshToken) return oauthAuth;
+      if (oauthAuth.expiresAt && Date.now() < oauthAuth.expiresAt - 60000) return oauthAuth;
+      const refreshed = await refreshAnthropicOAuthToken(oauthAuth.refreshToken);
+      if (!refreshed) return oauthAuth;
+      const updated = {
+        type: 'oauth' as const,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        expiresAt: refreshed.expiresAt,
+        tokenType: refreshed.tokenType,
+        scope: refreshed.scope,
+      };
+      config.auth = updated;
+      oauthAuth = updated;
+      setOAuthTokenForProvider('anthropic', {
+        accessToken: updated.accessToken,
+        refreshToken: updated.refreshToken,
+        expiresAt: updated.expiresAt,
+        tokenType: updated.tokenType,
+        scope: updated.scope,
+      });
+      return updated;
+    };
+
+    const fetchWithOAuth: typeof fetch = async (input, init) => {
+      const active = await refreshOauthIfNeeded();
+      const accessToken = active?.accessToken;
+
+      const initHeaders: Record<string, string> = {};
+      if (init?.headers) {
+        if (init.headers instanceof Headers) {
+          init.headers.forEach((value: string, key: string) => { initHeaders[key] = value; });
+        } else if (Array.isArray(init.headers)) {
+          for (const [key, value] of init.headers) {
+            if (typeof value !== 'undefined') initHeaders[key] = String(value);
+          }
+        } else {
+          for (const [key, value] of Object.entries(init.headers as Record<string, string>)) {
+            if (typeof value !== 'undefined') initHeaders[key] = String(value);
+          }
+        }
+      }
+
+      const headers: Record<string, string> = {
+        ...initHeaders,
+        'authorization': `Bearer ${accessToken}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+      };
+      delete headers['x-api-key'];
+
+      debugLog(`[oauth][anthropic] ${init?.method ?? 'GET'} ${typeof input === 'string' ? input : (input as any).url ?? input} token=${maskToken(accessToken)}`);
+      const headerDump = Object.entries(headers).map(([k, v]) => `${k}: ${k === 'authorization' ? maskToken(v) : v}`).join(' | ');
+      debugLog(`[oauth][anthropic] headers: ${headerDump}`);
+
+      const response = await fetch(input, {
+        ...init,
+        headers,
+      });
+
+      if (!response.ok) {
+        const text = await response.clone().text();
+        debugLog(`[oauth][anthropic] status=${response.status} body=${text.slice(0, 500)}`);
+      }
+
+      return response;
+    };
+
     const anthropic = createAnthropic({
-      apiKey: cleanApiKey,
+      apiKey: oauthAuth ? 'oauth' : cleanApiKey,
+      fetch: oauthAuth ? fetchWithOAuth : undefined,
     });
 
     try {

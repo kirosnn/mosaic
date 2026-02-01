@@ -8,6 +8,8 @@ import { imageCommand } from './image';
 import { approvalsCommand } from './approvals';
 import { newCommand } from './new';
 import { compactCommand } from './compact';
+import { providerCommand } from './provider';
+import { modelCommand } from './model';
 
 export { commandRegistry } from './registry';
 export type { Command, CommandResult, CommandRegistry } from './types';
@@ -67,4 +69,6 @@ export function initializeCommands(): void {
   commandRegistry.register(approvalsCommand);
   commandRegistry.register(newCommand);
   commandRegistry.register(compactCommand);
+  commandRegistry.register(providerCommand);
+  commandRegistry.register(modelCommand);
 }

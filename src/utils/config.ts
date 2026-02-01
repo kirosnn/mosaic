@@ -37,6 +37,9 @@ export interface MosaicConfig {
   provider?: string;
   model?: string;
   apiKey?: string;
+  apiKeys?: Record<string, string>;
+  oauthTokens?: Record<string, OAuthTokenState>;
+  oauthModels?: { [providerId: string]: AIModel[] };
   systemPrompt?: string;
   maxSteps?: number;
   maxContextTokens?: number;
@@ -44,6 +47,14 @@ export interface MosaicConfig {
   customModels?: { [providerId: string]: AIModel[] };
   requireApprovals?: boolean;
   recentProjects?: RecentProject[];
+}
+
+export interface OAuthTokenState {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  tokenType?: string;
+  scope?: string;
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -194,6 +205,22 @@ export function markFirstRunComplete(provider: string, model: string, apiKey?: s
   config.provider = provider;
   config.model = model;
   config.apiKey = apiKey;
+  if (apiKey) {
+    if (!config.apiKeys) config.apiKeys = {};
+    config.apiKeys[provider] = apiKey;
+  }
+  writeConfig(config);
+}
+
+export function setFirstRunComplete(provider: string, model: string): void {
+  const config = readConfig();
+  config.firstRun = false;
+  config.provider = provider;
+  config.model = model;
+  const stored = config.apiKeys?.[provider];
+  if (stored) {
+    config.apiKey = stored;
+  }
   writeConfig(config);
 }
 
@@ -201,17 +228,28 @@ export function getConfigDir(): string {
   return CONFIG_DIR;
 }
 
-export function getAllProviders(): AIProvider[] {
+export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIProvider[] {
   const config = readConfig();
   const customProviders = config.customProviders || [];
   const customModels = config.customModels || {};
+  const oauthModels = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
 
   const providersWithCustomModels = AI_PROVIDERS.map(provider => {
     const customModelsForProvider = customModels[provider.id] || [];
+    const oauthModelsForProvider = oauthModels[provider.id] || [];
+    const mergedModels = [...provider.models, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
+      list.findIndex(m => m.id === model.id) === index
+    );
     if (customModelsForProvider.length > 0) {
       return {
         ...provider,
-        models: [...provider.models, ...customModelsForProvider]
+        models: mergedModels
+      };
+    }
+    if (oauthModelsForProvider.length > 0) {
+      return {
+        ...provider,
+        models: mergedModels
       };
     }
     return provider;
@@ -232,6 +270,8 @@ export function getModelById(providerId: string, modelId: string): AIModel | und
 export function modelRequiresApiKey(providerId: string, modelId: string): boolean {
   const provider = getProviderById(providerId);
   const model = getModelById(providerId, modelId);
+  const config = readConfig();
+  if (config.oauthTokens?.[providerId]?.accessToken) return false;
 
   if (model?.requiresApiKey !== undefined) {
     return model.requiresApiKey === true;
@@ -278,6 +318,20 @@ export function addCustomModel(providerId: string, model: AIModel): void {
   }
   config.customModels[providerId].push(model);
   writeConfig(config);
+}
+
+export function setOAuthModelsForProvider(providerId: string, models: AIModel[]): void {
+  const config = readConfig();
+  if (!config.oauthModels) {
+    config.oauthModels = {};
+  }
+  config.oauthModels[providerId] = models;
+  writeConfig(config);
+}
+
+export function getOAuthModelsForProvider(providerId: string): AIModel[] {
+  const config = readConfig();
+  return config.oauthModels?.[providerId] || [];
 }
 
 export function removeCustomModel(providerId: string, modelId: string): void {
@@ -355,5 +409,103 @@ export function removeRecentProject(projectPath: string): void {
 export function clearRecentProjects(): void {
   const config = readConfig();
   config.recentProjects = [];
+  writeConfig(config);
+}
+
+export function getApiKeyForProvider(providerId: string): string | undefined {
+  const config = readConfig();
+  return config.apiKeys?.[providerId] ?? (config.provider === providerId ? config.apiKey : undefined);
+}
+
+export function getOAuthTokenForProvider(providerId: string): OAuthTokenState | undefined {
+  const config = readConfig();
+  return config.oauthTokens?.[providerId];
+}
+
+export function setOAuthTokenForProvider(providerId: string, token: OAuthTokenState): void {
+  const config = readConfig();
+  if (!config.oauthTokens) config.oauthTokens = {};
+  config.oauthTokens[providerId] = token;
+  writeConfig(config);
+}
+
+export function removeOAuthTokenForProvider(providerId: string): void {
+  const config = readConfig();
+  if (config.oauthTokens) {
+    delete config.oauthTokens[providerId];
+  }
+  writeConfig(config);
+}
+
+export function getAuthForProvider(providerId: string):
+  | { type: 'api_key'; apiKey: string }
+  | { type: 'oauth'; accessToken: string; refreshToken?: string; expiresAt?: number; tokenType?: string; scope?: string }
+  | undefined {
+  const oauth = getOAuthTokenForProvider(providerId);
+  if (oauth?.accessToken) {
+    return {
+      type: 'oauth',
+      accessToken: oauth.accessToken,
+      refreshToken: oauth.refreshToken,
+      expiresAt: oauth.expiresAt,
+      tokenType: oauth.tokenType,
+      scope: oauth.scope,
+    };
+  }
+  const apiKey = getApiKeyForProvider(providerId);
+  if (apiKey) return { type: 'api_key', apiKey };
+  return undefined;
+}
+
+export function setApiKeyForProvider(providerId: string, key: string): void {
+  const config = readConfig();
+  if (!config.apiKeys) config.apiKeys = {};
+  config.apiKeys[providerId] = key;
+  if (config.provider === providerId) {
+    config.apiKey = key;
+  }
+  writeConfig(config);
+}
+
+export function removeApiKeyForProvider(providerId: string): void {
+  const config = readConfig();
+  if (config.apiKeys) {
+    delete config.apiKeys[providerId];
+  }
+  if (config.provider === providerId) {
+    config.apiKey = undefined;
+  }
+  writeConfig(config);
+}
+
+export function getStoredProviderIds(): string[] {
+  const config = readConfig();
+  const ids = new Set<string>();
+  if (config.apiKeys) {
+    for (const id of Object.keys(config.apiKeys)) {
+      if (config.apiKeys[id]) ids.add(id);
+    }
+  }
+  if (config.oauthTokens) {
+    for (const id of Object.keys(config.oauthTokens)) {
+      if (config.oauthTokens[id]?.accessToken) ids.add(id);
+    }
+  }
+  if (config.apiKey && config.provider && !ids.has(config.provider)) {
+    ids.add(config.provider);
+  }
+  return [...ids];
+}
+
+export function setActiveProvider(providerId: string): void {
+  const config = readConfig();
+  config.provider = providerId;
+  config.apiKey = config.apiKeys?.[providerId] ?? config.apiKey;
+  writeConfig(config);
+}
+
+export function setActiveModel(modelId: string): void {
+  const config = readConfig();
+  config.model = modelId;
   writeConfig(config);
 }

@@ -897,10 +897,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           command = command.replace(/\s+--timeout\s+\d+$/, '');
         }
 
+        const isWindows = process.platform === 'win32';
+
         try {
           const { stdout, stderr } = await execAsync(command, {
             cwd: workspace,
-            timeout
+            timeout,
+            ...(isWindows && { shell: 'powershell.exe' }),
           });
 
           const output = (stdout || '') + (stderr || '');

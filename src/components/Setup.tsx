@@ -46,7 +46,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
   const [tempModelDescription, setTempModelDescription] = useState<string>('');
 
   const renderer = useRenderer();
-  const allProviders = getAllProviders();
+  const allProviders = getAllProviders({ includeOAuthModels: false });
   const providerOptions: SelectOption[] = [
     ...allProviders.map(p => ({
       name: p.name,

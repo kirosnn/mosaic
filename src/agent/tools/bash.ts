@@ -10,7 +10,7 @@ export const bash: CoreTool = tool({
   execute: async (args) => {
     const result = await executeTool('bash', args);
     if (!result.success) {
-      const errorMessage = result.error || 'Unknown error occurred';
+      const errorMessage = result.error || result.result || 'Unknown error occurred';
       return result.userMessage
         ? { error: errorMessage, userMessage: result.userMessage }
         : { error: errorMessage };

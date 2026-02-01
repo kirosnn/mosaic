@@ -6,7 +6,7 @@ import {
   Provider,
   ProviderSendOptions,
 } from './types';
-import { readConfig } from '../utils/config';
+import { readConfig, getApiKeyForProvider, getAuthForProvider } from '../utils/config';
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
 import { getTools } from './tools/definitions';
 import { AnthropicProvider } from './provider/anthropic';
@@ -242,11 +242,13 @@ export class Agent {
 
     const systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos);
     const tools = getTools();
+    const auth = getAuthForProvider(userConfig.provider);
 
     this.config = {
       provider: userConfig.provider,
       model: userConfig.model,
-      apiKey: userConfig.apiKey,
+      apiKey: auth?.type === 'api_key' ? auth.apiKey : getApiKeyForProvider(userConfig.provider) ?? userConfig.apiKey,
+      auth,
       systemPrompt,
       tools,
       maxSteps: userConfig.maxSteps ?? 100,

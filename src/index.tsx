@@ -39,6 +39,8 @@ interface ParsedArgs {
   webServer?: boolean;
   mcpCommand?: boolean;
   mcpArgs?: string[];
+  authCommand?: boolean;
+  authArgs?: string[];
 }
 
 class CLI {
@@ -70,6 +72,10 @@ class CLI {
       } else if (arg === 'mcp') {
         parsed.mcpCommand = true;
         parsed.mcpArgs = args.slice(i + 1);
+        i = args.length;
+      } else if (arg === 'auth') {
+        parsed.authCommand = true;
+        parsed.authArgs = args.slice(i + 1);
         i = args.length;
       } else if (arg === 'web') {
         parsed.webServer = true;
@@ -104,8 +110,16 @@ ${gold('Options')}
 ${gold('Commands')}
   run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
   web                       ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
+  auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
   uninstall [--force]       ${gray('Uninstall Mosaic from your system')}
+
+${gold('Auth Subcommands')}
+  mosaic auth list           ${gray('List stored API keys (masked)')}
+  mosaic auth set            ${gray('Add or update an API key')}
+  mosaic auth remove         ${gray('Remove a stored API key')}
+  mosaic auth login <prov>   ${gray('OAuth login')}
+  mosaic auth help           ${gray('View full list of auth commands')}
 
 ${gold('MCP Subcommands')}
   mosaic mcp list           ${gray('List configured MCP servers')}
@@ -118,6 +132,7 @@ ${gold('Examples')}
   ${gray('mosaic ./my-project')}                 # Start in specific directory
   ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
   ${gray('mosaic web')}                          # Start the web UI
+  ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
   ${gray('mosaic uninstall --force')}            # Completely remove Mosaic
 `);
@@ -146,6 +161,12 @@ if (parsed.uninstall) {
 if (parsed.mcpCommand) {
   const { runMcpCli } = await import('./mcp/cli/index');
   await runMcpCli(parsed.mcpArgs ?? []);
+  process.exit(0);
+}
+
+if (parsed.authCommand) {
+  const { runAuthCli } = await import('./auth/cli');
+  await runAuthCli(parsed.authArgs ?? []);
   process.exit(0);
 }
 

@@ -121,11 +121,26 @@ export interface ProviderConfig {
   provider: string;
   model: string;
   apiKey?: string;
+  auth?: ProviderAuth;
   systemPrompt: string;
   tools?: Record<string, CoreTool>;
   maxSteps?: number;
   maxContextTokens?: number;
 }
+
+export type ProviderAuth =
+  | {
+    type: 'api_key';
+    apiKey: string;
+  }
+  | {
+    type: 'oauth';
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    tokenType?: string;
+    scope?: string;
+  };
 
 export interface AgentConfig {
   maxSteps?: number;

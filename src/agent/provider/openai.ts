@@ -4,6 +4,9 @@ import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../ty
 import { z } from 'zod';
 import { shouldEnableReasoning } from './reasoning';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
+import { setOAuthTokenForProvider } from '../../utils/config';
+import { debugLog, maskToken } from '../../utils/debug';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -87,8 +90,110 @@ export class OpenAIProvider implements Provider {
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
     const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
+    let oauthAuth = config.auth?.type === 'oauth' ? config.auth : undefined;
+
+    const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
+      if (!oauthAuth?.refreshToken) return oauthAuth;
+      if (oauthAuth.expiresAt && Date.now() < oauthAuth.expiresAt - 60000) return oauthAuth;
+      const refreshed = await refreshOpenAIOAuthToken(oauthAuth.refreshToken);
+      if (!refreshed) return oauthAuth;
+      const updated = {
+        type: 'oauth' as const,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        expiresAt: refreshed.expiresAt,
+        tokenType: refreshed.tokenType,
+        scope: refreshed.scope,
+      };
+      config.auth = updated;
+      oauthAuth = updated;
+      setOAuthTokenForProvider('openai', {
+        accessToken: updated.accessToken,
+        refreshToken: updated.refreshToken,
+        expiresAt: updated.expiresAt,
+        tokenType: updated.tokenType,
+        scope: updated.scope,
+      });
+      return updated;
+    };
+
+    const fetchWithOAuth: typeof fetch = async (input, init) => {
+      const active = await refreshOauthIfNeeded();
+      const accessToken = active?.accessToken;
+      const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
+      const accountId = typeof tokenPayload?.chatgpt_account_id === 'string'
+        ? tokenPayload.chatgpt_account_id
+        : undefined;
+
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      if (init?.headers) {
+        const extra = new Headers(init.headers);
+        extra.forEach((value, key) => headers.set(key, value));
+      }
+      headers.delete('authorization');
+      headers.delete('Authorization');
+      if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+      headers.set('OpenAI-Beta', 'responses=experimental');
+      headers.set('originator', 'codex_cli_rs');
+      if (accountId) headers.set('chatgpt-account-id', accountId);
+
+      let url = typeof input === 'string' ? input : input.url;
+      const originalUrl = url;
+      if (url.includes('/v1/responses')) {
+        url = url.replace('/v1/responses', '/codex/responses');
+      } else if (!url.includes('/codex/responses')) {
+        url = url.replace('/responses', '/codex/responses');
+      }
+
+      let nextInit: RequestInit = {
+        ...init,
+        headers,
+      };
+
+      const method = (nextInit.method || (input instanceof Request ? input.method : 'GET')).toString().toUpperCase();
+      if (method === 'POST') {
+        const contentType = headers.get('content-type') ?? '';
+        let bodyText: string | undefined;
+        if (typeof nextInit.body === 'string') {
+          bodyText = nextInit.body;
+        } else if (nextInit.body instanceof Uint8Array) {
+          bodyText = new TextDecoder().decode(nextInit.body);
+        } else if (nextInit.body instanceof ArrayBuffer) {
+          bodyText = new TextDecoder().decode(new Uint8Array(nextInit.body));
+        }
+        if (bodyText && (contentType.includes('application/json') || bodyText.trim().startsWith('{'))) {
+          try {
+            const json = JSON.parse(bodyText);
+            let modified = false;
+            if (json.store !== false) {
+              json.store = false;
+              modified = true;
+            }
+            if (config.systemPrompt) {
+              json.instructions = config.systemPrompt;
+              modified = true;
+            }
+            if (modified) {
+              nextInit = { ...nextInit, body: JSON.stringify(json) };
+              headers.set('content-type', 'application/json');
+            }
+          } catch { }
+        }
+      }
+      debugLog(`[oauth][openai] ${method} ${originalUrl} -> ${url} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
+      const res = await fetch(url, nextInit);
+      if (!res.ok) {
+        const text = await res.clone().text();
+        debugLog(`[oauth][openai] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`);
+      }
+      return res;
+    };
+
     const openai = createOpenAI({
-      apiKey: cleanApiKey,
+      apiKey: oauthAuth ? 'oauth' : cleanApiKey,
+      baseURL: oauthAuth ? 'https://chatgpt.com/backend-api' : undefined,
+      fetch: oauthAuth ? fetchWithOAuth : undefined,
+      compatibility: oauthAuth ? 'compatible' : undefined,
     });
 
     type OpenAIEndpoint = 'responses' | 'chat' | 'completion';
@@ -235,6 +340,14 @@ export class OpenAIProvider implements Provider {
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
+
+      if (oauthAuth) {
+        yield {
+          type: 'error',
+          error: msg || 'Unknown error occurred',
+        };
+        return;
+      }
 
       const fallbackEndpoint = classifyEndpointError(msg);
       if (fallbackEndpoint && fallbackEndpoint !== 'responses') {

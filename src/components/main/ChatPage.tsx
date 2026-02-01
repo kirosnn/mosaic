@@ -819,18 +819,18 @@ export function ChatPage({
             <text fg="gray">{pendingImages.map((img) => img.name).join(", ")}</text>
           </box>
         )}
-      <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
-        <box flexGrow={1} flexShrink={1} minWidth={0}>
-          <CustomInput
-            onSubmit={onSubmit}
-            placeholder="Type your message..."
-            focused={!shortcutsOpen && !questionRequest && !approvalRequest}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
-            maxWidth={Math.max(10, terminalWidth - 6)}
-          />
+        <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
+          <box flexGrow={1} flexShrink={1} minWidth={0}>
+            <CustomInput
+              onSubmit={onSubmit}
+              placeholder="Type your message..."
+              focused={!shortcutsOpen && !questionRequest && !approvalRequest}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
+              maxWidth={Math.max(10, terminalWidth - 6)}
+            />
+          </box>
         </box>
-      </box>
       </box>
 
       <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
@@ -840,7 +840,6 @@ export function ChatPage({
           <text fg="#4d8f29">+{fileChanges.linesAdded}</text>
           <text fg="#d73a49">-{fileChanges.linesRemoved}</text>
         </box>
-        <text attributes={TextAttributes.DIM}>ctrl+o to see commands — ctrl+p to view shortcuts</text>
       </box>
 
       <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
