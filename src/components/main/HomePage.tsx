@@ -10,18 +10,18 @@ interface HomePageProps {
 }
 
 const TIPS = [
-  "Press Alt + P to view all available shortcuts.",
+  "Press ⌘ + P to view all available shortcuts.",
   "Use the Up and Down arrows to navigate through message history.",
   "Press Esc to cancel the current action or close popups.",
-  "Paste text using Ctrl + V (or Cmd + V on macOS).",
+  "Paste text using ⌘ + V.",
   "Use /clear to reset the current chat session.",
   "Use Tab to autocomplete commands and arguments.",
-  "Use Ctrl + K to clear the current input line.",
-  "Use Ctrl + G to edit the current input in your system editor.",
+  "Use ⌘ + K to clear the current input line.",
+  "Use ⌘ + G to edit the current input in your system editor.",
   "Use /help to display the list of available commands.",
   "Select text with the mouse to copy it automatically.",
   "Attach an image with /image <path>.",
-  "Paste an image with Ctrl/Alt + V (or Cmd + V on macOS).",
+  "Paste an image with ⌘ + V.",
 ];
 
 export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePageProps) {
