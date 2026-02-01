@@ -236,7 +236,7 @@ export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIP
 
   const providersWithCustomModels = AI_PROVIDERS.map(provider => {
     const customModelsForProvider = customModels[provider.id] || [];
-    const oauthModelsForProvider = oauthModels[provider.id] || [];
+    const oauthModelsForProvider = provider.id === 'anthropic' ? [] : (oauthModels[provider.id] || []);
     const mergedModels = [...provider.models, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
       list.findIndex(m => m.id === model.id) === index
     );
@@ -254,7 +254,6 @@ export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIP
     }
     return provider;
   });
-
   return [...providersWithCustomModels, ...customProviders];
 }
 
@@ -271,8 +270,7 @@ export function modelRequiresApiKey(providerId: string, modelId: string): boolea
   const provider = getProviderById(providerId);
   const model = getModelById(providerId, modelId);
   const config = readConfig();
-  if (config.oauthTokens?.[providerId]?.accessToken) return false;
-
+  if (providerId !== 'anthropic' && config.oauthTokens?.[providerId]?.accessToken) return false;
   if (model?.requiresApiKey !== undefined) {
     return model.requiresApiKey === true;
   }
@@ -441,7 +439,7 @@ export function getAuthForProvider(providerId: string):
   | { type: 'api_key'; apiKey: string }
   | { type: 'oauth'; accessToken: string; refreshToken?: string; expiresAt?: number; tokenType?: string; scope?: string }
   | undefined {
-  const oauth = getOAuthTokenForProvider(providerId);
+  const oauth = providerId === 'anthropic' ? undefined : getOAuthTokenForProvider(providerId);
   if (oauth?.accessToken) {
     return {
       type: 'oauth',
@@ -456,7 +454,6 @@ export function getAuthForProvider(providerId: string):
   if (apiKey) return { type: 'api_key', apiKey };
   return undefined;
 }
-
 export function setApiKeyForProvider(providerId: string, key: string): void {
   const config = readConfig();
   if (!config.apiKeys) config.apiKeys = {};

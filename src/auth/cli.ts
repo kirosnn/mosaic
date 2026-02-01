@@ -44,7 +44,6 @@ ${gold('Shortcuts')}
 ${gold('Examples')}
   ${gray('mosaic auth set --provider openai --token sk-abc123')}
   ${gray('mosaic auth list')}
-  ${gray('mosaic auth remove --provider anthropic')}
   ${gray('mosaic auth login openai')}
 `);
 }

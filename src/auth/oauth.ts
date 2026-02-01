@@ -15,16 +15,6 @@ interface OpenAITokenResponse {
   error_description?: string;
 }
 
-interface AnthropicTokenResponse {
-  access_token: string;
-  token_type?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  scope?: string;
-  error?: string;
-  error_description?: string;
-}
-
 interface OAuthProviderConfig {
   authorizeUrl: string;
   tokenUrl: string;
@@ -40,15 +30,7 @@ const OPENAI_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize';
 const OPENAI_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OPENAI_REDIRECT_URI = 'http://localhost:1455/auth/callback';
 const OPENAI_SCOPE = 'openid profile email offline_access';
-
-const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
-const ANTHROPIC_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback';
-const ANTHROPIC_SCOPE = 'org:create_api_key user:profile user:inference';
-const ANTHROPIC_CREATE_API_KEY_URL = 'https://api.anthropic.com/api/oauth/claude_cli/create_api_key';
 const OPENAI_CODEX_MODELS_URL = 'https://developers.openai.com/codex/models';
-
-type AnthropicOAuthMode = 'max' | 'console';
 
 const OPENAI_CODEX_FALLBACK_MODELS = [
   'gpt-5.2-codex',
@@ -76,47 +58,7 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
       originator: 'codex_cli_rs',
     },
   },
-  anthropic: {
-    authorizeUrl: 'https://claude.ai/oauth/authorize',
-    tokenUrl: ANTHROPIC_TOKEN_URL,
-    clientId: ANTHROPIC_CLIENT_ID,
-    scope: ANTHROPIC_SCOPE,
-    redirectUri: ANTHROPIC_REDIRECT_URI,
-    flow: 'manual',
-    extraAuthorizeParams: {
-      code: 'true',
-    },
-  },
 };
-
-function getAnthropicAuthorizeUrl(mode: AnthropicOAuthMode): string {
-  return mode === 'console'
-    ? 'https://console.anthropic.com/oauth/authorize'
-    : 'https://claude.ai/oauth/authorize';
-}
-
-function generateAnthropicPKCE(): { verifier: string; challenge: string } {
-  const verifier = base64UrlEncode(randomBytes(64));
-  const challenge = base64UrlEncode(createHash('sha256').update(verifier).digest());
-  return { verifier, challenge };
-}
-
-function authorizeAnthropic(mode: AnthropicOAuthMode): { url: string; verifier: string } {
-  const pkce = generateAnthropicPKCE();
-  const url = new URL(getAnthropicAuthorizeUrl(mode));
-  url.searchParams.set('code', 'true');
-  url.searchParams.set('client_id', ANTHROPIC_CLIENT_ID);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('redirect_uri', ANTHROPIC_REDIRECT_URI);
-  url.searchParams.set('scope', ANTHROPIC_SCOPE);
-  url.searchParams.set('code_challenge', pkce.challenge);
-  url.searchParams.set('code_challenge_method', 'S256');
-  url.searchParams.set('state', pkce.verifier);
-  return {
-    url: url.toString(),
-    verifier: pkce.verifier,
-  };
-}
 
 function gold(text: string): string {
   return `\x1b[38;2;255;202;56m${text}\x1b[0m`;
@@ -289,61 +231,6 @@ async function exchangeOpenAIAuthorizationCode(code: string, verifier: string, r
   };
 }
 
-async function exchangeAnthropicAuthorizationCode(codeInput: string, verifier: string): Promise<OAuthTokenState | null> {
-  debugLog('[oauth][anthropic] exchanging authorization code');
-  const splits = codeInput.split('#');
-  const code = splits[0];
-  const state = splits[1] ?? verifier;
-
-  const res = await fetch(ANTHROPIC_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      code,
-      state,
-      grant_type: 'authorization_code',
-      client_id: ANTHROPIC_CLIENT_ID,
-      redirect_uri: ANTHROPIC_REDIRECT_URI,
-      code_verifier: verifier,
-    }),
-  });
-  const data = await res.json() as AnthropicTokenResponse;
-  if (!res.ok || data.error) {
-    debugLog(`[oauth][anthropic] token exchange failed status=${res.status} error=${data.error ?? ''} desc=${data.error_description ?? ''}`);
-    return null;
-  }
-  debugLog(`[oauth][anthropic] token exchange ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    tokenType: data.token_type,
-    scope: data.scope,
-  };
-}
-
-async function createAnthropicApiKey(accessToken: string): Promise<string | null> {
-  debugLog('[oauth][anthropic] creating API key');
-  try {
-    const res = await fetch(ANTHROPIC_CREATE_API_KEY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    });
-    if (!res.ok) {
-      debugLog(`[oauth][anthropic] create API key failed status=${res.status}`);
-      return null;
-    }
-    const data = await res.json() as { raw_key?: string };
-    return data.raw_key ?? null;
-  } catch (err) {
-    debugLog(`[oauth][anthropic] create API key error: ${err}`);
-    return null;
-  }
-}
-
 async function fetchOpenAICodexModels(): Promise<string[]> {
   try {
     const res = await fetch(OPENAI_CODEX_MODELS_URL, {
@@ -382,33 +269,6 @@ async function syncOpenAICodexModels(): Promise<Array<{ id: string; name: string
   return models;
 }
 
-async function fetchAnthropicModels(accessToken: string): Promise<Array<{ id: string; name?: string }>> {
-  const res = await fetch('https://api.anthropic.com/v1/models', {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'oauth-2025-04-20,interleaved-thinking-2025-05-14',
-      'user-agent': 'claude-cli/2.1.2 (external, cli)',
-    },
-  });
-  if (!res.ok) return [];
-  const data = await res.json() as { data?: Array<{ id: string; display_name?: string }> };
-  if (!Array.isArray(data.data)) return [];
-  return data.data.map(m => ({ id: m.id, name: m.display_name }));
-}
-
-async function syncAnthropicModels(accessToken: string): Promise<Array<{ id: string; name: string; description: string }>> {
-  const models = await fetchAnthropicModels(accessToken);
-  if (models.length === 0) return [];
-  const mapped = models.map(m => ({
-    id: m.id,
-    name: m.name ?? m.id,
-    description: 'Claude model',
-  }));
-  setOAuthModelsForProvider('anthropic', mapped);
-  return mapped;
-}
-
 export async function refreshOpenAIOAuthToken(refreshToken: string): Promise<OAuthTokenState | null> {
   debugLog(`[oauth][openai] refresh token=${maskToken(refreshToken)}`);
   const res = await fetch(OPENAI_TOKEN_URL, {
@@ -426,32 +286,6 @@ export async function refreshOpenAIOAuthToken(refreshToken: string): Promise<OAu
     return null;
   }
   debugLog(`[oauth][openai] refresh ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? refreshToken,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    tokenType: data.token_type,
-    scope: data.scope,
-  };
-}
-
-export async function refreshAnthropicOAuthToken(refreshToken: string): Promise<OAuthTokenState | null> {
-  debugLog(`[oauth][anthropic] refresh token=${maskToken(refreshToken)}`);
-  const res = await fetch(ANTHROPIC_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      client_id: ANTHROPIC_CLIENT_ID,
-      refresh_token: refreshToken,
-    }),
-  });
-  const data = await res.json() as AnthropicTokenResponse;
-  if (!res.ok || data.error) {
-    debugLog(`[oauth][anthropic] refresh failed status=${res.status} error=${data.error ?? ''} desc=${data.error_description ?? ''}`);
-    return null;
-  }
-  debugLog(`[oauth][anthropic] refresh ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token ?? refreshToken,
@@ -532,58 +366,6 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
   return true;
 }
 
-async function runAnthropicOAuthFlow(): Promise<boolean> {
-  console.log('');
-  console.log(gold('Mosaic OAuth Login'));
-  console.log(gray('Provider: anthropic'));
-  console.log('');
-  console.log('Choose authentication method:');
-  console.log(`  ${bold('1')} - Claude Pro/Max (uses claude.ai)`);
-  console.log(`  ${bold('2')} - Create an API Key (uses console.anthropic.com)`);
-  console.log('');
-
-  const choice = await askInput('Enter choice (1 or 2): ');
-  const mode: AnthropicOAuthMode = choice.trim() === '2' ? 'console' : 'max';
-  const createApiKey = choice.trim() === '2';
-
-  const { url: authorizeUrl, verifier } = authorizeAnthropic(mode);
-  debugLog(`[oauth][anthropic] authorize url=${authorizeUrl} mode=${mode}`);
-
-  console.log('');
-  console.log(`Open this URL in your browser:\n`);
-  console.log(`  ${bold(authorizeUrl)}`);
-  console.log('');
-
-  const input = await askInput('Paste the authorization code here: ');
-  const trimmed = input.trim();
-  if (!trimmed) return false;
-
-  const tokens = await exchangeAnthropicAuthorizationCode(trimmed, verifier);
-  if (!tokens) return false;
-
-  if (createApiKey) {
-    const apiKey = await createAnthropicApiKey(tokens.accessToken);
-    if (apiKey) {
-      const { setApiKeyForProvider } = await import('../utils/config');
-      setApiKeyForProvider('anthropic', apiKey);
-      console.log('');
-      console.log(gold('API Key created successfully!'));
-      console.log(gray('API key stored for provider "anthropic".'));
-      return true;
-    } else {
-      console.log(gray('Failed to create API key, storing OAuth tokens instead.'));
-    }
-  }
-
-  setOAuthTokenForProvider('anthropic', tokens);
-  const models = await syncAnthropicModels(tokens.accessToken);
-  autoSetupProvider('anthropic', models);
-  console.log('');
-  console.log(gold('Authorized successfully!'));
-  console.log(gray('Token stored for provider "anthropic".'));
-  return true;
-}
-
 function autoSetupProvider(providerId: string, models: Array<{ id: string }>) {
   const config = readConfig();
   let targetModel = models[0]?.id;
@@ -599,7 +381,6 @@ function autoSetupProvider(providerId: string, models: Array<{ id: string }>) {
 
 export async function runOAuthFlow(providerId: string): Promise<boolean> {
   if (providerId === 'openai') return runOpenAIOAuthFlow();
-  if (providerId === 'anthropic') return runAnthropicOAuthFlow();
   console.error(`OAuth is not configured for provider "${providerId}".`);
   console.error(`Supported providers: ${getSupportedOAuthProviders().join(', ')}`);
   return false;
