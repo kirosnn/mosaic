@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { shouldEnableReasoning } from './reasoning';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { debugLog } from '../../utils/debug';
 
 export class GoogleProvider implements Provider {
   async *sendMessage(
@@ -18,6 +19,7 @@ export class GoogleProvider implements Provider {
       apiKey: cleanApiKey,
     });
 
+    debugLog(`[google] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
     try {
       let stepCounter = 0;
 
@@ -78,6 +80,7 @@ export class GoogleProvider implements Provider {
               break;
 
             case 'tool-call':
+              debugLog(`[google] tool-call ${c.toolName} args=${JSON.stringify(c.args ?? {}).slice(0, 100)}`);
               yield {
                 type: 'tool-call-end',
                 toolCallId: String(c.toolCallId ?? ''),
@@ -96,6 +99,7 @@ export class GoogleProvider implements Provider {
               break;
 
             case 'finish':
+              debugLog(`[google] finish reason=${c.finishReason ?? 'stop'} promptTokens=${c.usage?.promptTokens ?? '?'} completionTokens=${c.usage?.completionTokens ?? '?'}`);
               yield {
                 type: 'finish',
                 finishReason: String(c.finishReason ?? 'stop'),
@@ -120,9 +124,11 @@ export class GoogleProvider implements Provider {
       }, { abortSignal: options?.abortSignal, key: config.provider });
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      debugLog(`[google] ERROR ${errorMsg.slice(0, 200)}`);
       yield {
         type: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMsg,
       };
     }
   }

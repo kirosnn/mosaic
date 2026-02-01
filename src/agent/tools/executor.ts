@@ -6,6 +6,7 @@ import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
+import { debugLog } from '../../utils/debug';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
@@ -660,6 +661,9 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
 
 export async function executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
   const workspace = process.cwd();
+  const startTime = Date.now();
+  const argsPreview = JSON.stringify(args).slice(0, 200);
+  debugLog(`[tool] ${toolName} START args=${argsPreview}`);
 
   try {
     const needsApproval = (toolName === 'write' || toolName === 'edit' || toolName === 'bash') && shouldRequireApprovals();
@@ -1379,16 +1383,22 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
       }
 
-      default:
+      default: {
+        const duration = Date.now() - startTime;
+        debugLog(`[tool] ${toolName} ERROR unknown tool (${duration}ms)`);
         return {
           success: false,
           error: `Unknown tool: ${toolName}`
         };
+      }
     }
   } catch (error) {
+    const duration = Date.now() - startTime;
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+    debugLog(`[tool] ${toolName} ERROR ${errorMsg.slice(0, 100)} (${duration}ms)`);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: errorMsg
     };
   }
 }

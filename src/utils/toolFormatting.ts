@@ -1,5 +1,6 @@
 import { formatWriteToolResult, formatEditToolResult } from './diff';
 import { isNativeMcpTool, getNativeMcpToolName } from '../mcp/types';
+import { debugLog } from './debug';
 
 const TOOL_BODY_INDENT = 2;
 
@@ -790,5 +791,38 @@ export function getToolWrapWidth(maxWidth: number, paragraphIndex: number): numb
 }
 
 export function formatErrorMessage(errorType: 'API' | 'Mosaic' | 'Tool', errorMessage: string): string {
+  debugLog(`[${errorType} Error] ${errorMessage}`);
+
+  if (errorType === 'API') {
+    const lowerMessage = errorMessage.toLowerCase();
+
+    if (lowerMessage.includes('tried to call unavailable tool') || lowerMessage.includes('unknown tool')) {
+      return `${errorType} Error\nThe model tried to use a tool that is not available. Please try again.`;
+    }
+
+    if (lowerMessage.includes('rate limit') || lowerMessage.includes('429')) {
+      return `${errorType} Error\nRate limit exceeded. Please wait a moment and try again.`;
+    }
+
+    if (lowerMessage.includes('unauthorized') || lowerMessage.includes('401') || lowerMessage.includes('invalid api key')) {
+      return `${errorType} Error\nAuthentication failed. Please check your API key configuration.`;
+    }
+
+    if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
+      return `${errorType} Error\nRequest timed out. Please try again.`;
+    }
+
+    if (lowerMessage.includes('network') || lowerMessage.includes('connection') || lowerMessage.includes('econnrefused')) {
+      return `${errorType} Error\nNetwork error. Please check your internet connection.`;
+    }
+
+    if (lowerMessage.includes('context length') || lowerMessage.includes('too long') || lowerMessage.includes('max tokens')) {
+      return `${errorType} Error\nMessage too long for the model. Try using /compact to reduce context size.`;
+    }
+
+    const shortMessage = errorMessage.length > 100 ? errorMessage.substring(0, 100) + '...' : errorMessage;
+    return `${errorType} Error\n${shortMessage}`;
+  }
+
   return `${errorType} Error\n${errorMessage}`;
 }

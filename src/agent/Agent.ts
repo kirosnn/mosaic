@@ -18,6 +18,7 @@ import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 import { setExploreContext } from '../utils/exploreBridge';
+import { debugLog } from '../utils/debug';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -256,6 +257,7 @@ export class Agent {
     };
 
     this.provider = this.createProvider(userConfig.provider);
+    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps}`);
   }
 
   private createProvider(providerName: string): Provider {
@@ -278,6 +280,9 @@ export class Agent {
   }
 
   async *sendMessage(userMessage: string, options?: ProviderSendOptions): AsyncGenerator<AgentEvent> {
+    const messagePreview = userMessage.slice(0, 100).replace(/[\r\n]+/g, ' ');
+    debugLog(`[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`);
+
     this.messageHistory.push({
       role: 'user',
       content: userMessage,
@@ -299,12 +304,16 @@ export class Agent {
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
         this.config.provider
       );
+      debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} contextLimit=${this.config.maxContextTokens ?? 'default'}`);
       setExploreContext(buildExploreContext(this.messageHistory));
       yield* this.provider.sendMessage(compacted, this.config, options);
+      debugLog(`[agent] sendMessage complete`);
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      debugLog(`[agent] sendMessage ERROR ${errorMsg.slice(0, 150)}`);
       yield {
         type: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMsg,
       };
     }
   }

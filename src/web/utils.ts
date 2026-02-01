@@ -19,10 +19,10 @@ export function extractTitle(content: string, alreadyResolved: boolean): {
 } {
     const trimmed = content.trimStart();
 
-    const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/s);
+    const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/si);
     if (titleMatch) {
         const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
-        const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/s, '');
+        const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/si, '');
         return { title, cleanContent, isPending: false, noTitle: false };
     }
 
@@ -31,7 +31,7 @@ export function extractTitle(content: string, alreadyResolved: boolean): {
     }
 
     const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
-    if (partialTitlePattern.test(trimmed) || (trimmed.startsWith('<title>') && !trimmed.includes('</title>'))) {
+    if (partialTitlePattern.test(trimmed) || (trimmed.toLowerCase().startsWith('<title>') && !trimmed.toLowerCase().includes('</title>'))) {
         return { title: null, cleanContent: '', isPending: true, noTitle: false };
     }
 

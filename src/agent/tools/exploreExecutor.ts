@@ -10,6 +10,14 @@ import { executeTool } from './executor';
 import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext } from '../../utils/exploreBridge';
 import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
 import { debugLog, maskToken } from '../../utils/debug';
+import {
+  waitForRateLimit,
+  reportRateLimitSuccess,
+  reportRateLimitError,
+  configureGlobalRateLimit,
+  getRetryDecision,
+  getRateLimitStatus,
+} from '../provider/rateLimit';
 
 interface ExploreLog {
   tool: string;
@@ -93,6 +101,16 @@ function transformToolsForResponsesApi(
 let exploreLogs: ExploreLog[] = [];
 
 const EXPLORE_TIMEOUT = 8 * 60 * 1000;
+const EXPLORE_RATE_LIMIT_KEY = 'explore';
+const MAX_EXPLORE_RETRIES = 5;
+const EXPLORE_RETRY_BASE_DELAY_MS = 2000;
+
+configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
+  requestsPerMinute: 30,
+  requestsPerSecond: 2,
+  burstLimit: 5,
+  cooldownMultiplier: 2,
+});
 
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase and the web.
 
@@ -104,7 +122,32 @@ Your goal is to explore the codebase and external documentation to fulfill the g
 - fetch: Fetch a URL and return its content as markdown (for reading documentation pages, API docs, etc.)
 - search: Search the web for documentation, tutorials, API references, error solutions
 
-IMPORTANT RULES:
+# PARALLEL TOOL EXECUTION - CRITICAL
+
+When you need to perform multiple independent operations, ALWAYS call multiple tools in a SINGLE response. Do NOT wait for one tool to complete before calling another if they are independent.
+
+PARALLEL EXECUTION RULES:
+1. Call multiple tools simultaneously when operations are independent (e.g., reading different files, searching different patterns, fetching multiple URLs)
+2. Batch related operations together - if you need to read 3 files, call read 3 times in the SAME response
+3. Combine different tool types - you can call glob + grep + fetch + list all at once
+4. Only wait for results when the next operation depends on a previous result
+
+Examples of GOOD parallel usage:
+- Need to read src/auth.ts, src/user.ts, src/api.ts -> call read 3 times in one response
+- Need to search for "authentication" AND "authorization" -> call grep 2 times in one response  
+- Need to fetch React docs AND Vue docs -> call fetch 2 times in one response
+- Need to glob for *.ts AND grep for "import" -> call both in one response
+
+Examples of BAD sequential usage:
+- Call read(src/auth.ts) -> wait -> call read(src/user.ts) -> wait -> call read(src/api.ts)
+- Call glob(**/*.ts) -> wait -> call grep for each file individually
+
+EFFICIENCY PRIORITY:
+- The more tools you can batch together, the faster the exploration completes
+- Prefer calling 5-10 tools at once over individual calls when possible
+- The system handles parallel execution efficiently - use it!
+
+# STANDARD RULES
 1. Be thorough but efficient - don't repeat the same searches
 2. When you have gathered enough information to answer the purpose, call the "done" tool with a comprehensive summary
 3. If you cannot find the information after reasonable exploration, call "done" with what you found
@@ -113,7 +156,10 @@ IMPORTANT RULES:
 6. You MUST call the "done" tool when finished - this is the only way to complete the exploration
 7. When the purpose involves understanding a library, framework, or external API, use search to find official documentation, then fetch to read the relevant pages
 8. Prefer official documentation over blog posts or Stack Overflow when possible
-9. If search is unavailable, you can still use fetch with known documentation URLs`;
+9. If search is unavailable, you can still use fetch with known documentation URLs
+
+# NO DUPLICATE CALLS
+NEVER call the same tool with identical parameters twice. Track what you've already searched/read and skip duplicates.`;
 
 const MAX_STEPS = 100;
 
@@ -467,6 +513,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
   exploreDoneResult = null;
   exploreLogs = [];
+  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model}`);
 
   const abortSignal = getExploreAbortSignal();
   const timeoutId = setTimeout(() => {
@@ -492,35 +539,80 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       ? `${EXPLORE_SYSTEM_PROMPT}\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`
       : EXPLORE_SYSTEM_PROMPT;
 
-    const result = streamText({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: `Explore the codebase to: ${purpose}`,
-        },
-      ],
-      system: systemPrompt,
-      tools: toolsToUse,
-      maxSteps: MAX_STEPS,
-      abortSignal,
-      providerOptions: userConfig.provider === 'openai'
-        ? { openai: { strictJsonSchema: false } }
-        : undefined,
-    });
-
+    let exploreAttempt = 0;
     let lastError: string | null = null;
 
-    for await (const chunk of result.fullStream as any) {
-      if (isExploreAborted()) {
+    while (exploreAttempt < MAX_EXPLORE_RETRIES) {
+      if (abortSignal?.aborted || isExploreAborted()) break;
+
+      const rateLimitStatus = getRateLimitStatus(EXPLORE_RATE_LIMIT_KEY);
+      if (rateLimitStatus.cooldownRemainingMs > 0) {
+        debugLog(`[explore] rate limit cooldown active, waiting ${rateLimitStatus.cooldownRemainingMs}ms`);
+      }
+
+      const canProceed = await waitForRateLimit(EXPLORE_RATE_LIMIT_KEY, undefined, abortSignal);
+      if (!canProceed) {
+        debugLog('[explore] rate limit wait aborted');
         break;
       }
-      const c: any = chunk;
-      if (c.type === 'error') {
-        lastError = c.error instanceof Error ? c.error.message : String(c.error);
-      }
-      if (exploreDoneResult !== null) {
+
+      try {
+        const result = streamText({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: `Explore the codebase to: ${purpose}`,
+            },
+          ],
+          system: systemPrompt,
+          tools: toolsToUse,
+          maxSteps: MAX_STEPS,
+          abortSignal,
+          providerOptions: userConfig.provider === 'openai'
+            ? { openai: { strictJsonSchema: false } }
+            : undefined,
+        });
+
+        for await (const chunk of result.fullStream as any) {
+          if (isExploreAborted()) {
+            break;
+          }
+          const c: any = chunk;
+          if (c.type === 'error') {
+            const errorMessage = c.error instanceof Error ? c.error.message : String(c.error);
+            const decision = getRetryDecision(c.error);
+            if (decision.shouldRetry) {
+              lastError = errorMessage;
+              throw c.error;
+            }
+            lastError = errorMessage;
+          }
+          if (exploreDoneResult !== null) {
+            break;
+          }
+        }
+
+        reportRateLimitSuccess(EXPLORE_RATE_LIMIT_KEY);
         break;
+      } catch (streamError) {
+        if (abortSignal?.aborted || isExploreAborted()) break;
+
+        const decision = getRetryDecision(streamError);
+        if (!decision.shouldRetry || exploreAttempt >= MAX_EXPLORE_RETRIES - 1) {
+          const errorMsg = streamError instanceof Error ? streamError.message : String(streamError);
+          debugLog(`[explore] stream error not retryable or max retries reached | attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | error=${errorMsg.slice(0, 150)}`);
+          lastError = errorMsg;
+          reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
+          break;
+        }
+
+        reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
+        const delay = Math.min(60000, EXPLORE_RETRY_BASE_DELAY_MS * Math.pow(2, exploreAttempt));
+        debugLog(`[explore] retrying after rate limit error | attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | delay=${delay}ms`);
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+        exploreAttempt += 1;
       }
     }
 
@@ -545,6 +637,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     const logsStr = formatExploreLogs();
 
     if (exploreDoneResult !== null) {
+      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration}`);
       return {
         success: true,
         result: `Completed in ${duration}\n${logsStr}\n\nSummary:\n${exploreDoneResult}`,
@@ -567,9 +660,11 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       };
     }
 
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    debugLog(`[explore] ERROR ${errorMsg.slice(0, 150)} duration=${duration} toolsUsed=${exploreLogs.length}`);
     return {
       success: false,
-      error: `${error instanceof Error ? error.message : 'Unknown error'} (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
+      error: `${errorMsg} (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
     };
   }
 }

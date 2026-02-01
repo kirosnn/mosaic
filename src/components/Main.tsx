@@ -21,16 +21,17 @@ import { subscribeImageCommand, setImageSupport } from "../utils/imageBridge";
 import { findModelsDevModelById, modelAcceptsImages, getModelsDevContextLimit } from "../utils/models";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/systemPrompt";
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
+import { debugLog } from "../utils/debug";
 
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
 function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean } {
   const trimmed = content.trimStart();
 
-  const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/s);
+  const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/si);
   if (titleMatch) {
     const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
-    const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/s, '');
+    const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/si, '');
     return { title, cleanContent, isPending: false, noTitle: false };
   }
 
@@ -39,7 +40,7 @@ function extractTitle(content: string, alreadyResolved: boolean): { title: strin
   }
 
   const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
-  if (partialTitlePattern.test(trimmed) || (trimmed.startsWith('<title>') && !trimmed.includes('</title>'))) {
+  if (partialTitlePattern.test(trimmed) || (trimmed.toLowerCase().startsWith('<title>') && !trimmed.toLowerCase().includes('</title>'))) {
     return { title: null, cleanContent: '', isPending: true, noTitle: false };
   }
 
@@ -513,6 +514,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (!value.trim() && !hasPastedContent && !hasImages) return;
 
     if (isCommand(value)) {
+      debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
       const result = await executeCommand(value);
       if (result) {
         if (result.shouldClearMessages === true) {

@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { McpServerConfig, McpServerState, McpToolInfo } from './types';
 import { toCanonicalId, toSafeId } from './types';
 import { McpRateLimiter } from './rateLimiter';
+import { debugLog } from '../utils/debug';
 
 interface LogEntry {
   timestamp: number;
@@ -49,6 +50,7 @@ export class McpProcessManager {
     };
 
     addLog('info', `Starting server ${config.id} (${config.command})`);
+    debugLog(`[mcp] startServer id=${config.id} command=${config.command} args=${(config.args || []).join(' ')}`);
 
     try {
       const startTime = Date.now();
@@ -85,6 +87,7 @@ export class McpProcessManager {
       state.toolCount = tools.length;
 
       addLog('info', `Listed ${tools.length} tools`);
+      debugLog(`[mcp] server ${config.id} running tools=[${tools.map(t => t.name).join(', ')}] initLatency=${initLatencyMs}ms`);
 
       this.rateLimiter.configure(config.id, config.limits.maxCallsPerMinute);
 
@@ -121,6 +124,7 @@ export class McpProcessManager {
       state.status = 'error';
       state.lastError = message;
       addLog('error', `Failed to start: ${message}`);
+      debugLog(`[mcp] server ${config.id} START ERROR ${message.slice(0, 150)}`);
 
       this.servers.set(config.id, {
         config,
@@ -181,6 +185,8 @@ export class McpProcessManager {
     }
 
     await this.rateLimiter.acquire(serverId);
+    const startTime = Date.now();
+    debugLog(`[mcp] callTool ${serverId}/${toolName} args=${JSON.stringify(args).slice(0, 100)}`);
 
     try {
       const timeout = instance.config.timeouts.call;
@@ -203,6 +209,8 @@ export class McpProcessManager {
         .map(p => p.text || '')
         .join('\n');
 
+      const duration = Date.now() - startTime;
+      debugLog(`[mcp] callTool ${serverId}/${toolName} OK (${duration}ms) resultLen=${text.length}`);
       return {
         content: text || JSON.stringify(result.content),
         isError: result.isError === true,
@@ -218,6 +226,8 @@ export class McpProcessManager {
         level: 'error',
         message: `callTool ${toolName} failed: ${message}`,
       });
+      const duration = Date.now() - startTime;
+      debugLog(`[mcp] callTool ${serverId}/${toolName} ERROR (${duration}ms) ${message.slice(0, 100)}`);
       return { content: `Tool call failed: ${message}`, isError: true };
     }
   }

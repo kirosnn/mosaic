@@ -3,6 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { shouldEnableReasoning } from './reasoning';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { debugLog } from '../../utils/debug';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
@@ -17,6 +18,7 @@ export class AnthropicProvider implements Provider {
     const anthropic = createAnthropic({
       apiKey: cleanApiKey,
     });
+    debugLog(`[anthropic] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
     try {
       let stepCounter = 0;
 
@@ -75,6 +77,7 @@ export class AnthropicProvider implements Provider {
               break;
 
             case 'tool-call':
+              debugLog(`[anthropic] tool-call ${c.toolName} args=${JSON.stringify(c.args ?? {}).slice(0, 100)}`);
               yield {
                 type: 'tool-call-end',
                 toolCallId: String(c.toolCallId ?? ''),
@@ -93,6 +96,7 @@ export class AnthropicProvider implements Provider {
               break;
 
             case 'finish':
+              debugLog(`[anthropic] finish reason=${c.finishReason ?? 'stop'} promptTokens=${c.usage?.promptTokens ?? '?'} completionTokens=${c.usage?.completionTokens ?? '?'}`);
               yield {
                 type: 'finish',
                 finishReason: String(c.finishReason ?? 'stop'),
@@ -117,9 +121,11 @@ export class AnthropicProvider implements Provider {
       }, { abortSignal: options?.abortSignal, key: config.provider });
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+      debugLog(`[anthropic] ERROR ${errorMsg.slice(0, 200)}`);
       yield {
         type: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMsg,
       };
     }
   }
