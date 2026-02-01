@@ -63,7 +63,7 @@ export function ThinkingIndicator(props: ThinkingIndicatorProps) {
         }, 50);
 
         return () => clearInterval(interval);
-    }, [props, text.length]);
+    }, [props.isProcessing, props.hasQuestion, text.length]);
 
     if (!shouldShowThinkingIndicator(props)) return null;
 
@@ -98,7 +98,7 @@ export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
             <ThinkingIndicator {...props} />
             {props.nextStep ? (
                 <box flexDirection="row" width="100%" paddingLeft={2}>
-                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>➔ </text>
+                    <text fg="#ffca38">➔ </text>
                     <text fg="#ffca38" attributes={TextAttributes.BOLD}>Next:</text>
                     <text> </text>
                     <text fg="white" attributes={TextAttributes.DIM}>{props.nextStep}</text>

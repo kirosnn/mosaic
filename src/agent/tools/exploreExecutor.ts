@@ -1,19 +1,93 @@
-import { streamText, tool as createTool } from 'ai';
+import { streamText, tool as createTool, CoreTool } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createXai } from '@ai-sdk/xai';
 import { z } from 'zod';
-import { readConfig } from '../../utils/config';
+import { readConfig, getAuthForProvider, setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { executeTool } from './executor';
 import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext } from '../../utils/exploreBridge';
+import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
+import { debugLog, maskToken } from '../../utils/debug';
 
 interface ExploreLog {
   tool: string;
   args: Record<string, unknown>;
   success: boolean;
   resultPreview?: string;
+}
+
+function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodOptional) {
+    return unwrapOptional(schema.unwrap());
+  }
+  if (schema instanceof z.ZodEffects) {
+    const inner = unwrapOptional(schema.innerType());
+    return inner === schema.innerType() ? schema : new z.ZodEffects({
+      ...schema._def,
+      schema: inner,
+    });
+  }
+  return schema;
+}
+
+function makeAllPropertiesRequired(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodEffects) {
+    const innerTransformed = makeAllPropertiesRequired(schema.innerType());
+    return new z.ZodEffects({
+      ...schema._def,
+      schema: innerTransformed,
+    });
+  }
+
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape;
+    const newShape: Record<string, z.ZodTypeAny> = {};
+    for (const key in shape) {
+      let fieldSchema = shape[key];
+      fieldSchema = unwrapOptional(fieldSchema);
+      if (fieldSchema instanceof z.ZodObject) {
+        fieldSchema = makeAllPropertiesRequired(fieldSchema);
+      } else if (fieldSchema instanceof z.ZodArray) {
+        const innerType = fieldSchema.element;
+        if (innerType instanceof z.ZodObject) {
+          fieldSchema = z.array(makeAllPropertiesRequired(innerType));
+        }
+      } else if (fieldSchema instanceof z.ZodEffects) {
+        const innerType = fieldSchema.innerType();
+        if (innerType instanceof z.ZodObject) {
+          fieldSchema = new z.ZodEffects({
+            ...fieldSchema._def,
+            schema: makeAllPropertiesRequired(innerType),
+          });
+        }
+      }
+      newShape[key] = fieldSchema;
+    }
+    return z.object(newShape);
+  }
+  return schema;
+}
+
+function transformToolsForResponsesApi(
+  tools: Record<string, CoreTool> | undefined
+): Record<string, CoreTool> | undefined {
+  if (!tools) return tools;
+
+  const transformed: Record<string, CoreTool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const t = tool as any;
+    if (t.parameters) {
+      transformed[name] = {
+        ...t,
+        parameters: makeAllPropertiesRequired(t.parameters),
+      };
+    } else {
+      transformed[name] = tool;
+    }
+  }
+  return transformed;
 }
 
 let exploreLogs: ExploreLog[] = [];
@@ -49,9 +123,125 @@ interface ExploreResult {
   error?: string;
 }
 
+interface OAuthState {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  tokenType?: string;
+  scope?: string;
+}
+
+let currentOAuthState: OAuthState | null = null;
+
+async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
+  if (!currentOAuthState?.refreshToken) return currentOAuthState;
+  if (currentOAuthState.expiresAt && Date.now() < currentOAuthState.expiresAt - 60000) return currentOAuthState;
+  const refreshed = await refreshOpenAIOAuthToken(currentOAuthState.refreshToken);
+  if (!refreshed) return currentOAuthState;
+  currentOAuthState = {
+    accessToken: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
+    expiresAt: refreshed.expiresAt,
+    tokenType: refreshed.tokenType,
+    scope: refreshed.scope,
+  };
+  setOAuthTokenForProvider('openai', {
+    accessToken: currentOAuthState.accessToken,
+    refreshToken: currentOAuthState.refreshToken,
+    expiresAt: currentOAuthState.expiresAt,
+    tokenType: currentOAuthState.tokenType,
+    scope: currentOAuthState.scope,
+  });
+  return currentOAuthState;
+}
+
+const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const active = await refreshOAuthIfNeeded();
+  const accessToken = active?.accessToken;
+  const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
+  const accountId = typeof tokenPayload?.chatgpt_account_id === 'string'
+    ? tokenPayload.chatgpt_account_id
+    : undefined;
+
+  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  if (init?.headers) {
+    const extra = new Headers(init.headers);
+    extra.forEach((value, key) => headers.set(key, value));
+  }
+  headers.delete('authorization');
+  headers.delete('Authorization');
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+  headers.set('OpenAI-Beta', 'responses=experimental');
+  headers.set('originator', 'codex_cli_rs');
+  if (accountId) headers.set('chatgpt-account-id', accountId);
+
+  let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
+  const originalUrl = url;
+  if (url.includes('/v1/responses')) {
+    url = url.replace('/v1/responses', '/codex/responses');
+  } else if (!url.includes('/codex/responses')) {
+    url = url.replace('/responses', '/codex/responses');
+  }
+
+  let nextInit: RequestInit = {
+    ...init,
+    headers,
+  };
+
+  const method = (nextInit.method || (input instanceof Request ? input.method : 'GET')).toString().toUpperCase();
+  if (method === 'POST') {
+    const contentType = headers.get('content-type') ?? '';
+    let bodyText: string | undefined;
+    if (typeof nextInit.body === 'string') {
+      bodyText = nextInit.body;
+    } else if (nextInit.body instanceof Uint8Array) {
+      bodyText = new TextDecoder().decode(nextInit.body);
+    } else if (nextInit.body instanceof ArrayBuffer) {
+      bodyText = new TextDecoder().decode(new Uint8Array(nextInit.body));
+    }
+    if (bodyText && (contentType.includes('application/json') || bodyText.trim().startsWith('{'))) {
+      try {
+        const json = JSON.parse(bodyText);
+        let modified = false;
+        if (json.store !== false) {
+          json.store = false;
+          modified = true;
+        }
+        if (modified) {
+          nextInit = { ...nextInit, body: JSON.stringify(json) };
+          headers.set('content-type', 'application/json');
+        }
+      } catch { }
+    }
+  }
+  debugLog(`[oauth][explore] ${method} ${originalUrl} -> ${url} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
+  const res = await fetch(url, nextInit);
+  if (!res.ok) {
+    const text = await res.clone().text();
+    debugLog(`[oauth][explore] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`);
+  }
+  return res;
+};
+
 function createModelProvider(config: { provider: string; model: string; apiKey?: string }) {
   const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
-  const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+  let cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+
+  const auth = getAuthForProvider(config.provider);
+  const isOAuth = auth?.type === 'oauth';
+
+  if (isOAuth && config.provider === 'openai') {
+    cleanModel = mapModelForOAuth(cleanModel);
+    currentOAuthState = {
+      accessToken: auth.accessToken,
+      refreshToken: auth.refreshToken,
+      expiresAt: auth.expiresAt,
+      tokenType: auth.tokenType,
+      scope: auth.scope,
+    };
+  } else {
+    currentOAuthState = null;
+  }
 
   switch (config.provider) {
     case 'anthropic': {
@@ -59,6 +249,15 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       return anthropic(cleanModel);
     }
     case 'openai': {
+      if (isOAuth) {
+        const openai = createOpenAI({
+          apiKey: 'oauth',
+          baseURL: 'https://chatgpt.com/backend-api',
+          fetch: fetchWithOAuth as typeof fetch,
+          compatibility: 'compatible',
+        });
+        return openai.responses(cleanModel);
+      }
       const openai = createOpenAI({ apiKey: cleanApiKey });
       return openai(cleanModel);
     }
@@ -284,6 +483,9 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     });
 
     const tools = createExploreTools();
+    const toolsToUse = userConfig.provider === 'openai'
+      ? transformToolsForResponsesApi(tools)
+      : tools;
 
     const parentContext = getExploreContext();
     const systemPrompt = parentContext
@@ -299,9 +501,12 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
         },
       ],
       system: systemPrompt,
-      tools,
+      tools: toolsToUse,
       maxSteps: MAX_STEPS,
       abortSignal,
+      providerOptions: userConfig.provider === 'openai'
+        ? { openai: { strictJsonSchema: false } }
+        : undefined,
     });
 
     let lastError: string | null = null;

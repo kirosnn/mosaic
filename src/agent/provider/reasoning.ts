@@ -6,7 +6,7 @@ function normalizeId(value: string): string {
 
 function matchesReasoningHeuristic(modelId: string): boolean {
   const id = modelId.toLowerCase();
-  return id.includes('reasoning') || id.includes('o1') || id.includes('o3') || id.includes('r1');
+  return id.includes('reasoning') || id.includes('o1') || id.includes('o3') || id.includes('r1') || id.includes('codex') || id.includes('gpt-5');
 }
 
 export async function shouldEnableReasoning(providerId: string, modelId: string): Promise<boolean> {

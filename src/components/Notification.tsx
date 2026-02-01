@@ -57,6 +57,7 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
       flexDirection="column"
       alignItems="flex-end"
       gap={1}
+      minWidth={20}
     >
       {notifications.map((notification) => (
         <box

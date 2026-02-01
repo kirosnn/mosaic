@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes, SyntaxStyle, RGBA } from "@opentui/core";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
@@ -16,137 +16,77 @@ import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
+import { parseToolHeader } from "../../utils/toolFormatting";
+import { getNativeMcpToolName } from "../../mcp/types";
 
-type CodeToken = { text: string; color: string };
+const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
+  keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
+  string: { fg: RGBA.fromHex("#A5D6FF") },
+  comment: { fg: RGBA.fromHex("#8B949E"), italic: true },
+  number: { fg: RGBA.fromHex("#79C0FF") },
+  function: { fg: RGBA.fromHex("#D2A8FF") },
+  default: { fg: RGBA.fromHex("#E6EDF3") },
+});
 
-const CODE_THEME = {
-  text: "#d4d4d4",
-  keyword: "#569cd6",
-  string: "#ce9178",
-  number: "#b5cea8",
-  comment: "#6a9955",
-  type: "#4ec9b0",
-  builtin: "#9cdcfe",
-  function: "#dcdcaa",
-  header: "#d7ba7d",
+const CODE_FILETYPE_MAP: Record<string, string> = {
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  javascript: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  typescript: "typescript",
+  md: "markdown",
+  markdown: "markdown",
 };
 
-const JS_KEYWORDS = new Set([
-  "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
-  "do", "else", "export", "extends", "finally", "for", "function", "if", "import", "in",
-  "instanceof", "let", "new", "return", "super", "switch", "this", "throw", "try", "typeof",
-  "var", "void", "while", "with", "yield", "await", "async", "of", "as"
-]);
+const TABLE_HEADER_BG = "#2a2a2a";
+const TABLE_BODY_BG = "#1f1f1f";
 
-const JS_TYPES = new Set([
-  "string", "number", "boolean", "any", "unknown", "never", "void", "object", "symbol",
-  "bigint", "null", "undefined", "Array", "Record", "Map", "Set", "Promise"
-]);
-
-const JS_BUILTINS = new Set([
-  "console", "Math", "JSON", "Date", "Intl", "Number", "String", "Boolean", "Object",
-  "Array", "Set", "Map", "WeakMap", "WeakSet", "RegExp", "Error", "Promise", "Reflect",
-  "Proxy", "Symbol", "BigInt", "URL", "URLSearchParams"
-]);
-
-function isIdentifierStart(char: string) {
-  return /[A-Za-z_$]/.test(char);
+function normalizeCodeFiletype(language?: string): string {
+  const key = (language || "").trim().toLowerCase();
+  return CODE_FILETYPE_MAP[key] || "javascript";
 }
 
-function isIdentifierChar(char: string) {
-  return /[A-Za-z0-9_$]/.test(char);
-}
-
-function tokenizeCodeLine(line: string, language?: string): CodeToken[] {
-  if (!line) return [{ text: "", color: CODE_THEME.text }];
-  const lang = (language || "").toLowerCase();
-  const isJs = lang === "js" || lang === "jsx" || lang === "ts" || lang === "tsx";
-  if (!isJs) return [{ text: line, color: CODE_THEME.text }];
-
-  const tokens: CodeToken[] = [];
-  let i = 0;
-
-  const push = (text: string, color: string) => {
-    if (text.length === 0) return;
-    tokens.push({ text, color });
-  };
-
-  while (i < line.length) {
-    const ch = line[i]!;
-
-    if (ch === "/" && line[i + 1] === "/") {
-      push(line.slice(i), CODE_THEME.comment);
-      break;
+function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number, toolName?: string, planStatus?: 'pending' | 'in_progress' | 'completed') {
+  if (toolName === 'plan') {
+    const leftPad = paragraphIndex === 0 ? 3 : indent + 1;
+    const padText = ' '.repeat(leftPad);
+    const trimmed = content || '';
+    const match = trimmed.match(/^\[(.)\]\s*(.*)$/);
+    if (match) {
+      const marker = match[1] || ' ';
+      const rest = match[2] || '';
+      const resolvedStatus = planStatus
+        ?? (marker === '~' || marker === '●' ? 'in_progress' : (marker === 'x' || marker === '✓' ? 'completed' : 'pending'));
+      const isInProgress = resolvedStatus === 'in_progress';
+      const isCompleted = resolvedStatus === 'completed';
+      const markerColor = isInProgress ? '#ffca38' : '#9a9a9a';
+      const markerChar = isInProgress ? '●' : (isCompleted ? '✓' : ' ');
+      return (
+        <box flexDirection="row">
+          <text attributes={TextAttributes.DIM}>{padText}</text>
+          <text attributes={TextAttributes.DIM}>[</text>
+          <text fg={markerColor}>{markerChar}</text>
+          <text attributes={TextAttributes.DIM}>]</text>
+          <text attributes={TextAttributes.DIM}>{rest ? ` ${rest}` : ''}</text>
+        </box>
+      );
     }
-
-    if (ch === "'" || ch === '"' || ch === "`") {
-      const quote = ch;
-      let j = i + 1;
-      while (j < line.length) {
-        const c = line[j]!;
-        if (c === "\\" && j + 1 < line.length) {
-          j += 2;
-          continue;
-        }
-        if (c === quote) {
-          j += 1;
-          break;
-        }
-        j += 1;
-      }
-      push(line.slice(i, j), CODE_THEME.string);
-      i = j;
-      continue;
-    }
-
-    if (/\d/.test(ch)) {
-      let j = i + 1;
-      while (j < line.length && /[\d._xXa-fA-F]/.test(line[j]!)) {
-        j += 1;
-      }
-      push(line.slice(i, j), CODE_THEME.number);
-      i = j;
-      continue;
-    }
-
-    if (isIdentifierStart(ch)) {
-      let j = i + 1;
-      while (j < line.length && isIdentifierChar(line[j]!)) {
-        j += 1;
-      }
-      const word = line.slice(i, j);
-      let color = CODE_THEME.text;
-      if (JS_KEYWORDS.has(word)) color = CODE_THEME.keyword;
-      else if (JS_TYPES.has(word)) color = CODE_THEME.type;
-      else if (JS_BUILTINS.has(word)) color = CODE_THEME.builtin;
-      else {
-        let k = j;
-        while (k < line.length && line[k] === " ") k += 1;
-        if (line[k] === "(") color = CODE_THEME.function;
-      }
-      push(word, color);
-      i = j;
-      continue;
-    }
-
-    push(ch, CODE_THEME.text);
-    i += 1;
+    return <text attributes={TextAttributes.DIM}>{`${padText}${trimmed || ' '}`}</text>;
   }
 
-  return tokens.length > 0 ? tokens : [{ text: line, color: CODE_THEME.text }];
-}
-
-function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number) {
   if (paragraphIndex === 0) {
     if (wrappedLineIndex === 0) {
       const match = content.match(/^(.+?)\s*(\(.*)$/);
       if (match) {
         const [, toolName, toolInfo] = match;
         return (
-          <>
+          <box flexDirection="row">
             <text fg="white">{toolName} </text>
             <text fg="white" attributes={TextAttributes.DIM}>{toolInfo}</text>
-          </>
+          </box>
         );
       }
     } else {
@@ -159,14 +99,14 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
     const [, leading, bracket, rest] = planMatch;
     const bracketColor = bracket === '[~]' ? '#ffca38' : 'white';
     return (
-      <>
+      <box flexDirection="row">
         <text fg="white">{leading || ''}</text>
         <text fg="#ffca38">{'>'}</text>
         <text fg="white"> </text>
         {bracket ? <text fg={bracketColor}>{bracket}</text> : null}
         {bracket ? <text fg="white"> </text> : null}
         <text fg="white">{rest || ' '}</text>
-      </>
+      </box>
     );
   }
 
@@ -250,9 +190,54 @@ export function ChatPage({
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
-  const [, setTimerTick] = useState(0);
+  const [timerTick, setTimerTick] = useState(0);
   const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
   const scrollboxRef = useRef<any>(null);
+
+  function isCompactTool(toolName?: string): boolean {
+    if (!toolName) return false;
+    if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch') return true;
+    if (toolName.startsWith('mcp__')) {
+      const nativeName = getNativeMcpToolName(toolName);
+      return nativeName === 'navigation_search';
+    }
+    return false;
+  }
+
+  function getFirstBodyLine(content: string): string {
+    const lines = (content || '').split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const s = (lines[i] || '').trim();
+      if (s) return s;
+    }
+    return '';
+  }
+
+  function getCompactResult(message: Message): string {
+    if (message.isRunning) return 'running...';
+    const toolName = message.toolName;
+    if (toolName === 'read' && typeof message.toolResult === 'string') {
+      const lineCount = message.toolResult ? message.toolResult.split(/\r?\n/).length : 0;
+      return `Read ${lineCount} lines`;
+    }
+    if ((toolName === 'glob' || toolName === 'list') && typeof message.toolResult === 'string') {
+      try {
+        const parsed = JSON.parse(message.toolResult);
+        if (Array.isArray(parsed)) {
+          return `${parsed.length} results`;
+        }
+        if (parsed && typeof parsed === 'object') {
+          const obj = parsed as Record<string, unknown>;
+          const files = Array.isArray(obj.files) ? obj.files : null;
+          if (files) return `${files.length} results`;
+        }
+      } catch {
+      }
+    }
+
+    const body = getFirstBodyLine(message.displayContent ?? message.content);
+    return body || 'Completed';
+  }
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -278,9 +263,10 @@ export function ChatPage({
       if (hasRunning) {
         setTimerTick(tick => tick + 1);
       }
-    }, 1000);
+    }, 500);
     return () => clearInterval(interval);
   }, [messages]);
+
   useEffect(() => {
     const sb = scrollboxRef.current;
     if (sb?.verticalScrollBar) {
@@ -301,7 +287,7 @@ export function ChatPage({
 
   interface RenderItem {
     key: string;
-    type: 'line' | 'question' | 'approval' | 'blend';
+    type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact';
     content?: string;
     role: "user" | "assistant" | "tool" | "slash";
     toolName?: string;
@@ -322,9 +308,18 @@ export function ChatPage({
     runningStartTime?: number;
     isThinking?: boolean;
     isCodeBlock?: boolean;
-    isCodeHeader?: boolean;
     codeLanguage?: string;
-    codeTokens?: CodeToken[];
+    codeContent?: string;
+    codeHeight?: number;
+    isTableRow?: boolean;
+    tableCells?: string[];
+    tableColumnWidths?: number[];
+    tableRowIndex?: number;
+    isPadding?: boolean;
+    planStatus?: 'pending' | 'in_progress' | 'completed';
+    isCompactTool?: boolean;
+    compactLabel?: string;
+    compactResult?: string;
   }
 
   const allItems: RenderItem[] = [];
@@ -334,6 +329,10 @@ export function ChatPage({
     const message = messages[messageIndex]!;
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
+    const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
+    const shouldPadMessage = (messageRole === 'user' || messageRole === 'tool' || messageRole === 'slash')
+      && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
+      && !compactTool;
 
     if (messageRole === 'user' && pendingBlend) {
       allItems.push({
@@ -346,6 +345,23 @@ export function ChatPage({
         blendWord: pendingBlend.blendWord
       });
       pendingBlend = null;
+    }
+
+    if (shouldPadMessage) {
+      allItems.push({
+        key: `${messageKey}-message-top-pad`,
+        type: 'line',
+        content: '',
+        role: messageRole,
+        toolName: message.toolName,
+        isFirst: false,
+        isSpacer: false,
+        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+        isRunning: message.isRunning,
+        runningStartTime: message.runningStartTime,
+        visualLines: 1,
+        isPadding: true
+      });
     }
 
     if (messageRole === 'assistant') {
@@ -398,34 +414,45 @@ export function ChatPage({
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         const block = blocks[blockIndex]!;
         if (block.type === 'code' && block.codeLines) {
-          const langLabel = (block.language || 'code').trim();
           allItems.push({
             key: `${messageKey}-code-${blockIndex}-header`,
             type: 'line',
-            content: `${langLabel}`,
             role: messageRole,
             toolName: message.toolName,
             isFirst: isFirstContent,
             isCodeBlock: true,
-            isCodeHeader: true,
             codeLanguage: block.language,
-            visualLines: 1
+            codeContent: block.codeLines.join('\n'),
+            codeHeight: Math.max(1, block.codeLines.length),
+            visualLines: Math.max(1, block.codeLines.length)
           });
-          for (let j = 0; j < block.codeLines.length; j++) {
-            allItems.push({
-              key: `${messageKey}-code-${blockIndex}-${j}`,
-              type: 'line',
-              content: block.codeLines[j] || '',
-              role: messageRole,
-              toolName: message.toolName,
-              isFirst: isFirstContent && j === 0,
-              isCodeBlock: true,
-              codeLanguage: block.language,
-              codeTokens: tokenizeCodeLine(block.codeLines[j] || '', block.language),
-              visualLines: 1
-            });
-          }
           if (block.codeLines.some(line => line.trim().length > 0)) {
+            isFirstContent = false;
+          }
+          continue;
+        }
+
+        if (block.type === 'table' && block.tableRows && block.columnWidths && block.tableCellLines) {
+          for (let rowIndex = 0; rowIndex < block.tableRows.length; rowIndex++) {
+            const rowLines = block.tableCellLines[rowIndex] || [];
+            const rowHeight = Math.max(1, ...rowLines.map(lines => lines.length));
+            for (let lineIndex = 0; lineIndex < rowHeight; lineIndex++) {
+              allItems.push({
+                key: `${messageKey}-table-${blockIndex}-${rowIndex}-${lineIndex}`,
+                type: 'line',
+                content: '',
+                role: messageRole,
+                toolName: message.toolName,
+                isFirst: isFirstContent && rowIndex === 0 && lineIndex === 0,
+                isTableRow: true,
+                tableCells: rowLines.map(lines => lines[lineIndex] ?? ''),
+                tableColumnWidths: block.columnWidths,
+                tableRowIndex: rowIndex,
+                visualLines: 1
+              });
+            }
+          }
+          if (block.tableRows.some(row => row.some(cell => cell.trim().length > 0))) {
             isFirstContent = false;
           }
           continue;
@@ -454,78 +481,136 @@ export function ChatPage({
         }
       }
     } else {
-      if (messageRole === "user" && message.images && message.images.length > 0) {
-        for (let i = 0; i < message.images.length; i++) {
-          const image = message.images[i]!;
-          allItems.push({
-            key: `${messageKey}-image-${i}`,
-            type: "line",
-            content: `[image] ${image.name}`,
-            role: messageRole,
-            toolName: message.toolName,
-            isFirst: i === 0,
-            indent: 0,
-            paragraphIndex: 0,
-            wrappedLineIndex: 0,
-            success: undefined,
-            isSpacer: false,
-            visualLines: 1
-          });
-        }
-      }
-
-      const messageText = message.displayContent ?? message.content;
-      const paragraphs = messageText.split('\n');
-      let isFirstContent = true;
-
-      for (let i = 0; i < paragraphs.length; i++) {
-        const paragraph = paragraphs[i] ?? '';
-        if (paragraph === '') {
-          allItems.push({
-            key: `${messageKey}-paragraph-${i}-empty`,
-            type: 'line',
-            content: '',
-            role: messageRole,
-            toolName: message.toolName,
-            isFirst: false,
-            indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
-            paragraphIndex: i,
-            wrappedLineIndex: 0,
-            success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
-            isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
-            visualLines: 1,
-            isRunning: message.isRunning,
-            runningStartTime: message.runningStartTime
-          });
-        } else {
-          const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
-          const wrapTarget = messageRole === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
-          const wrapWidth = messageRole === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
-          const wrappedLines = wrapText(wrapTarget, wrapWidth);
-          for (let j = 0; j < wrappedLines.length; j++) {
+      if (messageRole === 'tool' && compactTool) {
+        const { name, info } = parseToolHeader(message.toolName || '', message.toolArgs || {});
+        const label = info ? `${name} (${info})` : name;
+        allItems.push({
+          key: `${messageKey}-compact`,
+          type: 'tool_compact',
+          role: messageRole,
+          toolName: message.toolName,
+          isFirst: true,
+          visualLines: 1,
+          success: message.success,
+          isRunning: message.isRunning,
+          runningStartTime: message.runningStartTime,
+          isCompactTool: true,
+          compactLabel: label,
+          compactResult: getCompactResult(message)
+        });
+      } else {
+        if (messageRole === "user" && message.images && message.images.length > 0) {
+          for (let i = 0; i < message.images.length; i++) {
+            const image = message.images[i]!;
             allItems.push({
-              key: `${messageKey}-paragraph-${i}-line-${j}`,
-              type: 'line',
-              content: wrappedLines[j] || '',
+              key: `${messageKey}-image-${i}`,
+              type: "line",
+              content: `[image] ${image.name}`,
               role: messageRole,
               toolName: message.toolName,
-              isFirst: isFirstContent && i === 0 && j === 0,
-              indent,
-              paragraphIndex: i,
-              wrappedLineIndex: j,
-              success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+              isFirst: i === 0,
+              indent: 0,
+              paragraphIndex: 0,
+              wrappedLineIndex: 0,
+              success: undefined,
               isSpacer: false,
+              visualLines: 1
+            });
+          }
+        }
+
+        const messageText = message.displayContent ?? message.content;
+        const paragraphs = messageText.split('\n');
+        let isFirstContent = true;
+        const planStatuses: Array<'pending' | 'in_progress' | 'completed'> = (messageRole === 'tool' && message.toolName === 'plan' && message.toolResult && typeof message.toolResult === 'object')
+          ? (Array.isArray((message.toolResult as Record<string, unknown>).plan)
+            ? (message.toolResult as Record<string, unknown>).plan as Array<Record<string, unknown>>
+            : [])
+            .map((item) => {
+              if (!item || typeof item !== 'object') return 'pending';
+              const status = (item as Record<string, unknown>).status;
+              return status === 'completed' || status === 'in_progress' ? status : 'pending';
+            })
+          : [];
+        const hasPending = planStatuses.includes('pending');
+        const resolvedPlanStatuses = hasPending
+          ? planStatuses
+          : planStatuses.map((status) => (status === 'in_progress' ? 'completed' : status));
+        let planStatusIndex = 0;
+
+        for (let i = 0; i < paragraphs.length; i++) {
+          const paragraph = paragraphs[i] ?? '';
+          if (paragraph === '') {
+            allItems.push({
+              key: `${messageKey}-paragraph-${i}-empty`,
+              type: 'line',
+              content: '',
+              role: messageRole,
+              toolName: message.toolName,
+              isFirst: false,
+              indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
+              paragraphIndex: i,
+              wrappedLineIndex: 0,
+              success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+              isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
               visualLines: 1,
               isRunning: message.isRunning,
               runningStartTime: message.runningStartTime
             });
+          } else {
+            const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
+            const wrapTarget = messageRole === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
+            const wrapWidth = messageRole === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
+            const wrappedLines = wrapText(wrapTarget, wrapWidth);
+            for (let j = 0; j < wrappedLines.length; j++) {
+              const isPlanItemLine = messageRole === 'tool'
+                && message.toolName === 'plan'
+                && wrappedLines[j]
+                && /^\[(.)\]\s+/.test(wrappedLines[j] || '');
+              const planStatus = isPlanItemLine ? (resolvedPlanStatuses[planStatusIndex] ?? 'pending') : undefined;
+              if (isPlanItemLine) planStatusIndex += 1;
+              allItems.push({
+                key: `${messageKey}-paragraph-${i}-line-${j}`,
+                type: 'line',
+                content: wrappedLines[j] || '',
+                role: messageRole,
+                toolName: message.toolName,
+                isFirst: isFirstContent && i === 0 && j === 0,
+                indent,
+                paragraphIndex: i,
+                wrappedLineIndex: j,
+                success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+                isSpacer: false,
+                visualLines: 1,
+                planStatus,
+                isRunning: message.isRunning,
+                runningStartTime: message.runningStartTime
+              });
+            }
+            isFirstContent = false;
           }
-          isFirstContent = false;
         }
       }
     }
 
-    if (message.isRunning && message.runningStartTime && messageRole === 'tool' && message.toolName !== 'explore') {
+    if (!compactTool && shouldPadMessage) {
+      allItems.push({
+        key: `${messageKey}-message-bottom-pad`,
+        type: 'line',
+        content: '',
+        role: messageRole,
+        toolName: message.toolName,
+        isFirst: false,
+        isSpacer: false,
+        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+        isRunning: message.isRunning,
+        runningStartTime: message.runningStartTime,
+        visualLines: 1,
+        isPadding: true
+      });
+    }
+
+    if (message.isRunning && message.runningStartTime && messageRole === 'tool' && message.toolName !== 'explore' && !compactTool) {
       allItems.push({
         key: `${messageKey}-running`,
         type: 'line',
@@ -732,12 +817,17 @@ export function ChatPage({
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;
           const isRunningTool = item.isRunning && item.runningStartTime;
 
-          const diffBackground = getDiffLineBackground(item.content || '');
+          const showToolBarResolved = showToolBar && !isRunningTool && !item.isCompactTool;
+          const showToolBackgroundResolved = showToolBackground && !isRunningTool && !item.isCompactTool;
 
-          const codeBackground = item.isCodeBlock ? "#1e1e1e" : null;
-          const runningBackground = isRunningTool
-            ? "#2a2a2a"
-            : (codeBackground || diffBackground || (((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar) ? "#1a1a1a" : "transparent"));
+          const diffBackground = item.isCodeBlock || item.isTableRow ? null : getDiffLineBackground(item.content || '');
+
+          const codeBackground = null;
+          const hasMessageBackground = item.isPadding
+            || ((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar);
+          const runningBackground = isRunningTool || item.isCompactTool
+            ? "transparent"
+            : (codeBackground || diffBackground || (hasMessageBackground ? "#1a1a1a" : "transparent"));
 
           return (
             <box
@@ -745,51 +835,81 @@ export function ChatPage({
               flexDirection="row"
               width="100%"
               backgroundColor={runningBackground}
-              paddingRight={((item.role === "user" && item.content) || showToolBackground || showSlashBackground || showErrorBar || isRunningTool) ? 1 : 0}
+              paddingRight={((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar) ? 1 : 0}
             >
-              {item.role === "user" && item.content && (
+              {item.role === "user" && (item.content || item.isPadding) && (
                 <text fg="#ffca38">▎ </text>
               )}
-              {showToolBar && !isRunningTool && (
+              {showToolBarResolved && (
                 <text fg={item.success ? "#1a3a1a" : "#3a1a1a"}>▎ </text>
-              )}
-              {showToolBar && isRunningTool && (
-                <text fg="#808080">▎ </text>
               )}
               {showSlashBar && (
                 <text fg="white">▎ </text>
               )}
+
               {showErrorBar && (
                 <text fg="#ff3838">▎ </text>
               )}
-              {item.isThinking ? (
+              {item.type === 'tool_compact' ? (
+                (() => {
+                  const isRunning = Boolean(item.isRunning);
+                  const blinkOn = timerTick % 2 === 0;
+                  const arrowColor = isRunning
+                    ? (blinkOn ? 'white' : '#808080')
+                    : (item.success ? '#44aa88' : '#ff3838');
+                  const label = item.compactLabel || '';
+                  const result = item.compactResult || '';
+                  return (
+                    <box flexDirection="row">
+                      <text fg={arrowColor}>{'   '}➔  </text>
+                      <text attributes={TextAttributes.DIM}>{`${label}${result ? ` : ${result}` : ''}`}</text>
+                    </box>
+                  );
+                })()
+              ) : item.isThinking ? (
                 <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.isCodeBlock ? (
-                item.isCodeHeader ? (
-                  <text fg={CODE_THEME.header} attributes={TextAttributes.DIM}>{item.content || ' '}</text>
-                ) : (
-                  (item.codeTokens && item.codeTokens.length > 0)
-                    ? (
-                      <>
-                        {item.codeTokens.map((token, tokenIndex) => (
-                          <text key={tokenIndex} fg={token.color}>{token.text}</text>
-                        ))}
-                      </>
-                    )
-                    : <text fg={CODE_THEME.text}>{item.content || ' '}</text>
-                )
+                <box flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={1}>
+                  <code
+                    content={item.codeContent ?? ''}
+                    filetype={normalizeCodeFiletype(item.codeLanguage)}
+                    syntaxStyle={CODE_SYNTAX_STYLE}
+                    width="100%"
+                    height={item.codeHeight ?? 1}
+                    wrapMode="none"
+                  />
+                </box>
+              ) : item.isTableRow && item.tableCells && item.tableColumnWidths ? (
+                <box flexDirection="row">
+                  {item.tableColumnWidths.map((width, colIndex) => {
+                    const cell = item.tableCells?.[colIndex] ?? '';
+                    const padded = ` ${cell.padEnd(width)} `;
+                    const isHeader = item.tableRowIndex === 0;
+                    const isLeftColumn = colIndex === 0;
+                    const cellBg = isHeader || isLeftColumn ? TABLE_HEADER_BG : TABLE_BODY_BG;
+                    const isLast = colIndex === item.tableColumnWidths!.length - 1;
+                    return (
+                      <box key={colIndex} flexDirection="row">
+                        <text bg={cellBg} fg="white">{padded}</text>
+                        {isLast ? null : <text bg={cellBg} fg="white"> </text>}
+                      </box>
+                    );
+                  })}
+                </box>
               ) : item.role === "tool" ? (
-                isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
-                  <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
-                ) : (
-                  renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0)
-                )
+                <box flexDirection="row">
+                  {isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
+                    <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
+                  ) : (
+                    renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus)
+                  )}
+                </box>
               ) : item.role === "user" || item.role === "slash" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.segments && item.segments.length > 0 ? (
-                <>
+                <box flexDirection="row">
                   {item.segments.map((segment, segIndex) => renderMarkdownSegment(segment, segIndex))}
-                </>
+                </box>
               ) : (
                 <text fg={item.isError ? "#ff3838" : "white"}>{item.content || ' '}</text>
               )}
@@ -836,9 +956,6 @@ export function ChatPage({
       <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
         <box flexDirection="row" gap={1}>
           <text fg="#ffca38">{requireApprovals ? '' : '⏵⏵ auto-accept edits on'}</text>
-          <text attributes={TextAttributes.DIM}>{requireApprovals ? '' : ' — '}</text>
-          <text fg="#4d8f29">+{fileChanges.linesAdded}</text>
-          <text fg="#d73a49">-{fileChanges.linesRemoved}</text>
         </box>
       </box>
 

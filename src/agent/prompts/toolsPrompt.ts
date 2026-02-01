@@ -144,7 +144,6 @@ Ask user with predefined options. ONLY way to ask questions.
   - pattern (string): Regex pattern the custom text must match
   - message (string, optional): Error message shown on validation failure
 
-CRITICAL: Never ask questions in plain text. Always use this tool.
 
 # Tool Selection Guide
 
@@ -224,8 +223,11 @@ When a tool returns {"error": "..."}:
 # Question Tool - When to Use
 
 USE question tool:
+- Gathering user preferences or requirements
+- Clarifying ambiguous instructions
+- Getting decisions on implementation choices
+- Offering choices about what direction to take
 - Multiple valid approaches need user preference
-- Destructive action needs confirmation
 - Requirements are genuinely ambiguous
 - A tool was rejected and you need to understand why
 

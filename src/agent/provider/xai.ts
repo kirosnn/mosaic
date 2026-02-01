@@ -28,6 +28,7 @@ export class XaiProvider implements Provider {
           system: config.systemPrompt,
           tools: config.tools,
           maxSteps: config.maxSteps || 100,
+          maxRetries: 0,
           abortSignal: options?.abortSignal,
           providerOptions: reasoningEnabled
             ? {
@@ -114,7 +115,7 @@ export class XaiProvider implements Provider {
             }
           }
         }
-      }, { abortSignal: options?.abortSignal });
+      }, { abortSignal: options?.abortSignal, key: config.provider });
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       yield {

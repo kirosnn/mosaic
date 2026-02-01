@@ -117,7 +117,7 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
       </box>
 
       <box width="80%" maxWidth={80} marginTop={3} flexDirection="row" justifyContent="center">
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>ⓘ TIPS: </text>
+        <text fg="#ffca38" attributes={TextAttributes.BOLD}>● TIPS: </text>
         <text fg="gray">{displayedText}</text>
         <text fg="#ffca38">{cursorVisible ? "█" : " "}</text>
       </box>

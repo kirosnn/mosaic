@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { shouldEnableReasoning } from './reasoning';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
-import { setOAuthTokenForProvider } from '../../utils/config';
+import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
@@ -87,10 +87,15 @@ export class OpenAIProvider implements Provider {
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
-    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    let cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
 
     let oauthAuth = config.auth?.type === 'oauth' ? config.auth : undefined;
+
+    if (oauthAuth) {
+      cleanModel = mapModelForOAuth(cleanModel);
+    }
+
+    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
 
     const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
       if (!oauthAuth?.refreshToken) return oauthAuth;
@@ -117,7 +122,7 @@ export class OpenAIProvider implements Provider {
       return updated;
     };
 
-    const fetchWithOAuth: typeof fetch = async (input, init) => {
+    const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const active = await refreshOauthIfNeeded();
       const accessToken = active?.accessToken;
       const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
@@ -137,7 +142,7 @@ export class OpenAIProvider implements Provider {
       headers.set('originator', 'codex_cli_rs');
       if (accountId) headers.set('chatgpt-account-id', accountId);
 
-      let url = typeof input === 'string' ? input : input.url;
+      let url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url);
       const originalUrl = url;
       if (url.includes('/v1/responses')) {
         url = url.replace('/v1/responses', '/codex/responses');
@@ -192,7 +197,7 @@ export class OpenAIProvider implements Provider {
     const openai = createOpenAI({
       apiKey: oauthAuth ? 'oauth' : cleanApiKey,
       baseURL: oauthAuth ? 'https://chatgpt.com/backend-api' : undefined,
-      fetch: oauthAuth ? fetchWithOAuth : undefined,
+      fetch: oauthAuth ? (fetchWithOAuth as typeof fetch) : undefined,
       compatibility: oauthAuth ? 'compatible' : undefined,
     });
 
@@ -224,6 +229,7 @@ export class OpenAIProvider implements Provider {
         system: config.systemPrompt,
         tools: toolsToUse,
         maxSteps: config.maxSteps ?? 100,
+        maxRetries: 0,
         abortSignal: options?.abortSignal,
         providerOptions: {
           openai: {
@@ -234,12 +240,14 @@ export class OpenAIProvider implements Provider {
       });
 
       let stepCounter = 0;
+      let hasEmitted = false;
 
       for await (const chunk of result.fullStream as any) {
         const c: any = chunk;
         switch (c.type) {
           case 'reasoning':
             if (c.textDelta) {
+              hasEmitted = true;
               yield {
                 type: 'reasoning-delta',
                 content: c.textDelta,
@@ -248,6 +256,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'text-delta':
+            hasEmitted = true;
             yield {
               type: 'text-delta',
               content: c.textDelta,
@@ -255,6 +264,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'step-start':
+            hasEmitted = true;
             yield {
               type: 'step-start',
               stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : stepCounter,
@@ -263,6 +273,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'step-finish':
+            hasEmitted = true;
             yield {
               type: 'step-finish',
               stepNumber:
@@ -272,6 +283,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'tool-call':
+            hasEmitted = true;
             yield {
               type: 'tool-call-end',
               toolCallId: String(c.toolCallId ?? ''),
@@ -281,6 +293,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'tool-result':
+            hasEmitted = true;
             yield {
               type: 'tool-result',
               toolCallId: String(c.toolCallId ?? ''),
@@ -290,6 +303,7 @@ export class OpenAIProvider implements Provider {
             break;
 
           case 'finish':
+            hasEmitted = true;
             yield {
               type: 'finish',
               finishReason: String(c.finishReason ?? 'stop'),
@@ -300,7 +314,7 @@ export class OpenAIProvider implements Provider {
           case 'error': {
             const err = normalizeError(c.error);
             const decision = getRetryDecision(err);
-            if (decision.shouldRetry) {
+            if (decision.shouldRetry && !hasEmitted) {
               throw err;
             }
             yield {
@@ -335,7 +349,7 @@ export class OpenAIProvider implements Provider {
     try {
       yield* runWithRetry(
         () => runOnce('responses', false),
-        { abortSignal: options?.abortSignal }
+        { abortSignal: options?.abortSignal, key: config.provider }
       );
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
@@ -354,7 +368,7 @@ export class OpenAIProvider implements Provider {
         try {
           yield* runWithRetry(
             () => runOnce(fallbackEndpoint, false),
-            { abortSignal: options?.abortSignal }
+            { abortSignal: options?.abortSignal, key: config.provider }
           );
           return;
         } catch (endpointError) {

@@ -16,6 +16,18 @@ const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121
 const DEFAULT_FETCH_MAX_LENGTH = 10000;
 const DEFAULT_FETCH_TIMEOUT = 30000;
 
+function normalizeCommandOutput(text: string): string {
+  if (!text) return '';
+  let s = text.replace(/\r\n/g, '\n');
+  if (s.includes('\r')) {
+    const parts = s.split('\n');
+    s = parts.map(p => (p.includes('\r') ? (p.split('\r').pop() || '') : p)).join('\n');
+  }
+  s = s.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-Z\\-_])/g, '');
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return s;
+}
+
 function extractContentFromHtml(html: string, url: string): { content: string; title: string | null; isSPA: boolean } {
   const { document } = parseHTML(html);
 
@@ -904,9 +916,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             cwd: workspace,
             timeout,
             ...(isWindows && { shell: 'powershell.exe' }),
+            env: {
+              ...process.env,
+              CI: process.env.CI || '1',
+              TERM: process.env.TERM || 'dumb',
+              NO_COLOR: process.env.NO_COLOR || '1',
+              npm_config_loglevel: process.env.npm_config_loglevel || 'silent',
+              GIT_PAGER: process.env.GIT_PAGER || 'cat',
+              PAGER: process.env.PAGER || 'cat',
+            },
           });
 
-          const output = (stdout || '') + (stderr || '');
+          const output = normalizeCommandOutput((stdout || '') + (stderr || ''));
           return {
             success: true,
             result: output || 'Command executed with no output'
@@ -916,7 +937,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const errorMessage = execError.message || String(error);
 
           if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
-            const partialOutput = (execError.stdout || '') + (execError.stderr || '');
+            const partialOutput = normalizeCommandOutput((execError.stdout || '') + (execError.stderr || ''));
             const output = partialOutput
               ? `Command output (timed out after ${timeout}ms):\n${partialOutput}\n\n[Process continues running in background]`
               : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
@@ -927,7 +948,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             };
           }
 
-          const output = (execError.stdout || '') + (execError.stderr || '');
+          const output = normalizeCommandOutput((execError.stdout || '') + (execError.stderr || ''));
           const exitCode = execError.code;
           const fullOutput = output
             ? `Command exited with code ${exitCode ?? 'unknown'}:\n${output}`

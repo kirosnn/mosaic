@@ -116,11 +116,7 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
       return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
 
     case 'link':
-      return (
-        <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>
-          <a href={normalizeLinkUri(segment.href || '')}>{segment.content}</a>
-        </text>
-      );
+      return <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>{segment.content}</text>;
 
     case 'listitem':
       return (
@@ -233,9 +229,12 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 }
 
 export interface WrappedMarkdownBlock {
-  type: 'line' | 'code';
+  type: 'line' | 'code' | 'table';
   wrappedLines?: { text: string; segments: MarkdownSegment[] }[];
   codeLines?: string[];
+  tableRows?: string[][];
+  columnWidths?: number[];
+  tableCellLines?: string[][][];
   language?: string;
 }
 
@@ -251,6 +250,84 @@ function wrapCodeLine(line: string, maxWidth: number): string[] {
     i += maxWidth;
   }
   return chunks;
+}
+
+function wrapCellText(text: string, maxWidth: number): string[] {
+  if (!text) return [''];
+  if (maxWidth <= 0) return [text];
+  if (text.length <= maxWidth) return [text];
+
+  const parts = text.split(/\s+/g).filter(Boolean);
+  if (parts.length === 0) return [''];
+
+  const lines: string[] = [];
+  let current = '';
+
+  const pushLine = () => {
+    if (current !== '') lines.push(current);
+    current = '';
+  };
+
+  for (const part of parts) {
+    if (part.length > maxWidth) {
+      if (current) pushLine();
+      let i = 0;
+      while (i < part.length) {
+        lines.push(part.slice(i, i + maxWidth));
+        i += maxWidth;
+      }
+      continue;
+    }
+
+    if (!current) {
+      current = part;
+    } else if ((current + ' ' + part).length <= maxWidth) {
+      current += ' ' + part;
+    } else {
+      pushLine();
+      current = part;
+    }
+  }
+
+  pushLine();
+  return lines.length > 0 ? lines : [''];
+}
+
+function computeTableColumnWidths(rows: string[][], maxWidth: number): number[] {
+  const columnCount = Math.max(...rows.map(row => row.length));
+  const widths = new Array<number>(columnCount).fill(1);
+
+  for (const row of rows) {
+    for (let col = 0; col < columnCount; col++) {
+      const cell = row[col] ?? '';
+      widths[col] = Math.max(widths[col]!, cell.length);
+    }
+  }
+
+  const availableContentWidth = Math.max(1, maxWidth - (columnCount * 2) - (columnCount - 1));
+  let total = widths.reduce((sum, w) => sum + w, 0);
+
+  if (availableContentWidth <= columnCount) {
+    return new Array<number>(columnCount).fill(1);
+  }
+
+  while (total > availableContentWidth) {
+    let maxIndex = 0;
+    for (let i = 1; i < widths.length; i++) {
+      if ((widths[i] ?? 1) > (widths[maxIndex] ?? 1)) {
+        maxIndex = i;
+      }
+    }
+    if ((widths[maxIndex] ?? 1) <= 1) break;
+    widths[maxIndex] = (widths[maxIndex] ?? 1) - 1;
+    total -= 1;
+  }
+
+  return widths;
+}
+
+function isTableSeparator(line: string): boolean {
+  return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
 }
 
 function reflowParagraphs(text: string): string {
@@ -277,7 +354,7 @@ function reflowParagraphs(text: string): string {
       continue;
     }
 
-    if (/^#{1,6}\s/.test(line) || /^[-*+]\s/.test(line) || /^\d+\.\s/.test(line)) {
+    if (/^#{1,6}\s/.test(line) || /^[-*+]\s/.test(line) || /^\d+\.\s/.test(line) || isTableSeparator(line) || line.includes('|')) {
       result.push(line);
       continue;
     }
@@ -306,7 +383,8 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
   let codeLines: string[] = [];
   let language: string | undefined;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
     const fenceMatch = line.match(/^```([A-Za-z0-9_-]+)?\s*$/);
     if (fenceMatch) {
       if (!inCodeBlock) {
@@ -325,6 +403,37 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
 
     if (inCodeBlock) {
       codeLines.push(line);
+      continue;
+    }
+
+    const nextLine = lines[i + 1];
+    if (line.includes('|') && typeof nextLine === 'string' && isTableSeparator(nextLine)) {
+      const tableRows: string[][] = [];
+      const splitRow = (rowLine: string) => {
+        let row = rowLine.trim();
+        if (row.startsWith('|')) row = row.slice(1);
+        if (row.endsWith('|')) row = row.slice(0, -1);
+        return row.split('|').map(cell => cell.trim());
+      };
+
+      tableRows.push(splitRow(line));
+      i += 2;
+      while (i < lines.length) {
+        const rowLine = lines[i]!;
+        if (!rowLine.includes('|') || rowLine.trim() === '') {
+          i -= 1;
+          break;
+        }
+        tableRows.push(splitRow(rowLine));
+        i += 1;
+      }
+
+      const columnWidths = computeTableColumnWidths(tableRows, maxWidth);
+      const tableCellLines = tableRows.map(row =>
+        columnWidths.map((width, col) => wrapCellText(row[col] ?? '', width))
+      );
+
+      blocks.push({ type: 'table', tableRows, columnWidths, tableCellLines });
       continue;
     }
 

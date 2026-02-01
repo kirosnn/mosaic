@@ -454,6 +454,18 @@ export function getAuthForProvider(providerId: string):
   if (apiKey) return { type: 'api_key', apiKey };
   return undefined;
 }
+
+export function mapModelForOAuth(modelId: string): string {
+  const id = modelId.toLowerCase().trim();
+
+  if (id.includes('codex')) return modelId;
+
+  if (id.startsWith('gpt-5.2') || id === 'gpt-5.2') return 'gpt-5.2-codex';
+  if (id.startsWith('gpt-5.1') || id === 'gpt-5.1') return 'gpt-5.1-codex';
+  if (id.startsWith('gpt-5') || id === 'gpt-5') return 'gpt-5-codex';
+
+  return modelId;
+}
 export function setApiKeyForProvider(providerId: string, key: string): void {
   const config = readConfig();
   if (!config.apiKeys) config.apiKeys = {};

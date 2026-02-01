@@ -246,26 +246,12 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
 }
 
 function formatPlanHeader(result: unknown): string {
-  const displayName = getToolDisplayName('plan');
-  if (!result || typeof result !== 'object') return displayName;
+  const title = '# Todos';
+  if (!result || typeof result !== 'object') return title;
   const obj = result as Record<string, unknown>;
   const planItems = Array.isArray(obj.plan) ? obj.plan : [];
-  const total = planItems.length;
-  if (total === 0) return displayName;
-
-  let completed = 0;
-  let inProgress = 0;
-
-  for (const item of planItems) {
-    if (!item || typeof item !== 'object') continue;
-    const status = typeof (item as Record<string, unknown>).status === 'string'
-      ? (item as Record<string, unknown>).status
-      : 'pending';
-    if (status === 'completed') completed += 1;
-    if (status === 'in_progress') inProgress += 1;
-  }
-
-  return `${displayName} (${completed}/${total} done, ${inProgress} in progress)`;
+  if (planItems.length === 0) return title;
+  return title;
 }
 
 export function parseToolHeader(toolName: string, args: Record<string, unknown>): { name: string; info: string | null } {
@@ -711,27 +697,15 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
           })
           .filter((item): item is { step: string; status: string } => !!item);
 
-        const inProgressItems = normalized.filter(item => item.status === 'in_progress');
-        const pendingItems = normalized.filter(item => item.status === 'pending');
-        const completedItems = normalized.filter(item => item.status === 'completed');
+        const hasPending = normalized.some(item => item.status === 'pending');
 
-        const sectionPrefix = '  ';
-        const itemPrefix = '      ';
-        const arrowPrefix = '> ';
-
-        const addSection = (label: string, items: Array<{ step: string; status: string }>, activeStep: string | null, marker: string) => {
-          if (items.length === 0) return;
-          lines.push(`${sectionPrefix}${label} (${items.length})`);
-          for (const item of items) {
-            const isActive = activeStep !== null && item.step === activeStep;
-            const prefix = isActive ? arrowPrefix : arrowPrefix;
-            lines.push(`${itemPrefix}${prefix}${marker} ${item.step}`);
-          }
-        };
-
-        addSection('In progress', inProgressItems, inProgressItems[0]?.step ?? null, '[~]');
-        addSection('Todo', pendingItems, null, '[ ]');
-        addSection('Completed', completedItems, null, '[✓]');
+        for (const item of normalized) {
+          const displayStatus = item.status === 'in_progress' && !hasPending ? 'completed' : item.status;
+          let marker = '[ ]';
+          if (displayStatus === 'in_progress') marker = '[●]';
+          if (displayStatus === 'completed') marker = '[✓]';
+          lines.push(`${marker} ${item.step}`);
+        }
 
         return lines.length > 0 ? lines : ['(no steps)'];
       }
@@ -769,6 +743,9 @@ export function formatToolContent(
   if (argsLine) lines.push(argsLine);
 
   const bodyLines = formatToolBodyLines(toolName, args, result);
+  if (toolName === 'plan' && bodyLines.length > 0) {
+    lines.push('');
+  }
   for (const line of bodyLines) lines.push(line);
 
   const skipTruncate = toolName === 'write' || toolName === 'edit' || toolName === 'plan';
@@ -776,7 +753,11 @@ export function formatToolContent(
     return lines.join('\n');
   }
 
-  return truncateLines(lines, options?.maxLines).join('\n');
+  const maxLines = toolName === 'bash'
+    ? (options?.maxLines ?? DEFAULT_MAX_TOOL_LINES)
+    : options?.maxLines;
+
+  return truncateLines(lines, maxLines).join('\n');
 }
 
 export function formatToolMessage(

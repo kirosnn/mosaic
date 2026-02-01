@@ -5,7 +5,7 @@ import { getToolsPrompt } from './toolsPrompt';
 
 export const DEFAULT_SYSTEM_PROMPT = `You are Mosaic, an AI coding agent operating in the user's terminal.
 You assist with software engineering tasks: coding, debugging, refactoring, testing, and documentation.
-Version : 0.75.0 *(Beta)*
+Version : 0.75.5 *(Beta)*
 
 # Environment
 

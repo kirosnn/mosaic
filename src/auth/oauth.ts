@@ -313,6 +313,10 @@ export function getSupportedOAuthProviders(): string[] {
 
 async function runOpenAIOAuthFlow(): Promise<boolean> {
   const config = OAUTH_PROVIDERS.openai;
+  if (!config) {
+    console.error('OpenAI OAuth configuration not found');
+    return false;
+  }
   const pkce = generatePKCE();
   const state = createState();
   const authorizeUrl = buildAuthorizeUrl(config, pkce, state);

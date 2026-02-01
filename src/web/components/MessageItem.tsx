@@ -146,7 +146,6 @@ export function MessageItem({ message }: MessageItemProps) {
                     <div className="markdown-content">
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
-                            transformLinkUri={normalizeLinkUri}
                             components={{
                                 a({ href, children, ...props }) {
                                     const normalized = normalizeLinkUri(href || '');

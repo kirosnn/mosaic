@@ -5,7 +5,7 @@
 <h1 align="center">Mosaic CLI</h1>
 
 <p align="center">
-  <strong>Version 0.75.0</strong>
+  <strong>Version 0.75.5</strong>
 </p>
 
 <p align="center">

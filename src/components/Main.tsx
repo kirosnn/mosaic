@@ -102,8 +102,7 @@ export function summarizeMessage(message: CompactableMessage, isLastUser: boolea
 
 export function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
   const maxChars = Math.max(0, maxTokens * 3);
-  const header = "Résumé de conversation (compact):";
-  let charCount = header.length + 1;
+  let charCount = 0;
   const lines: string[] = [];
 
   let lastUserIndex = -1;
@@ -117,11 +116,10 @@ export function buildSummary(messages: CompactableMessage[], maxTokens: number):
     charCount += line.length + 1;
     lines.push(line);
   }
-  const body = lines.join("\n");
-  const full = `${header}\n${body}`.trim();
+
+  const full = lines.join("\n").trim();
   return truncateText(full, maxChars);
 }
-
 export function collectContextFiles(messages: Message[]): string[] {
   const files = new Set<string>();
   for (const message of messages) {
@@ -145,10 +143,9 @@ export function appendContextFiles(summary: string, files: string[], maxTokens: 
   if (files.length === 0) return summary;
   const maxChars = Math.max(0, maxTokens * 4);
   const list = files.map(f => `- ${f}`).join("\n");
-  const block = `\n\nFichiers conservés après compaction:\n${list}`;
+  const block = `\n\nFiles kept after compaction:\n${list}`;
   return truncateText(`${summary}${block}`, maxChars);
 }
-
 export function compactMessagesForUi(
   messages: Message[],
   systemPrompt: string,
@@ -217,11 +214,18 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const exploreMessageIdRef = useRef<string | null>(null);
   const exploreToolsRef = useRef<Array<{ tool: string; info: string; success: boolean }>>([]);
   const explorePurposeRef = useRef<string>('');
+  const disposedRef = useRef(false);
+  const pendingCompactTokensRef = useRef<number | null>(null);
+  const terminalHeightRef = useRef(process.stdout.rows || 24);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
   useEffect(() => {
     initializeCommands();
+  }, []);
+
+  useEffect(() => {
+    return () => { disposedRef.current = true; };
   }, []);
 
   useEffect(() => {
@@ -306,7 +310,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const handleResize = () => {
       const newWidth = process.stdout.columns || 80;
       const newHeight = process.stdout.rows || 24;
-      const oldHeight = terminalHeight;
+      const oldHeight = terminalHeightRef.current;
+      terminalHeightRef.current = newHeight;
 
       setTerminalWidth(newWidth);
       setTerminalHeight(newHeight);
@@ -322,7 +327,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     return () => {
       process.stdout.off('resize', handleResize);
     };
-  }, [terminalWidth, terminalHeight]);
+  }, []);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -542,7 +547,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           setCurrentTokens(nextTokens);
           return;
         }
-        
+
         if (result.shouldAddToHistory === true) {
           addInputToHistory(value.trim());
 
@@ -584,6 +589,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const notifyAbort = () => {
             if (abortNotified) return;
             abortNotified = true;
+            if (disposedRef.current) return;
             setMessages((prev: Message[]) => {
               const newMessages = [...prev];
               newMessages.push({
@@ -767,10 +773,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 totalChars += toolResultStr.length;
                 setCurrentTokens(estimateTokens());
 
-                if (assistantChunk.trim()) {
+                if (assistantChunk.trim() || thinkingChunk.trim()) {
                   conversationSteps.push({
                     type: 'assistant',
                     content: assistantChunk,
+                    thinkingContent: thinkingChunk || undefined,
                     timestamp: Date.now()
                   });
                 }
@@ -829,10 +836,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   streamHadError = true;
                   break;
                 }
-                if (assistantChunk.trim()) {
+                if (assistantChunk.trim() || thinkingChunk.trim()) {
                   conversationSteps.push({
                     type: 'assistant',
                     content: assistantChunk,
+                    thinkingContent: thinkingChunk || undefined,
                     timestamp: Date.now()
                   });
                 }
@@ -877,10 +885,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
               return;
             }
 
-            if (!streamHadError && assistantChunk.trim()) {
+            if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
               conversationSteps.push({
                 type: 'assistant',
                 content: assistantChunk,
+                thinkingContent: thinkingChunk || undefined,
                 timestamp: Date.now()
               });
             }
@@ -944,22 +953,24 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             if (abortControllerRef.current === abortController) {
               abortControllerRef.current = null;
             }
-            const duration = responseDuration ?? (Date.now() - localStartTime);
-            if (duration >= 60000) {
-              const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-              setMessages((prev: Message[]) => {
-                const newMessages = [...prev];
-                for (let i = newMessages.length - 1; i >= 0; i--) {
-                  if (newMessages[i]?.role === 'assistant') {
-                    newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
-                    break;
+            if (!disposedRef.current) {
+              const duration = responseDuration ?? (Date.now() - localStartTime);
+              if (duration >= 60000) {
+                const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+                setMessages((prev: Message[]) => {
+                  const newMessages = [...prev];
+                  for (let i = newMessages.length - 1; i >= 0; i--) {
+                    if (newMessages[i]?.role === 'assistant') {
+                      newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
+                      break;
+                    }
                   }
-                }
-                return newMessages;
-              });
+                  return newMessages;
+                });
+              }
+              setIsProcessing(false);
+              setProcessingStartTime(null);
             }
-            setIsProcessing(false);
-            setProcessingStartTime(null);
           }
 
           return;
@@ -1045,6 +1056,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const notifyAbort = () => {
       if (abortNotified) return;
       abortNotified = true;
+      if (disposedRef.current) return;
       setMessages((prev: Message[]) => {
         const newMessages = [...prev];
         newMessages.push({
@@ -1064,12 +1076,12 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       images: imagesForMessage.length > 0 ? imagesForMessage : undefined
     });
 
-          let responseDuration: number | null = null;
-          let responseBlendWord: string | undefined = undefined;
+    let responseDuration: number | null = null;
+    let responseBlendWord: string | undefined = undefined;
 
-          try {
-            const providerStatus = await Agent.ensureProviderReady();
-            if (!providerStatus.ready) {
+    try {
+      const providerStatus = await Agent.ensureProviderReady();
+      if (!providerStatus.ready) {
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
           newMessages.push({
@@ -1227,10 +1239,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           totalChars += toolResultStr.length;
           setCurrentTokens(estimateTokens());
 
-          if (assistantChunk.trim()) {
+          if (assistantChunk.trim() || thinkingChunk.trim()) {
             conversationSteps.push({
               type: 'assistant',
               content: assistantChunk,
+              thinkingContent: thinkingChunk || undefined,
               timestamp: Date.now()
             });
           }
@@ -1288,10 +1301,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             streamHadError = true;
             break;
           }
-          if (assistantChunk.trim()) {
+          if (assistantChunk.trim() || thinkingChunk.trim()) {
             conversationSteps.push({
               type: 'assistant',
               content: assistantChunk,
+              thinkingContent: thinkingChunk || undefined,
               timestamp: Date.now()
             });
           }
@@ -1337,57 +1351,60 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         return;
       }
 
-          if (!streamHadError && assistantChunk.trim()) {
-            conversationSteps.push({
-              type: 'assistant',
-              content: assistantChunk,
-              timestamp: Date.now()
-            });
-          }
+      if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
+        conversationSteps.push({
+          type: 'assistant',
+          content: assistantChunk,
+          thinkingContent: thinkingChunk || undefined,
+          timestamp: Date.now()
+        });
+      }
 
-          responseDuration = Date.now() - localStartTime;
-          if (responseDuration >= 60000) {
-            responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-            for (let i = conversationSteps.length - 1; i >= 0; i--) {
-              if (conversationSteps[i]?.type === 'assistant') {
-                conversationSteps[i] = {
-                  ...conversationSteps[i]!,
-                  responseDuration,
-                  blendWord: responseBlendWord
-                };
-                break;
-              }
-            }
+      responseDuration = Date.now() - localStartTime;
+      if (responseDuration >= 60000) {
+        responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+        for (let i = conversationSteps.length - 1; i >= 0; i--) {
+          if (conversationSteps[i]?.type === 'assistant') {
+            conversationSteps[i] = {
+              ...conversationSteps[i]!,
+              responseDuration,
+              blendWord: responseBlendWord
+            };
+            break;
           }
+        }
+      }
 
-          const conversationData: ConversationHistory = {
-            id: conversationId,
-            timestamp: Date.now(),
-            steps: conversationSteps,
-            totalSteps: stepCount,
-            title: currentTitleRef.current ?? currentTitle ?? null,
-            workspace: process.cwd(),
-            totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-            model: config.model,
-            provider: config.provider
-          };
+      const conversationData: ConversationHistory = {
+        id: conversationId,
+        timestamp: Date.now(),
+        steps: conversationSteps,
+        totalSteps: stepCount,
+        title: currentTitleRef.current ?? currentTitle ?? null,
+        workspace: process.cwd(),
+        totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
+        model: config.model,
+        provider: config.provider
+      };
 
-          saveConversation(conversationData);
-          const resolvedMax = await resolveMaxContextTokens();
-          const maxContextTokens = resolvedMax ?? getDefaultContextBudget(config.provider);
-          if (!abortController.signal.aborted) {
-            const realPromptTokens = lastPromptTokensRef.current;
-            const systemPrompt = buildSystemPrompt();
-            setMessages(prev => {
-              const usedTokens = realPromptTokens > 0
-                ? realPromptTokens
-                : estimateTotalTokens(prev, systemPrompt);
-              if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
-              const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
-              setCurrentTokens(compacted.estimatedTokens);
-              return compacted.messages;
-            });
-          }
+      saveConversation(conversationData);
+      const resolvedMax = await resolveMaxContextTokens();
+      const maxContextTokens = resolvedMax ?? getDefaultContextBudget(config.provider);
+      if (!abortController.signal.aborted && !disposedRef.current) {
+        const realPromptTokens = lastPromptTokensRef.current;
+        const systemPrompt = buildSystemPrompt();
+        pendingCompactTokensRef.current = null;
+        setMessages(prev => {
+          const usedTokens = realPromptTokens > 0
+            ? realPromptTokens
+            : estimateTotalTokens(prev, systemPrompt);
+          if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
+          const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
+          pendingCompactTokensRef.current = compacted.estimatedTokens;
+          return compacted.messages;
+        });
+        setCurrentTokens(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
+      }
 
     } catch (error) {
       if (abortController.signal.aborted) {
@@ -1419,22 +1436,24 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
       }
-      const duration = responseDuration ?? (Date.now() - localStartTime);
-      if (duration >= 60000) {
-        const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-        setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          for (let i = newMessages.length - 1; i >= 0; i--) {
-            if (newMessages[i]?.role === 'assistant') {
-              newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
-              break;
+      if (!disposedRef.current) {
+        const duration = responseDuration ?? (Date.now() - localStartTime);
+        if (duration >= 60000) {
+          const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+          setMessages((prev: Message[]) => {
+            const newMessages = [...prev];
+            for (let i = newMessages.length - 1; i >= 0; i--) {
+              if (newMessages[i]?.role === 'assistant') {
+                newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
+                break;
+              }
             }
-          }
-          return newMessages;
-        });
+            return newMessages;
+          });
+        }
+        setIsProcessing(false);
+        setProcessingStartTime(null);
       }
-      setIsProcessing(false);
-      setProcessingStartTime(null);
     }
   };
 

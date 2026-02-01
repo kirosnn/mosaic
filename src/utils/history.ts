@@ -5,6 +5,7 @@ import { homedir } from 'os';
 export interface ConversationStep {
   type: 'user' | 'assistant' | 'tool';
   content: string;
+  thinkingContent?: string;
   images?: import("./images").ImageAttachment[];
   toolName?: string;
   toolArgs?: Record<string, unknown>;
