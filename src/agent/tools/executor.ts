@@ -19,28 +19,7 @@ const DEFAULT_FETCH_MAX_LENGTH = 10000;
 const DEFAULT_FETCH_TIMEOUT = 30000;
 
 const SAFE_BASH_COMMANDS = new Set([
-  'ls', 'dir', 'tree',
-  'pwd',
-  'cat', 'type', 'head', 'tail', 'less', 'more', 'nl',
-  'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack',
-  'find', 'fd', 'which', 'where', 'whereis',
-  'wc', 'diff', 'cmp', 'comm',
-  'file', 'stat', 'readlink', 'realpath',
-  'du', 'df',
-  'env', 'printenv',
-  'whoami', 'id',
-  'hostname', 'uname', 'date', 'cal', 'uptime',
-  'ps', 'top', 'htop', 'pstree', 'pgrep',
-  'free', 'vmstat', 'iostat', 'lscpu', 'lsmem',
-  'ping', 'traceroute', 'tracepath', 'mtr',
-  'dig', 'nslookup', 'host',
-  'ss', 'netstat', 'lsof',
-  'node', 'deno', 'python', 'python3', 'ruby', 'php',
-  'npm', 'npx', 'yarn', 'pnpm', 'bun',
-  'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha',
-  'cargo', 'rustc', 'go', 'java', 'javac', 'dotnet',
-  'exa', 'eza', 'bat',
-  'curl', 'wget',
+  'ls', 'dir', 'tree', 'pwd', 'cat', 'type', 'head', 'tail', 'less', 'more', 'nl', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'find', 'fd', 'which', 'where', 'whereis', 'wc', 'diff', 'cmp', 'comm', 'file', 'stat', 'readlink', 'realpath', 'du', 'df', 'env', 'printenv', 'whoami', 'id', 'hostname', 'uname', 'date', 'cal', 'uptime', 'ps', 'top', 'htop', 'pstree', 'pgrep', 'free', 'vmstat', 'iostat', 'lscpu', 'lsmem', 'ping', 'traceroute', 'tracepath', 'mtr', 'dig', 'nslookup', 'host', 'ss', 'netstat', 'lsof', 'node', 'deno', 'python', 'python3', 'ruby', 'php', 'npm', 'npx', 'yarn', 'pnpm', 'bun', 'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha', 'cargo', 'rustc', 'go', 'java', 'javac', 'dotnet', 'exa', 'eza', 'bat', 'curl', 'wget',
 ]);
 
 const DANGEROUS_BASH_PATTERNS = [
