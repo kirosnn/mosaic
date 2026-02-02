@@ -46,7 +46,9 @@ export function formatElapsedTime(ms: number | null | undefined, fromStartTime: 
 export function ThinkingIndicator(props: ThinkingIndicatorProps) {
     const [shimmerPos, setShimmerPos] = useState(-2);
     const [, setTick] = useState(0);
-    const [thinkingWord] = useState(() => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)]);
+    const [thinkingWord] = useState(
+        () => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)]
+    );
     const text = `${thinkingWord}...`;
 
     useEffect(() => {
@@ -84,8 +86,16 @@ export function ThinkingIndicator(props: ThinkingIndicatorProps) {
                 );
             })}
             {elapsedStr && <text attributes={TextAttributes.DIM}> — {elapsedStr}</text>}
-            <text attributes={TextAttributes.DIM}> — esc to cancel</text>
-            {props.tokens !== undefined && props.tokens > 0 && <text attributes={TextAttributes.DIM}> — {props.tokens.toLocaleString()} tokens</text>}
+            <text attributes={TextAttributes.DIM}> — </text>
+            <text fg="white">esc</text>
+            <text attributes={TextAttributes.DIM}> cancel</text>
+            {props.tokens !== undefined && props.tokens > 0 && (
+                <>
+                    <text attributes={TextAttributes.DIM}> — </text>
+                    <text fg="white">{props.tokens.toLocaleString()}</text>
+                    <text attributes={TextAttributes.DIM}> tokens</text>
+                </>
+            )}
         </box>
     );
 }
