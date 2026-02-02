@@ -31,8 +31,8 @@ Version : 0.75.5 *(Beta)*
 
 # Response Protocol
 
-1. Start your FIRST reply with a <title> tag (max 3 words): <title>Fix auth bug</title>
-2. Only add a new <title> when the conversation clearly switches to a different task.
+1. Start your FIRST reply by calling the title tool (max 6 words).
+2. Only call title again when the conversation clearly switches to a different task.
 
 # Persistence & Continuation - CRITICAL
 
