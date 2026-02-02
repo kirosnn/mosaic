@@ -15,7 +15,8 @@ export function extractTitle(content: string, alreadyResolved: boolean): {
     title: string | null;
     cleanContent: string;
     isPending: boolean;
-    noTitle: boolean
+    noTitle: boolean;
+    isTitlePseudoCall: boolean
 } {
     const trimmed = content.trimStart();
 
@@ -23,19 +24,31 @@ export function extractTitle(content: string, alreadyResolved: boolean): {
     if (titleMatch) {
         const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
         const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/si, '');
-        return { title, cleanContent, isPending: false, noTitle: false };
+        return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
+    }
+
+    const titleCallMatch = trimmed.match(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i);
+    if (titleCallMatch) {
+        const t = titleCallMatch[2] ?? '';
+        const title = alreadyResolved ? null : (t.trim() || null);
+        const cleanContent = trimmed.replace(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i, '');
+        return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
     }
 
     if (alreadyResolved) {
-        return { title: null, cleanContent: content, isPending: false, noTitle: false };
+        return { title: null, cleanContent: content, isPending: false, noTitle: false, isTitlePseudoCall: false };
     }
 
     const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
     if (partialTitlePattern.test(trimmed) || (trimmed.toLowerCase().startsWith('<title>') && !trimmed.toLowerCase().includes('</title>'))) {
-        return { title: null, cleanContent: '', isPending: true, noTitle: false };
+        return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: false };
     }
 
-    return { title: null, cleanContent: content, isPending: false, noTitle: true };
+    if (trimmed.toLowerCase().startsWith('title(') && !trimmed.includes(')')) {
+        return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: true };
+    }
+
+    return { title: null, cleanContent: content, isPending: false, noTitle: true, isTitlePseudoCall: false };
 }
 
 export function setDocumentTitle(title: string) {
