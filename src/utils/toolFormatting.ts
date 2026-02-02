@@ -18,6 +18,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   explore: 'Explore',
   fetch: 'Fetch',
   plan: 'Plan',
+  title: 'Title',
 };
 
 function parseMcpSafeId(toolName: string): { serverId: string; tool: string } | null {
@@ -139,6 +140,10 @@ function formatKnownToolArgs(toolName: string, args: Record<string, unknown>): s
       return null;
     }
 
+    case 'title': {
+      return null;
+    }
+
     case 'question': {
       const prompt = typeof args.prompt === 'string' ? args.prompt : '';
       return prompt ? `prompt: "${prompt}"` : null;
@@ -233,6 +238,11 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     }
     case 'plan':
       return displayName;
+    case 'title': {
+      const t = typeof args.title === 'string' ? args.title : '';
+      const clean = t.replace(/[\r\n]+/g, ' ').trim();
+      return clean ? `${displayName} (${clean})` : displayName;
+    }
     default: {
       if (toolName.startsWith('mcp__')) {
         const info = getMcpHeaderInfo('', args);
@@ -301,6 +311,11 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
     }
     case 'plan':
       return { name: displayName, info: null };
+    case 'title': {
+      const t = typeof args.title === 'string' ? args.title : '';
+      const clean = t.replace(/[\r\n]+/g, ' ').trim();
+      return { name: displayName, info: clean || null };
+    }
     default: {
       if (toolName.startsWith('mcp__')) {
         const info = getMcpHeaderInfo('', args);
@@ -797,7 +812,11 @@ export function formatErrorMessage(errorType: 'API' | 'Mosaic' | 'Tool', errorMe
     const lowerMessage = errorMessage.toLowerCase();
 
     if (lowerMessage.includes('tried to call unavailable tool') || lowerMessage.includes('unknown tool')) {
-      return `${errorType} Error\nThe model tried to use a tool that is not available. Please try again.`;
+      const toolMatch = errorMessage.match(/(?:unavailable tool|unknown tool)\s*[:\-]?\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?/i)
+        ?? errorMessage.match(/tool\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?\s*(?:is not available|not available)/i);
+      const toolName = toolMatch?.[1];
+      const detail = toolName ? `\nTool: ${toolName}` : '';
+      return `${errorType} Error\nThe model tried to use a tool that is not available.${detail}\nPlease try again.`;
     }
 
     if (lowerMessage.includes('rate limit') || lowerMessage.includes('429')) {
