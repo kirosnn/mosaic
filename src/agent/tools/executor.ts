@@ -7,6 +7,7 @@ import { shouldRequireApprovals } from '../../utils/config';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import { debugLog } from '../../utils/debug';
+import { addPendingChange } from '../../utils/pendingChangesBridge';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
@@ -16,6 +17,117 @@ const execAsync = promisify(exec);
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0';
 const DEFAULT_FETCH_MAX_LENGTH = 10000;
 const DEFAULT_FETCH_TIMEOUT = 30000;
+
+const SAFE_BASH_COMMANDS = new Set([
+  'ls', 'dir', 'tree',
+  'pwd',
+  'cat', 'type', 'head', 'tail', 'less', 'more', 'nl',
+  'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack',
+  'find', 'fd', 'which', 'where', 'whereis',
+  'wc', 'diff', 'cmp', 'comm',
+  'file', 'stat', 'readlink', 'realpath',
+  'du', 'df',
+  'env', 'printenv',
+  'whoami', 'id',
+  'hostname', 'uname', 'date', 'cal', 'uptime',
+  'ps', 'top', 'htop', 'pstree', 'pgrep',
+  'free', 'vmstat', 'iostat', 'lscpu', 'lsmem',
+  'ping', 'traceroute', 'tracepath', 'mtr',
+  'dig', 'nslookup', 'host',
+  'ss', 'netstat', 'lsof',
+  'node', 'deno', 'python', 'python3', 'ruby', 'php',
+  'npm', 'npx', 'yarn', 'pnpm', 'bun',
+  'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha',
+  'cargo', 'rustc', 'go', 'java', 'javac', 'dotnet',
+  'exa', 'eza', 'bat',
+  'curl', 'wget',
+]);
+
+const DANGEROUS_BASH_PATTERNS = [
+  /\bgit\s+(push|commit|add|reset|checkout|switch|merge|rebase|cherry-pick|stash|pull|fetch|tag|branch|remote|submodule|worktree|gc|clean)\b/i,
+
+  /\brm\b/i, /\brmdir\b/i, /\bdel\b/i, /\berase\b/i, /\brd\b/i,
+  /\bmv\b/i, /\bmove\b/i, /\bcp\b/i, /\bcopy\b/i, /\bxcopy\b/i, /\brobocopy\b/i,
+  /\bmkdir\b/i, /\bmd\b/i, /\btouch\b/i, /\bln\b/i,
+  /\bchmod\b/i, /\bchown\b/i, /\bchgrp\b/i, /\bchattr\b/i,
+
+  /\bsudo\b/i, /\bsu\b/i, /\bdoas\b/i,
+  /\bkill\b/i, /\bkillall\b/i, /\bpkill\b/i,
+
+  /\bapt\b/i, /\bapt-get\b/i, /\byum\b/i, /\bdnf\b/i, /\bzypper\b/i, /\bpacman\b/i, /\bbrew\b/i, /\bport\b/i,
+
+  /\bnpm\s+(install|i|add|uninstall|remove|update|upgrade|publish|link|ci|rebuild|audit\s+fix)\b/i,
+  /\byarn\s+(add|remove|up|upgrade|set\s+version|dlx|plugin|publish|link)\b/i,
+  /\bpnpm\s+(add|install|i|remove|update|upgrade|publish|link|rebuild)\b/i,
+  /\bbun\s+(add|install|i|remove|update|upgrade|publish|link)\b/i,
+
+  /\bpip\s+(install|uninstall|remove|download)\b/i,
+  /\bconda\s+(install|remove|update)\b/i,
+
+  /\bsystemctl\s+(start|stop|restart|reload|enable|disable|mask|unmask)\b/i,
+  /\bservice\s+(start|stop|restart|reload)\b/i,
+
+  /\bsed\b.*\s-i\b/i,
+  /\bperl\b.*\s-pe\b/i,
+
+  /\bsh\b/i, /\bbash\b/i, /\bzsh\b/i, /\bfish\b/i,
+  /\bpython(3)?\s+-c\b/i,
+  /\bnode\s+-e\b/i,
+  /\bdeno\s+eval\b/i,
+  /\bbun\s+-e\b/i,
+  /\bpowershell\b/i, /\bpwsh\b/i, /\bcmd(\.exe)?\b/i,
+
+  />/,
+  /</,
+  /\|\|/,
+  /&&/,
+  /;/,
+  /\|/,
+  /\$\(/,
+  /`/,
+
+  /\btee\b/i,
+  /\bdd\b/i,
+
+  /\bcurl\b.*\s(-d|--data|--data-raw|--data-binary|--form|-F)\b/i,
+  /\bcurl\b.*\s(--upload-file|-T)\b/i,
+  /\bcurl\b.*\s(@[^\s]+)/i,
+  /\bcurl\b.*\s(-o|--output|-O|--remote-name|--remote-name-all)\b/i,
+
+  /\bwget\b.*\s(--post-data|--post-file|--method=POST|--body-data|--body-file)\b/i,
+  /\bwget\b.*\s(-O|--output-document|--directory-prefix)\b/i,
+];
+
+function isSafeBashCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+
+  const normalized = trimmed.replace(/\s+/g, ' ');
+  const lower = normalized.toLowerCase();
+
+  if (lower.includes('\n') || lower.includes('\r') || lower.includes('\0')) return false;
+
+  const firstToken = normalized.split(' ')[0] ?? '';
+  const firstWord = firstToken.toLowerCase();
+
+  if (!SAFE_BASH_COMMANDS.has(firstWord)) return false;
+
+  for (const pattern of DANGEROUS_BASH_PATTERNS) {
+    if (pattern.test(normalized)) return false;
+  }
+
+  if (firstWord === 'curl') {
+    const allowed = /^curl(\s+(-I|--head|-s|--silent|-S|--show-error|-L|--location|--compressed|--max-time\s+\d+|--connect-timeout\s+\d+|--retry\s+\d+|--retry-delay\s+\d+|--fail|--fail-with-body|--http1\.1|--http2|--tlsv1(\.\d+)?|--cacert\s+\S+|--capath\s+\S+|--resolve\s+\S+|--header\s+(".*?"|'.*?'|\S+)|--user-agent\s+(".*?"|'.*?'|\S+)))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
+    if (!allowed.test(normalized)) return false;
+  }
+
+  if (firstWord === 'wget') {
+    const allowed = /^wget(\s+(-q|--quiet|-S|--server-response|--spider|--max-redirect\s+\d+|--timeout\s+\d+|--tries\s+\d+|--wait\s+\d+|--user-agent\s+\S+))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
+    if (!allowed.test(normalized)) return false;
+  }
+
+  return true;
+}
 
 function normalizeCommandOutput(text: string): string {
   if (!text) return '';
@@ -666,11 +778,13 @@ export async function executeTool(toolName: string, args: Record<string, unknown
   debugLog(`[tool] ${toolName} START args=${argsPreview}`);
 
   try {
-    const needsApproval = (toolName === 'write' || toolName === 'edit' || toolName === 'bash') && shouldRequireApprovals();
+    const isBashTool = toolName === 'bash';
+    const bashCommand = isBashTool ? (args.command as string) : '';
+    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && shouldRequireApprovals();
 
-    if (needsApproval) {
+    if (bashNeedsApproval) {
       const preview = await generatePreview(toolName, args, workspace);
-      const approvalResult = await requestApproval(toolName as 'write' | 'edit' | 'bash', args, preview);
+      const approvalResult = await requestApproval('bash', args, preview);
 
       if (!approvalResult.approved) {
         if (approvalResult.customResponse) {
@@ -688,22 +802,8 @@ DO NOT use the question tool since the user already provided clear instructions 
           };
         }
 
-        let operationDescription = '';
-        let suggestedOptions = '';
-        switch (toolName) {
-          case 'write':
-            operationDescription = `writing to file "${args.path}"`;
-            suggestedOptions = 'Options could be: "Modify the content", "Write to a different file", "Cancel operation"';
-            break;
-          case 'edit':
-            operationDescription = `editing file "${args.path}"`;
-            suggestedOptions = 'Options could be: "Modify the changes", "Edit a different part", "Cancel operation"';
-            break;
-          case 'bash':
-            operationDescription = `executing command: ${args.command}`;
-            suggestedOptions = 'Options could be: "Modify the command", "Use a different command", "Cancel operation"';
-            break;
-        }
+        const operationDescription = `executing command: ${args.command}`;
+        const suggestedOptions = 'Options could be: "Modify the command", "Use a different command", "Cancel operation"';
 
         const agentError = `OPERATION REJECTED BY USER: ${operationDescription}
 
@@ -814,6 +914,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
           const diff = generateDiff(oldContent, content);
           const diffLines = formatDiffForDisplay(diff);
+
+          if (shouldRequireApprovals()) {
+            addPendingChange('write', path, oldContent, content, {
+              title: `Write (${path})`,
+              content: diffLines.join('\n'),
+            });
+          }
 
           return {
             success: true,
@@ -1224,6 +1331,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const diff = generateDiff('', newContent);
           const diffLines = formatDiffForDisplay(diff);
 
+          if (shouldRequireApprovals()) {
+            addPendingChange('write', path, '', newContent, {
+              title: `Create (${path})`,
+              content: diffLines.join('\n'),
+            });
+          }
+
           return {
             success: true,
             result: `File created and edited successfully: ${path}`,
@@ -1250,6 +1364,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const diff = generateDiff(content, updatedContent);
         const diffLines = formatDiffForDisplay(diff);
+
+        if (shouldRequireApprovals()) {
+          addPendingChange('edit', path, content, updatedContent, {
+            title: `Edit (${path})`,
+            content: diffLines.join('\n'),
+          });
+        }
 
         return {
           success: true,
