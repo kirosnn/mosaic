@@ -24,6 +24,39 @@ const TIPS = [
   "Paste an image with ⌘ + V.",
 ];
 
+const ASK_ANYTHING_HINTS = [
+  "commands, flags, or paths",
+  "how to use /image <path>",
+  "help with a tricky regex",
+  "refactoring without breaking types",
+  "why your state keeps rerendering",
+  "how to trim prompt tokens",
+  "a quick CLI UX improvement",
+  "a better naming convention",
+  "debugging a weird resize event",
+  "how to structure a config file",
+  "autocomplete edge-cases",
+  "a clean error message strategy",
+  "making your TUI snappier",
+  "keyboard shortcuts design",
+  "cross-platform keybindings",
+  "handling paste safely",
+  "streaming output nicely",
+  "optimizing render frequency",
+  "improving input focus behavior",
+  "writing a solid /help output",
+  "building a command parser",
+  "testing a TUI component",
+  "making logs actually useful",
+  "handling long lines gracefully",
+  "escaping ANSI correctly",
+  "why your cursor blinks twice",
+  "why it works on my machine",
+  "teach my code to behave",
+  "summon the bug, banish the bug",
+  "turning chaos into clean architecture",
+];
+
 export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePageProps) {
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [currentTipIndex, setCurrentTipIndex] = useState(0);
@@ -31,6 +64,10 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
   const [isDeleting, setIsDeleting] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
   const [cursorVisible, setCursorVisible] = useState(true);
+
+  const [placeholderHintIndex, setPlaceholderHintIndex] = useState(() =>
+    Math.floor(Math.random() * ASK_ANYTHING_HINTS.length)
+  );
 
   useEffect(() => {
     const cursorInterval = setInterval(() => {
@@ -43,11 +80,26 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
     const handleResize = () => {
       setTerminalWidth(process.stdout.columns || 80);
     };
-    process.stdout.on('resize', handleResize);
+    process.stdout.on("resize", handleResize);
     return () => {
-      process.stdout.off('resize', handleResize);
+      process.stdout.off("resize", handleResize);
     };
   }, []);
+
+  useEffect(() => {
+    if (shortcutsOpen) return;
+
+    const interval = setInterval(() => {
+      setPlaceholderHintIndex((prev) => {
+        if (ASK_ANYTHING_HINTS.length <= 1) return prev;
+        let next = Math.floor(Math.random() * ASK_ANYTHING_HINTS.length);
+        while (next === prev) next = Math.floor(Math.random() * ASK_ANYTHING_HINTS.length);
+        return next;
+      });
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [shortcutsOpen]);
 
   useEffect(() => {
     if (isWaiting) {
@@ -89,6 +141,8 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
   const containerWidth = Math.min(80, Math.floor(terminalWidth * 0.8));
   const inputWidth = Math.max(10, containerWidth - 4);
 
+  const placeholder = `Ask anything... (${ASK_ANYTHING_HINTS[placeholderHintIndex]})`;
+
   return (
     <box flexDirection="column" width="100%" height="100%" justifyContent="center" alignItems="center">
       <box flexDirection="column" alignItems="center" marginBottom={2}>
@@ -108,7 +162,7 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
         >
           <CustomInput
             onSubmit={onSubmit}
-            placeholder="Ask anything..."
+            placeholder={placeholder}
             focused={!shortcutsOpen}
             pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             maxWidth={inputWidth}
