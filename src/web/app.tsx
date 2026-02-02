@@ -259,12 +259,30 @@ function App() {
                             totalChars += event.content.length;
                             setCurrentTokens(estimateTokens());
 
-                            const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtracted);
+                            const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtracted);
 
                             if (title) {
                                 titleExtracted = true;
                                 setCurrentTitle(title);
                                 setDocumentTitle(title);
+
+                                if (isTitlePseudoCall) {
+                                    const toolArgs = { title } as Record<string, unknown>;
+                                    const toolResult = { title } as Record<string, unknown>;
+                                    const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
+                                    setMessages((prev) => ([
+                                        ...prev,
+                                        {
+                                            id: createId(),
+                                            role: 'tool',
+                                            content: toolContent,
+                                            toolName: 'title',
+                                            toolArgs,
+                                            toolResult,
+                                            success,
+                                        },
+                                    ]));
+                                }
                             } else if (noTitle) {
                                 titleExtracted = true;
                             }
@@ -376,6 +394,17 @@ function App() {
                             const toolArgs = pending?.args ?? {};
                             const runningMessageId = pending?.messageId;
                             pendingToolCalls.delete(event.toolCallId);
+
+                            if (toolName === 'title') {
+                                const resultObj = event.result && typeof event.result === 'object'
+                                    ? (event.result as Record<string, unknown>)
+                                    : null;
+                                const nextTitle = typeof resultObj?.title === 'string' ? resultObj.title.trim() : '';
+                                if (nextTitle) {
+                                    setCurrentTitle(nextTitle);
+                                    setDocumentTitle(nextTitle);
+                                }
+                            }
 
                             if (toolName === 'explore') {
                                 exploreMessageId = null;
