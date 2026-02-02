@@ -198,7 +198,7 @@ export function ChatPage({
 
   function isCompactTool(toolName?: string): boolean {
     if (!toolName) return false;
-    if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch') return true;
+    if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title') return true;
     if (toolName.startsWith('mcp__')) {
       const nativeName = getNativeMcpToolName(toolName);
       return nativeName === 'navigation_search';
@@ -218,6 +218,17 @@ export function ChatPage({
   function getCompactResult(message: Message): string {
     if (message.isRunning) return 'running...';
     const toolName = message.toolName;
+    if (toolName === 'title') {
+      const argsTitle = message.toolArgs && typeof (message.toolArgs as any).title === 'string'
+        ? String((message.toolArgs as any).title)
+        : '';
+      const resultObj = message.toolResult && typeof message.toolResult === 'object'
+        ? (message.toolResult as Record<string, unknown>)
+        : null;
+      const resultTitle = typeof resultObj?.title === 'string' ? resultObj.title : '';
+      const t = (argsTitle || resultTitle).replace(/[\r\n]+/g, ' ').trim();
+      return t || 'Completed';
+    }
     if (toolName === 'read' && typeof message.toolResult === 'string') {
       const lineCount = message.toolResult ? message.toolResult.split(/\r?\n/).length : 0;
       return `Read ${lineCount} lines`;
