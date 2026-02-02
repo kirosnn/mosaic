@@ -23,6 +23,10 @@ import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/sys
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
+import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, startReview, respondReview, hasPendingChanges, clearPendingChanges, type PendingChange } from "../utils/pendingChangesBridge";
+import { ReviewPanel } from "./main/ReviewPanel";
+import { revertChange } from "../utils/revertChanges";
+
 
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
@@ -221,6 +225,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const pendingCompactTokensRef = useRef<number | null>(null);
   const terminalHeightRef = useRef(process.stdout.rows || 24);
 
+  const [isReviewMode, setIsReviewMode] = useState(false);
+  const [currentReviewChange, setCurrentReviewChange] = useState<PendingChange | null>(null);
+  const [reviewProgress, setReviewProgress] = useState({ current: 0, total: 0 });
+  const pendingChangesRef = useRef<PendingChange[]>([]);
+
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
   useEffect(() => {
@@ -229,6 +238,25 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
   useEffect(() => {
     return () => { disposedRef.current = true; };
+  }, []);
+
+  useEffect(() => {
+    return subscribePendingChanges((changes) => {
+      pendingChangesRef.current = changes;
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeReviewMode((reviewing) => {
+      setIsReviewMode(reviewing);
+      if (reviewing) {
+        setCurrentReviewChange(getCurrentReviewChange());
+        setReviewProgress(getReviewProgress());
+      } else {
+        setCurrentReviewChange(null);
+        setReviewProgress({ current: 0, total: 0 });
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -1049,8 +1077,37 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   return newMessages;
                 });
               }
-              setIsProcessing(false);
-              setProcessingStartTime(null);
+
+              if (hasPendingChanges()) {
+                startReview().then((results) => {
+                  let revertedCount = 0;
+                  let keptCount = 0;
+
+                  for (let i = 0; i < results.length; i++) {
+                    if (results[i]) {
+                      keptCount++;
+                    } else {
+                      revertedCount++;
+                    }
+                  }
+
+                  if (revertedCount > 0 || keptCount > 0) {
+                    setMessages((prev: Message[]) => [...prev, {
+                      id: createId(),
+                      role: "tool",
+                      content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
+                      success: true,
+                    }]);
+                  }
+
+                  clearPendingChanges();
+                  setIsProcessing(false);
+                  setProcessingStartTime(null);
+                });
+              } else {
+                setIsProcessing(false);
+                setProcessingStartTime(null);
+              }
             }
           }
 
@@ -1532,8 +1589,38 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             return newMessages;
           });
         }
-        setIsProcessing(false);
-        setProcessingStartTime(null);
+
+        if (hasPendingChanges()) {
+          startReview().then((results) => {
+            const changes = pendingChangesRef.current;
+            let revertedCount = 0;
+            let keptCount = 0;
+
+            for (let i = 0; i < results.length; i++) {
+              if (results[i]) {
+                keptCount++;
+              } else {
+                revertedCount++;
+              }
+            }
+
+            if (revertedCount > 0 || keptCount > 0) {
+              setMessages((prev: Message[]) => [...prev, {
+                id: createId(),
+                role: "tool",
+                content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
+                success: true,
+              }]);
+            }
+
+            clearPendingChanges();
+            setIsProcessing(false);
+            setProcessingStartTime(null);
+          });
+        } else {
+          setIsProcessing(false);
+          setProcessingStartTime(null);
+        }
       }
     }
   };
@@ -1562,11 +1649,33 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     );
   }
 
+  const handleReviewRespond = (approved: boolean) => {
+    respondReview(approved);
+    setCurrentReviewChange(getCurrentReviewChange());
+    setReviewProgress(getReviewProgress());
+  };
+
+  const handleRevertChange = async () => {
+    if (currentReviewChange) {
+      await revertChange(currentReviewChange);
+    }
+  };
+
+  const reviewPanelElement = isReviewMode && currentReviewChange ? (
+    <ReviewPanel
+      change={currentReviewChange}
+      progress={reviewProgress}
+      disabled={false}
+      onRespond={handleReviewRespond}
+      onRevert={handleRevertChange}
+    />
+  ) : undefined;
+
   return (
     <ChatPage
       messages={messages}
-      isProcessing={isProcessing}
-      processingStartTime={processingStartTime}
+      isProcessing={isProcessing && !isReviewMode}
+      processingStartTime={isReviewMode ? null : processingStartTime}
       currentTokens={currentTokens}
       scrollOffset={scrollOffset}
       terminalHeight={terminalHeight}
@@ -1575,6 +1684,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       shortcutsOpen={shortcutsOpen}
       onSubmit={handleSubmit}
       pendingImages={pendingImages}
+      reviewPanel={reviewPanelElement}
     />
   );
 }
