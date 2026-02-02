@@ -41,6 +41,7 @@ interface ParsedArgs {
   mcpArgs?: string[];
   authCommand?: boolean;
   authArgs?: string[];
+  resumeCommand?: boolean;
 }
 
 class CLI {
@@ -61,6 +62,9 @@ class CLI {
         const message = args.slice(i + 1).join(' ');
         if (message) parsed.initialMessage = message;
         i = args.length;
+      } else if (arg === 'resume') {
+        parsed.resumeCommand = true;
+        i++;
       } else if (arg === 'uninstall') {
         parsed.uninstall = true;
         if (args[i + 1] === '--force') {
@@ -109,6 +113,7 @@ ${gold('Options')}
 
 ${gold('Commands')}
   run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
+  resume                    ${gray('Open a menu to resume a previous conversation session')}
   web                       ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
   auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
@@ -131,6 +136,7 @@ ${gold('Examples')}
   ${gray('mosaic')}                              # Start in current directory
   ${gray('mosaic ./my-project')}                 # Start in specific directory
   ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
+  ${gray('mosaic resume')}                       # Resume a previous session
   ${gray('mosaic web')}                          # Start the web UI
   ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
@@ -232,11 +238,50 @@ import { addRecentProject } from './utils/config';
 import { appendFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import type { Message } from './components/main/types';
+import type { ConversationHistory, ConversationStep } from './utils/history';
 
 const DEBUG_LOG = join(homedir(), '.mosaic', 'debug.log');
 const debugLog = (msg: string) => {
-  try { appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+  try { appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch { }
 };
+
+function convertStepsToMessages(steps: ConversationStep[]): Message[] {
+  return steps.map((step, index) => {
+    const baseId = `restored-${index}-${Date.now()}`;
+
+    if (step.type === 'user') {
+      return {
+        id: baseId,
+        role: 'user' as const,
+        content: step.content,
+        images: step.images,
+        timestamp: step.timestamp
+      };
+    } else if (step.type === 'assistant') {
+      return {
+        id: baseId,
+        role: 'assistant' as const,
+        content: step.content,
+        thinkingContent: step.thinkingContent,
+        responseDuration: step.responseDuration,
+        blendWord: step.blendWord,
+        timestamp: step.timestamp
+      };
+    } else {
+      return {
+        id: baseId,
+        role: 'tool' as const,
+        content: step.content,
+        toolName: step.toolName,
+        toolArgs: step.toolArgs,
+        toolResult: step.toolResult,
+        success: true,
+        timestamp: step.timestamp
+      };
+    }
+  });
+}
 
 debugLog('--- Mosaic starting ---');
 addRecentProject(process.cwd());
@@ -279,7 +324,43 @@ debugLog('Creating renderer...');
 try {
   const renderer = await createCliRenderer();
   debugLog('Renderer created, mounting React...');
-  createRoot(renderer).render(<App initialMessage={parsed.initialMessage} />);
+
+  if (parsed.resumeCommand) {
+    const { Resume } = await import('./components/Resume');
+
+    let hasSelected = false;
+
+    const handleSelect = (conversation: ConversationHistory) => {
+      if (hasSelected) return;
+      hasSelected = true;
+
+      const messages = convertStepsToMessages(conversation.steps);
+      const title = conversation.title ?? null;
+      const workspace = conversation.workspace;
+
+      if (workspace && existsSync(workspace)) {
+        process.chdir(workspace);
+      }
+
+      createRoot(renderer).render(
+        <App
+          initialMessages={messages}
+          initialTitle={title}
+        />
+      );
+    };
+
+    const handleCancel = () => {
+      cleanup(0);
+    };
+
+    createRoot(renderer).render(
+      <Resume onSelect={handleSelect} onCancel={handleCancel} />
+    );
+  } else {
+    createRoot(renderer).render(<App initialMessage={parsed.initialMessage} />);
+  }
+
   debugLog('React mounted');
 } catch (error) {
   debugLog(`Renderer/React error: ${error}`);

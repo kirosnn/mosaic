@@ -14,6 +14,7 @@ import { subscribeNotifications } from '../utils/notificationBridge';
 import { shouldRequireApprovals, setRequireApprovals } from '../utils/config';
 import { getCurrentApproval, respondApproval } from '../utils/approvalBridge';
 import { emitApprovalMode } from '../utils/approvalModeBridge';
+import type { Message } from './main/types';
 
 const execAsync = promisify(exec);
 
@@ -21,9 +22,11 @@ type AppScreen = 'welcome' | 'setup' | 'main';
 
 interface AppProps {
   initialMessage?: string;
+  initialMessages?: Message[];
+  initialTitle?: string | null;
 }
 
-export function App({ initialMessage }: AppProps) {
+export function App({ initialMessage, initialMessages, initialTitle }: AppProps) {
   const [screen, setScreen] = useState<AppScreen>('main');
   const [isReady, setIsReady] = useState(false);
   const [pasteRequestId, setPasteRequestId] = useState(0);
@@ -33,6 +36,8 @@ export function App({ initialMessage }: AppProps) {
   const [commandsOpen, setCommandsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [pendingMessage] = useState<string | undefined>(initialMessage);
+  const [restoredMessages] = useState<Message[] | undefined>(initialMessages);
+  const [restoredTitle] = useState<string | null | undefined>(initialTitle);
   const lastSelectionRef = useRef<{ text: string; at: number } | null>(null);
 
   const renderer = useRenderer();
@@ -205,6 +210,8 @@ export function App({ initialMessage }: AppProps) {
         shortcutsOpen={shortcutsOpen}
         commandsOpen={commandsOpen}
         initialMessage={pendingMessage}
+        initialMessages={restoredMessages}
+        initialTitle={restoredTitle}
       />
       {shortcutsOpen && <ShortcutsModal activeTab={shortcutsTab} />}
       {commandsOpen && <CommandModal />}

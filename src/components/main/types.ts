@@ -13,17 +13,17 @@ export const BLEND_WORDS = [
 ];
 
 export const THINKING_WORDS = [
-    "Thinking",
-    "Processing",
-    "Analyzing",
-    "Reasoning",
-    "Computing",
-    "Pondering",
-    "Crafting",
-    "Working",
-    "Brewing",
-    "Weaving",
-    "Revolutionizing"
+  "Thinking",
+  "Processing",
+  "Analyzing",
+  "Reasoning",
+  "Computing",
+  "Pondering",
+  "Crafting",
+  "Working",
+  "Brewing",
+  "Weaving",
+  "Revolutionizing"
 ];
 
 export interface Message {
@@ -53,4 +53,6 @@ export interface MainProps {
   shortcutsOpen?: boolean;
   commandsOpen?: boolean;
   initialMessage?: string;
+  initialMessages?: Message[];
+  initialTitle?: string | null;
 }

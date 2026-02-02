@@ -189,9 +189,10 @@ export function compactMessagesForUi(
   return { messages: nextMessages, estimatedTokens, didCompact: true };
 }
 
-export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage }: MainProps) {
-  const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage ? "chat" : "home");
-  const [messages, setMessages] = useState<Message[]>([]);
+export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
+  const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
+  const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage || hasRestoredSession ? "chat" : "home");
+  const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [currentTokens, setCurrentTokens] = useState(0);
@@ -199,10 +200,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
-  const [currentTitle, setCurrentTitle] = useState<string | null>(null);
+  const [currentTitle, setCurrentTitle] = useState<string | null>(initialTitle ?? null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [imagesSupported, setImagesSupported] = useState(false);
-  const currentTitleRef = useRef<string | null>(null);
+  const currentTitleRef = useRef<string | null>(initialTitle ?? null);
   const titleExtractedRef = useRef(false);
   const shouldAutoScroll = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
