@@ -22,6 +22,7 @@ import { findModelsDevModelById, modelAcceptsImages, getModelsDevContextLimit } 
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/systemPrompt";
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
+import { executeTool } from "../agent/tools/executor";
 
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
@@ -513,6 +514,83 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
     const hasImages = imagesSupported && pendingImages.length > 0;
     if (!value.trim() && !hasPastedContent && !hasImages) return;
+
+    let shellCommandDisplay: string | undefined;
+
+    if (value.trim().startsWith('!')) {
+      const shellCommand = value.trim().slice(1).trim();
+      if (!shellCommand) return;
+
+      debugLog(`[ui] shell command: ${shellCommand.slice(0, 50)}`);
+      addInputToHistory(value.trim());
+
+      shellCommandDisplay = `!${shellCommand}`;
+
+      const toolMessageId = createId();
+      setMessages((prev: Message[]) => [...prev, {
+        id: toolMessageId,
+        role: "tool",
+        content: `Running: ${shellCommand}`,
+        toolName: "bash",
+        toolArgs: { command: shellCommand },
+        success: true,
+        isRunning: true,
+        runningStartTime: Date.now()
+      }]);
+
+      let shellResult: string;
+      let shellSuccess: boolean;
+      try {
+        const result = await executeTool('bash', { command: shellCommand });
+        shellResult = result.result ?? result.error ?? 'No output';
+        shellSuccess = result.success;
+
+        const { content: toolContent } = formatToolMessage(
+          'bash',
+          { command: shellCommand },
+          shellResult,
+          { maxLines: DEFAULT_MAX_TOOL_LINES }
+        );
+
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex(m => m.id === toolMessageId);
+          if (idx !== -1) {
+            newMessages[idx] = {
+              ...newMessages[idx]!,
+              content: toolContent,
+              toolResult: shellResult,
+              success: shellSuccess,
+              isRunning: false,
+              runningStartTime: undefined
+            };
+          }
+          return newMessages;
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        shellResult = `Error: ${errorMsg}`;
+        shellSuccess = false;
+
+        setMessages((prev: Message[]) => {
+          const newMessages = [...prev];
+          const idx = newMessages.findIndex(m => m.id === toolMessageId);
+          if (idx !== -1) {
+            newMessages[idx] = {
+              ...newMessages[idx]!,
+              content: shellResult,
+              success: false,
+              isRunning: false,
+              runningStartTime: undefined
+            };
+          }
+          return newMessages;
+        });
+      }
+
+      value = `I ran this command: ${shellCommand}\n\nOutput:\n${shellResult}\n\nAnalyze the output and continue.`;
+    }
+
 
     if (isCommand(value)) {
       debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
@@ -1008,7 +1086,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       id: createId(),
       role: "user",
       content: composedContent,
-      displayContent: meta?.isPaste ? '[Pasted text]' : undefined,
+      displayContent: shellCommandDisplay ?? (meta?.isPaste ? '[Pasted text]' : undefined),
       images: imagesForMessage.length > 0 ? imagesForMessage : undefined,
     };
 
