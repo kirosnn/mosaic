@@ -7,6 +7,10 @@ const NATIVE_SERVER_LABELS: Record<string, string> = {
 export const TOOLS_PROMPT = `
 # Available Tools
 
+IMPORTANT: When you use a tool, you MUST use the model's tool-calling mechanism.
+DO NOT write pseudo-calls in plain text like grep(...), read(...), title(...), plan(...).
+If you output that as text, it will be treated as normal text, not as a tool call.
+
 ## File Operations
 
 ### read
@@ -41,27 +45,16 @@ List directory contents.
 Autonomous exploration agent that intelligently searches the codebase and the web.
 - purpose (string, required): What to find/understand
 
-The explore agent has access to: read, glob, grep, list, fetch (web pages), and search (web search).
-It can look up external documentation, API references, and tutorials when needed.
-
-USE EXPLORE WHEN:
-- Starting work on an unfamiliar codebase
-- Understanding how something works
-- Finding related code, patterns, or architecture
-- You're unsure where to make changes
-- You need to look up library/framework documentation
-- You need to research an API or find usage examples online
-
-Examples:
-- explore(purpose="Find API endpoints and understand routing")
-- explore(purpose="Understand the authentication flow")
-- explore(purpose="Find UserService and all its usages")
-- explore(purpose="Look up the React Query documentation for useQuery options")
-- explore(purpose="Find the Playwright API docs for page.waitForSelector")
-
 The explore tool is INTELLIGENT - it autonomously reads files, follows imports, searches the web, reads documentation, and builds understanding. This is MORE EFFICIENT than manual glob/grep/read/fetch cycles.
 
 PURPOSE FORMAT: The purpose MUST be a single, concise sentence. NEVER use lists, bullet points, or newlines in the purpose.
+
+Examples:
+- Explore with purpose="Find API endpoints and understand routing"
+- Explore with purpose="Understand the authentication flow"
+- Explore with purpose="Find UserService and all its usages"
+- Explore with purpose="Look up the React Query documentation for useQuery options"
+- Explore with purpose="Find the Playwright API docs for page.waitForSelector"
 
 ### glob
 Find files by name pattern. Fast file discovery.
@@ -81,9 +74,12 @@ Search for text within files.
 - context (number, optional): Lines around matches
 - output_mode (string, optional): "matches", "files", or "count"
 
-RECOMMENDED: Use file_type for best results:
-- grep(query="handleClick", file_type="tsx")
-- grep(query="interface User", file_type="ts")
+Examples:
+- Use grep with query="interface User" and file_type="ts" - Search in TypeScript files
+- Use grep with query="export function" and file_type="tsx" - Search in React files
+- Use grep with query="TODO" - Search in all files
+- Use grep with query="class.*Component" and file_type="ts" - Reuse regex search
+- Use grep with query="handleClick" and output_mode="files" - Just list matching files
 
 TOOL SELECTION:
 | Need to understand how X works | explore |
@@ -98,6 +94,10 @@ Track progress on multi-step tasks.
 - plan (array, required): Steps with statuses
   - step (string): Action description
   - status: "pending" | "in_progress" | "completed"
+
+### title
+Set a short conversation/task title.
+- title (string, required): Short title (max 6 words, in the user's language)
 
 Use plan for any task that is not a single obvious step. Default to planning when unsure.
 Use plan when there are 2+ actions, file changes, or unclear success criteria.
@@ -151,16 +151,17 @@ Ask user with predefined options. ONLY way to ask questions.
 
 | Task | Tool | Example |
 |------|------|---------|
-| Understand codebase/architecture | explore | explore(purpose="How does auth work?") |
-| Look up external documentation | explore | explore(purpose="Find React Query docs for useMutation") |
-| Find files by name | glob | glob(pattern="**/*.config.ts") |
-| Find specific text | grep | grep(query="handleSubmit", file_type="tsx") |
-| Read file contents | read | read(path="src/auth.ts") |
-| Small targeted edit | edit | edit(path="...", old_content="...", new_content="...") |
-| New file or full rewrite | write | write(path="...", content="...") |
-| Run commands/tests | bash | bash(command="npm test") |
-| Track multi-step work | plan | plan(plan=[...]) |
-| Need user input | question | question(prompt="...", options=[...]) |
+| Understand codebase/architecture | explore | Explore with purpose="How does auth work?" |
+| Look up external documentation | explore | Explore with purpose="Find React Query docs for useMutation" |
+| Find files by name | glob | Glob with pattern="**/*.config.ts" |
+| Find specific text | grep | Grep with query="handleSubmit" and file_type="tsx" |
+| Read file contents | read | Read with path="src/auth.ts" |
+| Small targeted edit | edit | Edit with path="..." and old_content/new_content |
+| New file or full rewrite | write | Write with path="..." and content="..." |
+| Run commands/tests | bash | Bash with command="npm test" |
+| Track multi-step work | plan | Plan with plan=[...] |
+| Set conversation title | title | Title with title="Fix auth" |
+| Need user input | question | Question with prompt="..." and options=[...] |
 
 PREFER EXPLORE for understanding context before making changes.
 PREFER EXPLORE for looking up documentation - it can search the web and read doc pages.
@@ -242,8 +243,8 @@ AFTER tool errors:
 You MUST read a file BEFORE modifying it. This is NOT optional.
 
 Correct workflow:
-1. "Let me examine the current implementation." → read(path="src/auth.ts")
-2. "I see the issue. I'll fix the validation logic." → edit(path="src/auth.ts", ...)
+1. "Let me examine the current implementation." → Call read with path="src/auth.ts"
+2. "I see the issue. I'll fix the validation logic." → Call edit with path="src/auth.ts" and old/new content
 
 WRONG (will fail):
 - Using edit or write on a file you haven't read in this conversation
