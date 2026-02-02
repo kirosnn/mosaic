@@ -171,6 +171,7 @@ interface ChatPageProps {
   shortcutsOpen: boolean;
   onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
   pendingImages: ImageAttachment[];
+  reviewPanel?: React.ReactNode;
 }
 
 export function ChatPage({
@@ -185,6 +186,7 @@ export function ChatPage({
   shortcutsOpen,
   onSubmit,
   pendingImages,
+  reviewPanel,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
@@ -918,6 +920,20 @@ export function ChatPage({
         })}
       </scrollbox>
 
+      {reviewPanel && (
+        <box
+          position="absolute"
+          bottom={inputBarBaseLines + 2}
+          left={0}
+          right={0}
+          flexDirection="column"
+          paddingLeft={1}
+          paddingRight={1}
+        >
+          {reviewPanel}
+        </box>
+      )}
+
       <box
         position="absolute"
         bottom={1.4}
@@ -943,10 +959,10 @@ export function ChatPage({
           <box flexGrow={1} flexShrink={1} minWidth={0}>
             <CustomInput
               onSubmit={onSubmit}
-              placeholder="Type your message..."
-              focused={!shortcutsOpen && !questionRequest && !approvalRequest}
+              placeholder={reviewPanel ? "Review changes above..." : "Type your message..."}
+              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel}
               pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest)}
+              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel)}
               maxWidth={Math.max(10, terminalWidth - 6)}
             />
           </box>
