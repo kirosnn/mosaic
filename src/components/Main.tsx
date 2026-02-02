@@ -27,29 +27,40 @@ import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, g
 import { ReviewPanel } from "./main/ReviewPanel";
 import { revertChange } from "../utils/revertChanges";
 
-
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
-function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean } {
+function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean; isTitlePseudoCall: boolean } {
   const trimmed = content.trimStart();
 
   const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/si);
   if (titleMatch) {
     const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
     const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/si, '');
-    return { title, cleanContent, isPending: false, noTitle: false };
+    return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
+  }
+
+  const titleCallMatch = trimmed.match(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i);
+  if (titleCallMatch) {
+    const t = titleCallMatch[2] ?? '';
+    const title = alreadyResolved ? null : (t.trim() || null);
+    const cleanContent = trimmed.replace(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i, '');
+    return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
   }
 
   if (alreadyResolved) {
-    return { title: null, cleanContent: content, isPending: false, noTitle: false };
+    return { title: null, cleanContent: content, isPending: false, noTitle: false, isTitlePseudoCall: false };
   }
 
   const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
   if (partialTitlePattern.test(trimmed) || (trimmed.toLowerCase().startsWith('<title>') && !trimmed.toLowerCase().includes('</title>'))) {
-    return { title: null, cleanContent: '', isPending: true, noTitle: false };
+    return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: false };
   }
 
-  return { title: null, cleanContent: content, isPending: false, noTitle: true };
+  if (trimmed.toLowerCase().startsWith('title(') && !trimmed.includes(')')) {
+    return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: true };
+  }
+
+  return { title: null, cleanContent: content, isPending: false, noTitle: true, isTitlePseudoCall: false };
 }
 
 function setTerminalTitle(title: string) {
@@ -776,13 +787,40 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 totalChars += event.content.length;
                 setCurrentTokens(estimateTokens());
 
-                const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtractedRef.current);
+                const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
 
                 if (title) {
                   titleExtractedRef.current = true;
                   currentTitleRef.current = title;
                   setCurrentTitle(title);
                   setTerminalTitle(title);
+
+                  if (isTitlePseudoCall) {
+                    const toolArgs = { title } as Record<string, unknown>;
+                    const toolResult = { title } as Record<string, unknown>;
+                    const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
+                    conversationSteps.push({
+                      type: 'tool',
+                      content: toolContent,
+                      toolName: 'title',
+                      toolArgs,
+                      toolResult,
+                      timestamp: Date.now(),
+                    });
+                    setMessages((prev: Message[]) => ([
+                      ...prev,
+                      {
+                        id: createId(),
+                        role: 'tool',
+                        content: toolContent,
+                        toolName: 'title',
+                        toolArgs,
+                        toolResult,
+                        success,
+                        timestamp: Date.now(),
+                      },
+                    ]));
+                  }
                 } else if (noTitle) {
                   titleExtractedRef.current = true;
                 }
@@ -865,6 +903,18 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 const toolArgs = pending?.args ?? {};
                 const runningMessageId = pending?.messageId;
                 pendingToolCalls.delete(event.toolCallId);
+
+                if (toolName === 'title') {
+                  const resultObj = event.result && typeof event.result === 'object'
+                    ? (event.result as Record<string, unknown>)
+                    : null;
+                  const nextTitle = typeof resultObj?.title === 'string' ? resultObj.title.trim() : '';
+                  if (nextTitle) {
+                    currentTitleRef.current = nextTitle;
+                    setCurrentTitle(nextTitle);
+                    setTerminalTitle(nextTitle);
+                  }
+                }
 
                 if (toolName === 'explore') {
                   exploreMessageIdRef.current = null;
