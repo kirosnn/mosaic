@@ -49,44 +49,51 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     }
   };
 
+  const Line = ({
+    color,
+    innerWidth,
+    text,
+  }: {
+    color: string;
+    innerWidth: number;
+    text: string;
+  }) => {
+    const content = text.padEnd(innerWidth, ' ');
+    const totalWidth = innerWidth + 4;
+
+    return (
+      <box flexDirection="row" backgroundColor="#1a1a1a" width={totalWidth}>
+        <text fg={color}>▎ </text>
+        <text fg="white">{content}</text>
+        <text fg={color}> ▎</text>
+      </box>
+    );
+  };
+
   return (
     <box
       position="absolute"
-      top={1}
-      right={2}
+      top={3}
+      right={4}
       flexDirection="column"
       alignItems="flex-end"
       gap={1}
-      minWidth={20}
+      minWidth={21}
     >
-      {notifications.map((notification) => (
-        <box
-          key={notification.id}
-          flexDirection="column"
-        >
-          <box
-            flexDirection="row"
-            backgroundColor="#1a1a1a"
-          >
-            <text fg={getTypeColor(notification.type)}>▎ </text>
-            <text fg="white">  </text>
+      {notifications.map((notification) => {
+        const color = getTypeColor(notification.type);
+
+        const message = notification.message;
+        const innerWidth = Math.max(1, message.length + 2);
+
+        return (
+          <box key={notification.id} flexDirection="column">
+            <Line color={color} innerWidth={innerWidth} text="" />
+            <Line color={color} innerWidth={innerWidth} text={`${message}  `} />
+            <Line color={color} innerWidth={innerWidth} text="" />
           </box>
-          <box
-            flexDirection="row"
-            backgroundColor="#1a1a1a"
-          >
-            <text fg={getTypeColor(notification.type)}>▎ </text>
-            <text fg="white">{notification.message}  </text>
-          </box>
-          <box
-            flexDirection="row"
-            backgroundColor="#1a1a1a"
-          >
-            <text fg={getTypeColor(notification.type)}>▎ </text>
-            <text fg="white">  </text>
-          </box>
-        </box>
-      ))}
+        );
+      })}
     </box>
   );
 }
