@@ -4,7 +4,7 @@ import { useKeyboard } from "@opentui/react";
 import { Agent } from "../agent";
 import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
 import { readConfig } from "../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader } from '../utils/toolFormatting';
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
@@ -23,9 +23,11 @@ import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/sys
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
-import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, startReview, respondReview, hasPendingChanges, clearPendingChanges, type PendingChange } from "../utils/pendingChangesBridge";
+import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, startReview, respondReview, acceptAllReview, hasPendingChanges, clearPendingChanges, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
+import { ReviewMenu } from "./main/ReviewMenu";
 import { revertChange } from "../utils/revertChanges";
+import { setTerminalTitle as setAnsiTerminalTitle } from "../utils/terminalUtils";
 
 type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
 
@@ -63,8 +65,63 @@ function extractTitle(content: string, alreadyResolved: boolean): { title: strin
   return { title: null, cleanContent: content, isPending: false, noTitle: true, isTitlePseudoCall: false };
 }
 
+function extractTitleFromToolResult(result: unknown): string | null {
+  const normalize = (value: string) => value.replace(/[\r\n]+/g, ' ').trim();
+  const readTitle = (value: unknown): string | null => {
+    if (!value || typeof value !== 'object') return null;
+    const obj = value as Record<string, unknown>;
+    const direct = typeof obj.title === 'string' ? normalize(obj.title) : '';
+    if (direct) return direct;
+    const nested = obj.result;
+    if (typeof nested === 'string') {
+      const normalized = normalize(nested);
+      if (normalized) return normalized;
+      return null;
+    }
+    if (nested && typeof nested === 'object') {
+      const nestedTitle = typeof (nested as Record<string, unknown>).title === 'string'
+        ? normalize((nested as Record<string, unknown>).title as string)
+        : '';
+      if (nestedTitle) return nestedTitle;
+    }
+    const output = obj.output;
+    if (output && typeof output === 'object') {
+      const outputTitle = typeof (output as Record<string, unknown>).title === 'string'
+        ? normalize((output as Record<string, unknown>).title as string)
+        : '';
+      if (outputTitle) return outputTitle;
+    }
+    return null;
+  };
+
+  if (typeof result === 'string') {
+    const trimmed = result.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      const parsedTitle = readTitle(parsed);
+      if (parsedTitle) return parsedTitle;
+    } catch {
+    }
+    const match = trimmed.match(/<title>(.*?)<\/title>/i);
+    if (match && match[1]) {
+      const normalized = normalize(match[1]);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  return readTitle(result);
+}
+
 function setTerminalTitle(title: string) {
-  process.title = `⁘ ${title}`;
+  const clean = String(title || '').replace(/[\r\n]+/g, ' ').trim();
+  if (!clean) return;
+  try {
+    setAnsiTerminalTitle(`⁘ ${clean}`);
+  } catch {
+  }
+  process.title = `⁘ ${clean}`;
 }
 
 export function normalizeWhitespace(text: string): string {
@@ -137,6 +194,7 @@ export function buildSummary(messages: CompactableMessage[], maxTokens: number):
   const full = lines.join("\n").trim();
   return truncateText(full, maxChars);
 }
+
 export function collectContextFiles(messages: Message[]): string[] {
   const files = new Set<string>();
   for (const message of messages) {
@@ -163,6 +221,7 @@ export function appendContextFiles(summary: string, files: string[], maxTokens: 
   const block = `\n\nFiles kept after compaction:\n${list}`;
   return truncateText(`${summary}${block}`, maxChars);
 }
+
 export function compactMessagesForUi(
   messages: Message[],
   systemPrompt: string,
@@ -220,9 +279,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [imagesSupported, setImagesSupported] = useState(false);
   const currentTitleRef = useRef<string | null>(initialTitle ?? null);
+  const lastAppliedTerminalTitleRef = useRef<string | null>(null);
   const titleExtractedRef = useRef(false);
   const shouldAutoScroll = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+
   const currentPageRef = useRef(currentPage);
   const shortcutsOpenRef = useRef(shortcutsOpen);
   const commandsOpenRef = useRef(commandsOpen);
@@ -246,6 +307,27 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     initializeCommands();
   }, []);
+
+  useEffect(() => {
+    if (currentTitle && currentTitleRef.current !== currentTitle) {
+      currentTitleRef.current = currentTitle;
+    }
+  }, [currentTitle]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (disposedRef.current) return;
+      const desired = (currentTitleRef.current ?? currentTitle ?? '').trim();
+      if (!desired) return;
+
+      setTerminalTitle(desired);
+      lastAppliedTerminalTitleRef.current = desired;
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [currentTitle]);
 
   useEffect(() => {
     return () => { disposedRef.current = true; };
@@ -896,7 +978,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                   args: event.args,
                   messageId: runningMessageId
                 });
-
               } else if (event.type === 'tool-result') {
                 const pending = pendingToolCalls.get(event.toolCallId);
                 const toolName = pending?.toolName ?? event.toolName;
@@ -905,22 +986,13 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 pendingToolCalls.delete(event.toolCallId);
 
                 if (toolName === 'title') {
-                  const resultObj = event.result && typeof event.result === 'object'
-                    ? (event.result as Record<string, unknown>)
-                    : null;
-                  const nextTitle = typeof resultObj?.title === 'string' ? resultObj.title.trim() : '';
+                  const nextTitle = extractTitleFromToolResult(event.result);
                   if (nextTitle) {
                     currentTitleRef.current = nextTitle;
                     setCurrentTitle(nextTitle);
                     setTerminalTitle(nextTitle);
                   }
                 }
-
-                if (toolName === 'explore') {
-                  exploreMessageIdRef.current = null;
-                  setExploreAbortController(null);
-                }
-
                 const { content: toolContent, success } = formatToolMessage(
                   toolName,
                   toolArgs,
@@ -931,15 +1003,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
                 totalChars += toolResultStr.length;
                 setCurrentTokens(estimateTokens());
-
-                if (assistantChunk.trim() || thinkingChunk.trim()) {
-                  conversationSteps.push({
-                    type: 'assistant',
-                    content: assistantChunk,
-                    thinkingContent: thinkingChunk || undefined,
-                    timestamp: Date.now()
-                  });
-                }
 
                 conversationSteps.push({
                   type: 'tool',
@@ -1323,13 +1386,39 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           totalChars += event.content.length;
           setCurrentTokens(estimateTokens());
 
-          const { title, cleanContent, isPending, noTitle } = extractTitle(assistantChunk, titleExtractedRef.current);
+          const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
 
           if (title) {
             titleExtractedRef.current = true;
             currentTitleRef.current = title;
             setCurrentTitle(title);
             setTerminalTitle(title);
+            if (isTitlePseudoCall) {
+              const toolArgs = { title } as Record<string, unknown>;
+              const toolResult = { title } as Record<string, unknown>;
+              const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
+              conversationSteps.push({
+                type: 'tool',
+                content: toolContent,
+                toolName: 'title',
+                toolArgs,
+                toolResult,
+                timestamp: Date.now(),
+              });
+              setMessages((prev: Message[]) => ([
+                ...prev,
+                {
+                  id: createId(),
+                  role: 'tool',
+                  content: toolContent,
+                  toolName: 'title',
+                  toolArgs,
+                  toolResult,
+                  success,
+                  timestamp: Date.now(),
+                },
+              ]));
+            }
           } else if (noTitle) {
             titleExtractedRef.current = true;
           }
@@ -1363,14 +1452,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           totalChars += JSON.stringify(event.args).length;
           setCurrentTokens(estimateTokens());
 
-          const isExploreTool = event.toolName === 'explore';
-          const isMcpTool = event.toolName.startsWith('mcp__');
+          const normalized = normalizeToolCall(event.toolName, event.args ?? {});
+          const toolName = normalized.toolName;
+          const toolArgs = normalized.args;
+          const isExploreTool = toolName === 'explore';
+          const isMcpTool = toolName.startsWith('mcp__');
           let runningMessageId: string | undefined;
 
           if (isExploreTool) {
             setExploreAbortController(abortController);
             exploreToolsRef.current = [];
-            const purpose = (event.args.purpose as string) || 'exploring...';
+            const purpose = (toolArgs.purpose as string) || 'exploring...';
             explorePurposeRef.current = purpose;
           }
 
@@ -1379,7 +1471,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             if (isExploreTool) {
               exploreMessageIdRef.current = runningMessageId;
             }
-            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
+            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, toolArgs);
             const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
 
             setMessages((prev: Message[]) => {
@@ -1388,8 +1480,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
                 id: runningMessageId!,
                 role: "tool",
                 content: runningContent,
-                toolName: event.toolName,
-                toolArgs: event.args,
+                toolName,
+                toolArgs,
                 success: true,
                 isRunning: true,
                 runningStartTime: Date.now()
@@ -1399,8 +1491,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           }
 
           pendingToolCalls.set(event.toolCallId, {
-            toolName: event.toolName,
-            args: event.args,
+            toolName,
+            args: toolArgs,
             messageId: runningMessageId
           });
 
@@ -1410,6 +1502,15 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const toolArgs = pending?.args ?? {};
           const runningMessageId = pending?.messageId;
           pendingToolCalls.delete(event.toolCallId);
+
+          if (toolName === 'title') {
+            const nextTitle = extractTitleFromToolResult(event.result);
+            if (nextTitle) {
+              currentTitleRef.current = nextTitle;
+              setCurrentTitle(nextTitle);
+              setTerminalTitle(nextTitle);
+            }
+          }
 
           if (toolName === 'explore') {
             exploreMessageIdRef.current = null;
@@ -1705,6 +1806,21 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     setReviewProgress(getReviewProgress());
   };
 
+  const handleReviewKeep = () => {
+    handleReviewRespond(true);
+  };
+
+  const handleReviewReject = async () => {
+    await handleRevertChange();
+    handleReviewRespond(false);
+  };
+
+  const handleReviewAcceptAll = () => {
+    acceptAllReview();
+    setCurrentReviewChange(getCurrentReviewChange());
+    setReviewProgress(getReviewProgress());
+  };
+
   const handleRevertChange = async () => {
     if (currentReviewChange) {
       await revertChange(currentReviewChange);
@@ -1715,26 +1831,34 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     <ReviewPanel
       change={currentReviewChange}
       progress={reviewProgress}
+    />
+  ) : undefined;
+
+  const reviewMenuElement = isReviewMode ? (
+    <ReviewMenu
       disabled={false}
-      onRespond={handleReviewRespond}
-      onRevert={handleRevertChange}
+      onKeep={handleReviewKeep}
+      onRevert={handleReviewReject}
+      onAcceptAll={handleReviewAcceptAll}
     />
   ) : undefined;
 
   return (
-    <ChatPage
-      messages={messages}
-      isProcessing={isProcessing && !isReviewMode}
-      processingStartTime={isReviewMode ? null : processingStartTime}
-      currentTokens={currentTokens}
+      <ChatPage
+        messages={messages}
+        isProcessing={isProcessing && !isReviewMode}
+        processingStartTime={isReviewMode ? null : processingStartTime}
+        currentTokens={currentTokens}
       scrollOffset={scrollOffset}
       terminalHeight={terminalHeight}
       terminalWidth={terminalWidth}
       pasteRequestId={pasteRequestId}
       shortcutsOpen={shortcutsOpen}
-      onSubmit={handleSubmit}
-      pendingImages={pendingImages}
-      reviewPanel={reviewPanelElement}
-    />
+        onSubmit={handleSubmit}
+        onCopyMessage={onCopy}
+        pendingImages={pendingImages}
+        reviewPanel={reviewPanelElement}
+        reviewMenu={reviewMenuElement}
+      />
   );
 }
