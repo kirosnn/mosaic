@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
-import { TextAttributes, SyntaxStyle, RGBA } from "@opentui/core";
+import { TextAttributes, SyntaxStyle, RGBA, type KeyEvent } from "@opentui/core";
+import { useRenderer } from "@opentui/react";
 import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
 import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
@@ -8,6 +9,7 @@ import { subscribeApprovalMode } from "../../utils/approvalModeBridge";
 import { shouldRequireApprovals } from "../../utils/config";
 import { subscribeFileChanges } from "../../utils/fileChangesBridge";
 import type { FileChanges } from "../../utils/fileChangeTracker";
+import { notifyNotification } from "../../utils/notificationBridge";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import type { ImageAttachment } from "../../utils/images";
@@ -170,8 +172,10 @@ interface ChatPageProps {
   pasteRequestId: number;
   shortcutsOpen: boolean;
   onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
+  onCopyMessage?: (text: string) => void;
   pendingImages: ImageAttachment[];
   reviewPanel?: React.ReactNode;
+  reviewMenu?: React.ReactNode;
 }
 
 export function ChatPage({
@@ -185,15 +189,21 @@ export function ChatPage({
   pasteRequestId,
   shortcutsOpen,
   onSubmit,
+  onCopyMessage,
   pendingImages,
   reviewPanel,
+  reviewMenu,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
+  const renderer = useRenderer();
   const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
   const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
   const [timerTick, setTimerTick] = useState(0);
   const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
+  const [hoveredUserMessageId, setHoveredUserMessageId] = useState<string | null>(null);
+  const [userMessageModal, setUserMessageModal] = useState<{ id: string; index: number; content: string; images: ImageAttachment[] } | null>(null);
+  const [hoveredActionId, setHoveredActionId] = useState<string | null>(null);
   const scrollboxRef = useRef<any>(null);
 
   function isCompactTool(toolName?: string): boolean {
@@ -287,6 +297,25 @@ export function ChatPage({
     }
   }, []);
 
+  useEffect(() => {
+    if (!userMessageModal) {
+      setHoveredActionId(null);
+    }
+  }, [userMessageModal]);
+
+  useEffect(() => {
+    const handleKeyPress = (key: KeyEvent) => {
+      const k = key as any;
+      if (k.name === "escape" && userMessageModal) {
+        setUserMessageModal(null);
+      }
+    };
+    renderer.keyInput.on("keypress", handleKeyPress);
+    return () => {
+      renderer.keyInput.off("keypress", handleKeyPress);
+    };
+  }, [renderer.keyInput, userMessageModal]);
+
   const planProgress = getPlanProgress(messages);
   const extraInputLines = pendingImages.length > 0 ? 1 : 0;
   const inputBarBaseLines = getInputBarBaseLines() + extraInputLines;
@@ -297,6 +326,21 @@ export function ChatPage({
     nextStep: planProgress.nextStep,
   }) + extraInputLines;
   const viewportHeight = Math.max(5, terminalHeight - (bottomReservedLines + 2));
+  const isUserModalOpen = Boolean(userMessageModal);
+  const modalWidth = Math.min(70, Math.max(28, Math.floor(terminalWidth * 0.6)));
+  const modalHeight = Math.max(7, Math.min(16, Math.floor(terminalHeight * 0.4)));
+
+  const handleCopyMessage = () => {
+    if (!userMessageModal) return;
+    if (!onCopyMessage) return;
+    onCopyMessage(userMessageModal.content ?? "");
+    notifyNotification("Copied message to clipboard", "info", 2000);
+    setUserMessageModal(null);
+  };
+
+  const modalActions = [
+    { id: "copy", label: "Copy message text to clipboard", onActivate: handleCopyMessage }
+  ];
 
   interface RenderItem {
     key: string;
@@ -333,6 +377,10 @@ export function ChatPage({
     isCompactTool?: boolean;
     compactLabel?: string;
     compactResult?: string;
+    messageId?: string;
+    messageIndex?: number;
+    userMessageText?: string;
+    userMessageImages?: ImageAttachment[];
   }
 
   const allItems: RenderItem[] = [];
@@ -342,6 +390,11 @@ export function ChatPage({
     const message = messages[messageIndex]!;
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
+    const userMessageText = message.displayContent ?? message.content;
+    const userMessageImages = message.images ?? [];
+    const userMessageMeta = messageRole === "user"
+      ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
+      : null;
     const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
     const shouldPadMessage = (messageRole === 'user' || messageRole === 'tool' || messageRole === 'slash')
       && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
@@ -373,7 +426,8 @@ export function ChatPage({
         isRunning: message.isRunning,
         runningStartTime: message.runningStartTime,
         visualLines: 1,
-        isPadding: true
+        isPadding: true,
+        ...(userMessageMeta ?? {})
       });
     }
 
@@ -496,7 +550,7 @@ export function ChatPage({
     } else {
       if (messageRole === 'tool' && compactTool) {
         const { name, info } = parseToolHeader(message.toolName || '', message.toolArgs || {});
-        const label = info ? `${name} (${info})` : name;
+        const label = message.toolName === 'title' ? name : (info ? `${name} (${info})` : name);
         allItems.push({
           key: `${messageKey}-compact`,
           type: 'tool_compact',
@@ -527,7 +581,8 @@ export function ChatPage({
               wrappedLineIndex: 0,
               success: undefined,
               isSpacer: false,
-              visualLines: 1
+              visualLines: 1,
+              ...(userMessageMeta ?? {})
             });
           }
         }
@@ -568,7 +623,8 @@ export function ChatPage({
               isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
               visualLines: 1,
               isRunning: message.isRunning,
-              runningStartTime: message.runningStartTime
+              runningStartTime: message.runningStartTime,
+              ...(userMessageMeta ?? {})
             });
           } else {
             const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
@@ -597,7 +653,8 @@ export function ChatPage({
                 visualLines: 1,
                 planStatus,
                 isRunning: message.isRunning,
-                runningStartTime: message.runningStartTime
+                runningStartTime: message.runningStartTime,
+                ...(userMessageMeta ?? {})
               });
             }
             isFirstContent = false;
@@ -619,7 +676,8 @@ export function ChatPage({
         isRunning: message.isRunning,
         runningStartTime: message.runningStartTime,
         visualLines: 1,
-        isPadding: true
+        isPadding: true,
+        ...(userMessageMeta ?? {})
       });
     }
 
@@ -836,11 +894,33 @@ export function ChatPage({
           const diffBackground = item.isCodeBlock || item.isTableRow ? null : getDiffLineBackground(item.content || '');
 
           const codeBackground = null;
+          const isUserMessageLine = item.role === "user" && Boolean(item.messageId) && !item.isSpacer;
+          const isUserHover = isUserMessageLine && hoveredUserMessageId === item.messageId;
           const hasMessageBackground = item.isPadding
             || ((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar);
+          const hoverBackground = isUserHover ? "#262626" : null;
           const runningBackground = isRunningTool || item.isCompactTool
             ? "transparent"
-            : (codeBackground || diffBackground || (hasMessageBackground ? "#1a1a1a" : "transparent"));
+            : (hoverBackground || codeBackground || diffBackground || (hasMessageBackground ? "#1a1a1a" : "transparent"));
+          const handleUserMouseOver = isUserMessageLine ? () => {
+            if (!isUserModalOpen) {
+              setHoveredUserMessageId(item.messageId!);
+            }
+          } : undefined;
+          const handleUserMouseOut = isUserMessageLine ? () => {
+            setHoveredUserMessageId(prev => (prev === item.messageId ? null : prev));
+          } : undefined;
+          const handleUserMouseDown = isUserMessageLine ? (event: any) => {
+            if (event?.isSelecting) return;
+            if (event?.button !== undefined && event.button !== 0) return;
+            setUserMessageModal({
+              id: item.messageId!,
+              index: item.messageIndex ?? 0,
+              content: item.userMessageText ?? '',
+              images: item.userMessageImages ?? []
+            });
+            setHoveredUserMessageId(null);
+          } : undefined;
 
           return (
             <box
@@ -849,6 +929,9 @@ export function ChatPage({
               width="100%"
               backgroundColor={runningBackground}
               paddingRight={((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar) ? 1 : 0}
+              onMouseOver={handleUserMouseOver}
+              onMouseOut={handleUserMouseOut}
+              onMouseDown={handleUserMouseDown}
             >
               {item.role === "user" && (item.content || item.isPadding) && (
                 <text fg="#ffca38">▎ </text>
@@ -934,14 +1017,27 @@ export function ChatPage({
       {reviewPanel && (
         <box
           position="absolute"
-          bottom={inputBarBaseLines + 2}
+          top={0}
+          bottom={0}
           left={0}
           right={0}
           flexDirection="column"
-          paddingLeft={1}
-          paddingRight={1}
+          zIndex={15}
         >
           {reviewPanel}
+        </box>
+      )}
+
+      {reviewMenu && (
+        <box
+          position="absolute"
+          bottom={inputBarBaseLines + 1}
+          left={0}
+          right={0}
+          flexDirection="column"
+          zIndex={16}
+        >
+          {reviewMenu}
         </box>
       )}
 
@@ -971,9 +1067,9 @@ export function ChatPage({
             <CustomInput
               onSubmit={onSubmit}
               placeholder={reviewPanel ? "Review changes above..." : "Type your message..."}
-              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel}
-              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel)}
+              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel && !isUserModalOpen}
+              pasteRequestId={(shortcutsOpen || isUserModalOpen) ? 0 : pasteRequestId}
+              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen}
               maxWidth={Math.max(10, terminalWidth - 6)}
             />
           </box>
@@ -986,16 +1082,76 @@ export function ChatPage({
         </box>
       </box>
 
-      <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-        <ThinkingIndicatorBlock
-          isProcessing={isProcessing}
-          hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
-          startTime={processingStartTime}
-          tokens={currentTokens}
-          inProgressStep={planProgress.inProgressStep}
-          nextStep={planProgress.nextStep}
-        />
-      </box>
+      {!reviewMenu && (
+        <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+          <ThinkingIndicatorBlock
+            isProcessing={isProcessing}
+            hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
+            startTime={processingStartTime}
+            tokens={currentTokens}
+            inProgressStep={planProgress.inProgressStep}
+            nextStep={planProgress.nextStep}
+          />
+        </box>
+      )}
+
+      {userMessageModal && (
+        <box
+          position="absolute"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          zIndex={20}
+          onMouseDown={() => setUserMessageModal(null)}
+        >
+          <box width="100%" height="100%" justifyContent="center" alignItems="center">
+            <box
+              flexDirection="column"
+              width={modalWidth}
+              height={modalHeight}
+              backgroundColor="#141414"
+              opacity={0.92}
+              padding={1}
+              onMouseDown={(event: any) => event?.stopPropagation?.()}
+            >
+              <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
+                <text attributes={TextAttributes.BOLD}>Message Actions</text>
+                <box flexDirection="row">
+                  <text fg="white">esc </text>
+                  <text attributes={TextAttributes.DIM}>close</text>
+                </box>
+              </box>
+              <box flexDirection="column" width="100%" flexGrow={1} overflow="hidden">
+                <box flexDirection="column" width="100%" overflow="scroll">
+                  {modalActions.map((action) => {
+                    const isHovered = hoveredActionId === action.id;
+                    return (
+                      <box
+                        key={`user-modal-action-${action.id}`}
+                        flexDirection="row"
+                        width="100%"
+                        backgroundColor={isHovered ? "#2a2a2a" : "transparent"}
+                        paddingLeft={1}
+                        paddingRight={1}
+                        onMouseOver={() => setHoveredActionId(action.id)}
+                        onMouseOut={() => setHoveredActionId(null)}
+                        onMouseDown={(event: any) => {
+                          event?.stopPropagation?.();
+                          action.onActivate();
+                        }}
+                      >
+                        <text fg="#ffca38">› </text>
+                        <text>{action.label}</text>
+                      </box>
+                    );
+                  })}
+                </box>
+              </box>
+            </box>
+          </box>
+        </box>
+      )}
     </box>
   );
 }
