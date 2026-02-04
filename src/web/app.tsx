@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
-import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord } from './utils';
+import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord, normalizeToolCall } from './utils';
 import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation, mergeConversations } from './storage';
 import { QuestionRequest } from '../utils/questionBridge';
 import { ApprovalRequest } from '../utils/approvalBridge';
@@ -26,6 +26,55 @@ function useRouter() {
     }, []);
 
     return route;
+}
+
+function extractTitleFromToolResult(result: unknown): string | null {
+    const normalize = (value: string) => value.replace(/[\r\n]+/g, ' ').trim();
+    const readTitle = (value: unknown): string | null => {
+        if (!value || typeof value !== 'object') return null;
+        const obj = value as Record<string, unknown>;
+        const direct = typeof obj.title === 'string' ? normalize(obj.title) : '';
+        if (direct) return direct;
+        const nested = obj.result;
+        if (typeof nested === 'string') {
+            const normalized = normalize(nested);
+            if (normalized) return normalized;
+            return null;
+        }
+        if (nested && typeof nested === 'object') {
+            const nestedTitle = typeof (nested as Record<string, unknown>).title === 'string'
+                ? normalize((nested as Record<string, unknown>).title as string)
+                : '';
+            if (nestedTitle) return nestedTitle;
+        }
+        const output = obj.output;
+        if (output && typeof output === 'object') {
+            const outputTitle = typeof (output as Record<string, unknown>).title === 'string'
+                ? normalize((output as Record<string, unknown>).title as string)
+                : '';
+            if (outputTitle) return outputTitle;
+        }
+        return null;
+    };
+
+    if (typeof result === 'string') {
+        const trimmed = result.trim();
+        if (!trimmed) return null;
+        try {
+            const parsed = JSON.parse(trimmed);
+            const parsedTitle = readTitle(parsed);
+            if (parsedTitle) return parsedTitle;
+        } catch {
+        }
+        const match = trimmed.match(/<title>(.*?)<\/title>/i);
+        if (match && match[1]) {
+            const normalized = normalize(match[1]);
+            if (normalized) return normalized;
+        }
+        return null;
+    }
+
+    return readTitle(result);
 }
 
 function App() {
@@ -318,8 +367,9 @@ function App() {
                             setCurrentTokens(estimateTokens());
 
                             const toolCallMessageId = createId();
-                            const toolName = event.toolName;
-                            const args = event.args || {};
+                            const normalized = normalizeToolCall(event.toolName, event.args || {});
+                            const toolName = normalized.toolName;
+                            const args = normalized.args;
 
                             const needsApproval = toolName === 'write' || toolName === 'edit' || toolName === 'bash';
                             const isBashTool = toolName === 'bash';
@@ -396,10 +446,7 @@ function App() {
                             pendingToolCalls.delete(event.toolCallId);
 
                             if (toolName === 'title') {
-                                const resultObj = event.result && typeof event.result === 'object'
-                                    ? (event.result as Record<string, unknown>)
-                                    : null;
-                                const nextTitle = typeof resultObj?.title === 'string' ? resultObj.title.trim() : '';
+                                const nextTitle = extractTitleFromToolResult(event.result);
                                 if (nextTitle) {
                                     setCurrentTitle(nextTitle);
                                     setDocumentTitle(nextTitle);
