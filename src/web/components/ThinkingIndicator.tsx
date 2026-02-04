@@ -85,7 +85,7 @@ export function ThinkingIndicator({ startTime, tokens, nextStep }: ThinkingIndic
                     </>
                 )}
                 <span className="thinking-sep"> — </span>
-                <span className="thinking-hint">esc to cancel</span>
+                <span className="thinking-hint">esc cancel</span>
                 {tokens !== undefined && tokens > 0 && (
                     <>
                         <span className="thinking-sep"> — </span>
