@@ -326,6 +326,33 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
   }
 }
 
+export function normalizeToolCall(toolName: string, args: Record<string, unknown>): { toolName: string; args: Record<string, unknown> } {
+  const trimmed = toolName.trim();
+  const matchA = trimmed.match(/^(\{[\s\S]*\})\s*\[\s*\]\s*([a-zA-Z][a-zA-Z0-9_\-]*)$/);
+  if (matchA) {
+    try {
+      const parsed = JSON.parse(matchA[1] as string);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const mergedArgs = Object.keys(args).length > 0 ? { ...(parsed as Record<string, unknown>), ...args } : parsed as Record<string, unknown>;
+        return { toolName: matchA[2] as string, args: mergedArgs };
+      }
+    } catch {
+    }
+  }
+  const matchB = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_\-]*)\s*\[\s*\]\s*(\{[\s\S]*\})$/);
+  if (matchB) {
+    try {
+      const parsed = JSON.parse(matchB[2] as string);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const mergedArgs = Object.keys(args).length > 0 ? { ...(parsed as Record<string, unknown>), ...args } : parsed as Record<string, unknown>;
+        return { toolName: matchB[1] as string, args: mergedArgs };
+      }
+    } catch {
+    }
+  }
+  return { toolName, args };
+}
+
 export function isNativeMcpToolName(toolName: string): boolean {
   return isNativeMcpTool(toolName);
 }
