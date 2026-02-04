@@ -1,146 +1,84 @@
-import { useState, useEffect } from 'react';
+import { useRef } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import type { PendingChange } from '../../utils/pendingChangesBridge';
-import { renderDiffLine } from '../../utils/diffRendering';
+import { renderDiffBlock } from '../../utils/diffRendering';
+import { parseDiffLine } from '../../utils/diff';
 
 interface ReviewPanelProps {
     change: PendingChange;
     progress: { current: number; total: number };
-    disabled?: boolean;
-    onRespond: (approved: boolean) => void;
-    onRevert: () => void;
 }
 
-export function ReviewPanel({ change, progress, disabled = false, onRespond, onRevert }: ReviewPanelProps) {
-    const [selectedIndex, setSelectedIndex] = useState(0);
-    const [scrollOffset, setScrollOffset] = useState(0);
-
-    useEffect(() => {
-        setSelectedIndex(0);
-        setScrollOffset(0);
-    }, [change.id]);
+export function ReviewPanel({ change, progress }: ReviewPanelProps) {
+    const scrollboxRef = useRef<any>(null);
 
     const previewLines = change.preview.content.split('\n');
-    const maxVisiblePreviewLines = 15;
-    const canScroll = previewLines.length > maxVisiblePreviewLines;
+    const totalPreviewLines = Math.max(1, previewLines.length);
+    const hasRemoved = previewLines.some((line) => {
+        const parsed = parseDiffLine(line);
+        return parsed.isDiffLine && parsed.isRemoved;
+    });
+    const diffView = hasRemoved ? "split" : "unified";
 
     useKeyboard((key) => {
-        if (disabled) return;
-
-        if ((key.name === 'up' || key.name === 'k') && key.shift && canScroll) {
-            setScrollOffset(prev => Math.max(0, prev - 1));
-            return;
-        }
-
-        if ((key.name === 'down' || key.name === 'j') && key.shift && canScroll) {
-            setScrollOffset(prev => Math.min(previewLines.length - maxVisiblePreviewLines, prev + 1));
-            return;
-        }
-
-        if (key.name === 'up' || key.name === 'k') {
-            setSelectedIndex(prev => (prev === 0 ? 1 : prev - 1));
-            return;
-        }
-
-        if (key.name === 'down' || key.name === 'j') {
-            setSelectedIndex(prev => (prev === 1 ? 0 : prev + 1));
-            return;
-        }
-
-        if (key.name === 'return') {
-            if (selectedIndex === 0) {
-                onRespond(true);
-            } else {
-                onRevert();
-                onRespond(false);
+        if (key.name === 'pageup') {
+            const sb = scrollboxRef.current;
+            if (sb?.scrollTop !== undefined) {
+                sb.scrollTop = Math.max(0, sb.scrollTop - 8);
             }
-            return;
         }
 
-        if (key.name === 'y') {
-            onRespond(true);
-            return;
-        }
-
-        if (key.name === 'n' || key.name === 'r') {
-            onRevert();
-            onRespond(false);
-            return;
+        if (key.name === 'pagedown') {
+            const sb = scrollboxRef.current;
+            if (sb?.scrollTop !== undefined) {
+                sb.scrollTop = sb.scrollTop + 8;
+            }
         }
     });
 
     const titleMatch = change.preview.title.match(/^(.+?)\s*\((.+)\)$/);
     const toolName = titleMatch ? titleMatch[1] : change.preview.title;
     const toolInfo = titleMatch ? titleMatch[2] : null;
+    const visibleContent = previewLines.join('\n');
+    const summaryLabel = toolInfo ?? toolName;
 
     return (
-        <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
-            <box flexDirection="row" marginBottom={1} justifyContent="space-between">
-                <box flexDirection="row">
-                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>Review Changes</text>
-                    <text fg="#808080" marginLeft={1}>({progress.current}/{progress.total})</text>
+        <box flexDirection="column" width="100%" height="100%" backgroundColor="#1a1a1a">
+            <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+                <box flexDirection="row" justifyContent="space-between" width="100%">
+                    <box flexDirection="row" alignItems="center">
+                        <text fg="#e6e6e6" attributes={TextAttributes.BOLD}>Review</text>
+                        {progress.total > 1 && (
+                            <text fg="#8a8a8a" marginLeft={1}>({progress.current}/{progress.total})</text>
+                        )}
+                    </box>
+                    <text fg="#8a8a8a" attributes={TextAttributes.DIM}>page up/down</text>
                 </box>
-            </box>
 
-            <box flexDirection="row" marginBottom={1}>
-                <text fg={"#ffffff"}>{toolName}</text>
-                {toolInfo && (
-                    <>
-                        <text fg={"#ffffff"}> </text>
-                        <text fg={"#ffffff"} attributes={TextAttributes.DIM}>({toolInfo})</text>
-                    </>
+                {summaryLabel && (
+                    <box flexDirection="row" marginTop={1}>
+                        <text fg="#b5b5b5" attributes={TextAttributes.DIM}>{summaryLabel}</text>
+                    </box>
                 )}
             </box>
 
-            <box
-                flexDirection="column"
-                marginBottom={1}
-                paddingLeft={1}
-                paddingRight={1}
-                paddingBottom={1}
-            >
-                {previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).map((line, displayIndex) => {
-                    const index = scrollOffset + displayIndex;
-                    return renderDiffLine(line, `review-line-${index}`);
-                })}
-                {canScroll && (
-                    <text fg="#808080" attributes={TextAttributes.DIM}>
-                        {scrollOffset > 0 ? '^ ' : '  '}
-                        Line {scrollOffset + 1}-{Math.min(scrollOffset + maxVisiblePreviewLines, previewLines.length)} of {previewLines.length}
-                        {scrollOffset + maxVisiblePreviewLines < previewLines.length ? ' v' : ''}
-                        {' (Shift+Up/Down to scroll)'}
-                    </text>
-                )}
-            </box>
-
-            <box flexDirection="column">
-                <box
-                    flexDirection="row"
-                    backgroundColor='transparent'
+            <box flexDirection="column" flexGrow={1} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+                <scrollbox
+                    ref={scrollboxRef}
+                    scrollY
+                    width="100%"
+                    height="100%"
                     paddingLeft={1}
                     paddingRight={1}
+                    paddingTop={1}
                 >
-                    <text
-                        fg={selectedIndex === 0 ? '#22c55e' : 'white'}
-                        attributes={selectedIndex === 0 ? TextAttributes.BOLD : TextAttributes.DIM}
-                    >
-                        {selectedIndex === 0 ? '> ' : '  '}Keep (y)
-                    </text>
-                </box>
-                <box
-                    flexDirection="row"
-                    backgroundColor='transparent'
-                    paddingLeft={1}
-                    paddingRight={1}
-                >
-                    <text
-                        fg={selectedIndex === 1 ? '#ef4444' : 'white'}
-                        attributes={selectedIndex === 1 ? TextAttributes.BOLD : TextAttributes.DIM}
-                    >
-                        {selectedIndex === 1 ? '> ' : '  '}Revert (r)
-                    </text>
-                </box>
+                    {renderDiffBlock(visibleContent, `review-diff-${change.id}`, {
+                        height: totalPreviewLines,
+                        filePath: toolInfo ?? undefined,
+                        view: diffView
+                    })}
+                </scrollbox>
             </box>
         </box>
     );
