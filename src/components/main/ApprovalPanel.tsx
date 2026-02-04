@@ -3,7 +3,7 @@ import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { CustomInput } from '../CustomInput';
 import type { ApprovalRequest } from '../../utils/approvalBridge';
-import { renderDiffLine } from '../../utils/diffRendering';
+import { renderDiffBlock } from '../../utils/diffRendering';
 
 interface ApprovalPanelProps {
   request: ApprovalRequest;
@@ -70,6 +70,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }
   const titleMatch = request.preview.title.match(/^(.+?)\s*\((.+)\)$/);
   const toolName = titleMatch ? titleMatch[1] : request.preview.title;
   const toolInfo = titleMatch ? titleMatch[2] : null;
+  const visibleContent = previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).join('\n');
 
   return (
     <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
@@ -90,9 +91,10 @@ export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }
         paddingRight={1}
         paddingBottom={1}
       >
-        {previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).map((line, displayIndex) => {
-          const index = scrollOffset + displayIndex;
-          return renderDiffLine(line, `preview-line-${index}`);
+        {renderDiffBlock(visibleContent, `preview-diff-${request.id}`, {
+          height: maxVisiblePreviewLines,
+          filePath: toolInfo ?? undefined,
+          view: "split"
         })}
         {canScroll && (
           <text fg="#808080" attributes={TextAttributes.DIM}>
