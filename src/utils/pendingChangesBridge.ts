@@ -1,3 +1,5 @@
+import { generateDiff, formatDiffForDisplay } from './diff';
+
 export interface PendingChange {
     id: string;
     type: 'write' | 'edit';
@@ -36,6 +38,56 @@ function notifyReviewMode(): void {
 
 function createId(): string {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function buildPreview(path: string, originalContent: string, newContent: string): { title: string; content: string } {
+    const isCreate = originalContent === '' && newContent !== '';
+    const diff = generateDiff(originalContent, newContent);
+    const lines = diff.hasChanges ? formatDiffForDisplay(diff, 0) : ['No changes'];
+    return {
+        title: `${isCreate ? 'Create' : 'Edit'} (${path})`,
+        content: lines.join('\n'),
+    };
+}
+
+function mergePendingChangesByPath(changes: PendingChange[]): PendingChange[] {
+    if (changes.length <= 1) return changes;
+
+    const map = new Map<string, PendingChange[]>();
+    const order: string[] = [];
+
+    for (const change of changes) {
+        const key = change.path;
+        if (!map.has(key)) {
+            map.set(key, []);
+            order.push(key);
+        }
+        map.get(key)!.push(change);
+    }
+
+    const merged: PendingChange[] = [];
+
+    for (const path of order) {
+        const list = map.get(path) ?? [];
+        if (list.length === 0) continue;
+        const first = list[0]!;
+        const last = list[list.length - 1]!;
+        const originalContent = first.originalContent ?? '';
+        const newContent = last.newContent ?? '';
+        const preview = buildPreview(path, originalContent, newContent);
+
+        merged.push({
+            id: createId(),
+            type: last.type,
+            path,
+            originalContent,
+            newContent,
+            timestamp: last.timestamp,
+            preview,
+        });
+    }
+
+    return merged;
 }
 
 export function subscribePendingChanges(listener: PendingChangesListener): () => void {
@@ -108,6 +160,7 @@ export async function startReview(): Promise<boolean[]> {
         return [];
     }
 
+    pendingChanges = mergePendingChangesByPath(pendingChanges);
     isReviewMode = true;
     currentReviewIndex = 0;
     reviewResults = [];
@@ -142,6 +195,28 @@ export function respondReview(approved: boolean): void {
     } else {
         notify();
     }
+}
+
+export function acceptAllReview(): void {
+    if (!isReviewMode || !reviewResolve) return;
+
+    const results = [...reviewResults];
+    while (results.length < pendingChanges.length) {
+        results.push(true);
+    }
+
+    const resolve = reviewResolve;
+
+    isReviewMode = false;
+    currentReviewIndex = 0;
+    reviewResults = [];
+    reviewResolve = null;
+    pendingChanges = [];
+
+    notifyReviewMode();
+    notify();
+
+    resolve(results);
 }
 
 export function cancelReview(): void {
