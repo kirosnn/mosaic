@@ -5,6 +5,7 @@ export {
     isToolSuccess,
     formatErrorMessage,
     DEFAULT_MAX_TOOL_LINES,
+    normalizeToolCall,
 } from '../utils/toolFormatting';
 
 export { parseDiffLine, getDiffLineColors, type ParsedDiffLine } from '../utils/diff';
