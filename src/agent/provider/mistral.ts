@@ -2,6 +2,8 @@ import { streamText, CoreMessage } from 'ai';
 import { createMistral } from '@ai-sdk/mistral';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { applyMistralReasoning, resolveReasoningEnabled } from './reasoningConfig';
+import { debugLog } from '../../utils/debug';
 
 export class MistralProvider implements Provider {
   async *sendMessage(
@@ -11,19 +13,23 @@ export class MistralProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    debugLog(`[mistral] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
 
     const mistral = createMistral({
       apiKey: cleanApiKey,
     });
+    const baseModel = mistral(cleanModel);
+    const { model, systemPrompt } = applyMistralReasoning(baseModel, config.systemPrompt, reasoningEnabled);
 
     try {
       let stepCounter = 0;
 
       yield* runWithRetry(async function* () {
         const result = streamText({
-          model: mistral(cleanModel),
+          model,
           messages: messages,
-          system: config.systemPrompt,
+          system: systemPrompt,
           tools: config.tools,
           maxSteps: config.maxSteps || 100,
           maxRetries: 0,
