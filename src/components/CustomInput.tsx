@@ -6,9 +6,7 @@ import { writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { getInputHistory } from '../utils/history'
-import { emitImageCommand, canUseImages } from '../utils/imageBridge'
-import { notifyNotification } from '../utils/notificationBridge'
-import type { ImageAttachment } from '../utils/images'
+import { tryPasteImage, normalizePastedText } from './main/clipboard'
 
 export interface InputSubmitMeta {
   isPaste?: boolean
@@ -24,10 +22,11 @@ interface CustomInputProps {
   disableHistory?: boolean
   submitDisabled?: boolean
   maxWidth?: number
+  initialValue?: string
 }
 
-export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth }: CustomInputProps) {
-  const [value, setValue] = useState('')
+export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth, initialValue }: CustomInputProps) {
+  const [value, setValue] = useState(initialValue ?? '')
   const [cursorPosition, setCursorPosition] = useState(0)
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const [selectionStart, setSelectionStart] = useState<number | null>(null)
@@ -50,91 +49,23 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const cursorPositionRef = useRef(cursorPosition)
   const selectionStartRef = useRef<number | null>(selectionStart)
   const selectionEndRef = useRef<number | null>(selectionEnd)
+  const initialValueRef = useRef(initialValue ?? '')
 
   const renderer = useRenderer()
 
-  const normalizePastedText = (text: string) => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  useEffect(() => {
+    if (initialValue === undefined) return
+    if (initialValue === initialValueRef.current) return
+    initialValueRef.current = initialValue
+    setValue(initialValue)
+    setCursorPosition(initialValue.length)
+    setSelectionStart(null)
+    setSelectionEnd(null)
+    setHistoryIndex(-1)
+    setCurrentInput('')
+    desiredCursorColRef.current = null
+  }, [initialValue])
 
-  const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-
-  const buildClipboardImage = (data: string, mimeType: string, size: number): ImageAttachment => {
-    const ext = mimeType === 'image/jpeg' ? 'jpg' : (mimeType === 'image/png' ? 'png' : 'bin')
-    return {
-      id: createId(),
-      name: `clipboard-${Date.now()}.${ext}`,
-      mimeType,
-      data,
-      size
-    }
-  }
-
-  const isPng = (buffer: Buffer) => buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47
-  const isJpeg = (buffer: Buffer) => buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
-
-  const readClipboardImage = (): { data: string; mimeType: string; size: number } | null => {
-    try {
-      if (process.platform === 'win32') {
-        const script = 'powershell.exe -NoProfile -Command "$img=Get-Clipboard -Format Image -ErrorAction SilentlyContinue; if ($img) { $ms=New-Object System.IO.MemoryStream; $img.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); [Convert]::ToBase64String($ms.ToArray()) }"'
-        const base64 = execSync(script, { encoding: 'utf8', timeout: 2000 }).trim()
-        if (!base64) return null
-        const size = Buffer.from(base64, 'base64').length
-        return { data: base64, mimeType: 'image/png', size }
-      }
-
-      if (process.platform === 'darwin') {
-        try {
-          const buffer = execSync('pbpaste -Prefer png', { timeout: 2000 }) as Buffer
-          if (buffer.length > 0 && isPng(buffer)) {
-            return { data: buffer.toString('base64'), mimeType: 'image/png', size: buffer.length }
-          }
-        } catch {
-        }
-        try {
-          const buffer = execSync('pbpaste -Prefer jpeg', { timeout: 2000 }) as Buffer
-          if (buffer.length > 0 && isJpeg(buffer)) {
-            return { data: buffer.toString('base64'), mimeType: 'image/jpeg', size: buffer.length }
-          }
-        } catch {
-        }
-        return null
-      }
-
-      try {
-        const buffer = execSync('xclip -selection clipboard -t image/png -o', { timeout: 2000 }) as Buffer
-        if (buffer.length > 0 && isPng(buffer)) {
-          return { data: buffer.toString('base64'), mimeType: 'image/png', size: buffer.length }
-        }
-      } catch {
-      }
-      try {
-        const buffer = execSync('xclip -selection clipboard -t image/jpeg -o', { timeout: 2000 }) as Buffer
-        if (buffer.length > 0 && isJpeg(buffer)) {
-          return { data: buffer.toString('base64'), mimeType: 'image/jpeg', size: buffer.length }
-        }
-      } catch {
-      }
-    } catch {
-    }
-    return null
-  }
-
-  const tryPasteImage = (): boolean => {
-    const image = readClipboardImage()
-    if (!image) return false
-    const signature = `${image.mimeType}:${image.data.slice(0, 64)}`
-    const now = Date.now()
-    const last = lastClipboardImageRef.current
-    if (last && last.signature === signature && now - last.at < 400) return true
-    lastClipboardImageRef.current = { at: now, signature }
-
-    if (!canUseImages()) {
-      notifyNotification('Current model does not support images.', 'warning', 3000)
-      return true
-    }
-
-    emitImageCommand({ type: 'add', image: buildClipboardImage(image.data, image.mimeType, image.size) })
-    return true
-  }
 
   const addPastedBlock = (pastedText: string) => {
     const normalized = normalizePastedText(pastedText)
@@ -235,7 +166,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
 
   const pasteFromClipboard = () => {
     try {
-      if (tryPasteImage()) return
+      if (tryPasteImage(lastClipboardImageRef)) return
       let clipboardText = ''
       if (process.platform === 'win32') {
         clipboardText = execSync('powershell.exe -command "Get-Clipboard"', { encoding: 'utf8', timeout: 2000 })
