@@ -1,268 +1,35 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { ImagePart, TextPart, UserContent } from "ai";
 import { useKeyboard } from "@opentui/react";
-import { Agent } from "../agent";
-import { saveConversation, addInputToHistory, type ConversationHistory, type ConversationStep } from "../utils/history";
+import { addInputToHistory } from "../utils/history";
 import { readConfig } from "../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from '../utils/toolFormatting';
+
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, parseToolHeader } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
 import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
 import { subscribeApprovalAccepted } from "../utils/approvalBridge";
-import { setExploreAbortController, setExploreToolCallback } from "../utils/exploreBridge";
+import { setExploreToolCallback } from "../utils/exploreBridge";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
 import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
-import { BLEND_WORDS, type MainProps, type Message } from "./main/types";
+import { type MainProps, type Message } from "./main/types";
+import { setTerminalTitle } from "./main/titleUtils";
+import { compactMessagesForUi } from "./main/compaction";
+import { runAgentStream, type AgentStreamCallbacks } from "./main/useAgentStream";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
 import type { ImageAttachment } from "../utils/images";
 import { subscribeImageCommand, setImageSupport } from "../utils/imageBridge";
 import { findModelsDevModelById, modelAcceptsImages, getModelsDevContextLimit } from "../utils/models";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/systemPrompt";
-import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from "../utils/tokenEstimator";
+import { getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
-import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, startReview, respondReview, acceptAllReview, hasPendingChanges, clearPendingChanges, type PendingChange } from "../utils/pendingChangesBridge";
+import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, respondReview, acceptAllReview, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
 import { ReviewMenu } from "./main/ReviewMenu";
 import { revertChange } from "../utils/revertChanges";
-import { setTerminalTitle as setAnsiTerminalTitle } from "../utils/terminalUtils";
-
-type CompactableMessage = Pick<Message, "role" | "content" | "thinkingContent" | "toolName">;
-
-function extractTitle(content: string, alreadyResolved: boolean): { title: string | null; cleanContent: string; isPending: boolean; noTitle: boolean; isTitlePseudoCall: boolean } {
-  const trimmed = content.trimStart();
-
-  const titleMatch = trimmed.match(/^<title>(.*?)<\/title>\s*/si);
-  if (titleMatch) {
-    const title = alreadyResolved ? null : (titleMatch[1]?.trim() || null);
-    const cleanContent = trimmed.replace(/^<title>.*?<\/title>\s*/si, '');
-    return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
-  }
-
-  const titleCallMatch = trimmed.match(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i);
-  if (titleCallMatch) {
-    const t = titleCallMatch[2] ?? '';
-    const title = alreadyResolved ? null : (t.trim() || null);
-    const cleanContent = trimmed.replace(/^title\s*\(\s*(?:title\s*=\s*)?(['\"])([\s\S]*?)\1\s*\)\s*/i, '');
-    return { title, cleanContent, isPending: false, noTitle: false, isTitlePseudoCall: true };
-  }
-
-  if (alreadyResolved) {
-    return { title: null, cleanContent: content, isPending: false, noTitle: false, isTitlePseudoCall: false };
-  }
-
-  const partialTitlePattern = /^<(t(i(t(l(e(>.*)?)?)?)?)?)?$/i;
-  if (partialTitlePattern.test(trimmed) || (trimmed.toLowerCase().startsWith('<title>') && !trimmed.toLowerCase().includes('</title>'))) {
-    return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: false };
-  }
-
-  if (trimmed.toLowerCase().startsWith('title(') && !trimmed.includes(')')) {
-    return { title: null, cleanContent: '', isPending: true, noTitle: false, isTitlePseudoCall: true };
-  }
-
-  return { title: null, cleanContent: content, isPending: false, noTitle: true, isTitlePseudoCall: false };
-}
-
-function extractTitleFromToolResult(result: unknown): string | null {
-  const normalize = (value: string) => value.replace(/[\r\n]+/g, ' ').trim();
-  const readTitle = (value: unknown): string | null => {
-    if (!value || typeof value !== 'object') return null;
-    const obj = value as Record<string, unknown>;
-    const direct = typeof obj.title === 'string' ? normalize(obj.title) : '';
-    if (direct) return direct;
-    const nested = obj.result;
-    if (typeof nested === 'string') {
-      const normalized = normalize(nested);
-      if (normalized) return normalized;
-      return null;
-    }
-    if (nested && typeof nested === 'object') {
-      const nestedTitle = typeof (nested as Record<string, unknown>).title === 'string'
-        ? normalize((nested as Record<string, unknown>).title as string)
-        : '';
-      if (nestedTitle) return nestedTitle;
-    }
-    const output = obj.output;
-    if (output && typeof output === 'object') {
-      const outputTitle = typeof (output as Record<string, unknown>).title === 'string'
-        ? normalize((output as Record<string, unknown>).title as string)
-        : '';
-      if (outputTitle) return outputTitle;
-    }
-    return null;
-  };
-
-  if (typeof result === 'string') {
-    const trimmed = result.trim();
-    if (!trimmed) return null;
-    try {
-      const parsed = JSON.parse(trimmed);
-      const parsedTitle = readTitle(parsed);
-      if (parsedTitle) return parsedTitle;
-    } catch {
-    }
-    const match = trimmed.match(/<title>(.*?)<\/title>/i);
-    if (match && match[1]) {
-      const normalized = normalize(match[1]);
-      if (normalized) return normalized;
-    }
-    return null;
-  }
-
-  return readTitle(result);
-}
-
-function setTerminalTitle(title: string) {
-  const clean = String(title || '').replace(/[\r\n]+/g, ' ').trim();
-  if (!clean) return;
-  try {
-    setAnsiTerminalTitle(`⁘ ${clean}`);
-  } catch {
-  }
-  process.title = `⁘ ${clean}`;
-}
-
-export function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-export function truncateText(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return text.slice(0, Math.max(0, maxChars - 3)) + "...";
-}
-
-export function estimateTokensForMessage(message: CompactableMessage): number {
-  return estimateTokensForContent(message.content || "", message.thinkingContent || undefined);
-}
-
-export function estimateTokensForMessages(messages: CompactableMessage[]): number {
-  return messages.reduce((sum, message) => sum + estimateTokensForMessage(message), 0);
-}
-
-export function estimateTotalTokens(messages: CompactableMessage[], systemPrompt: string): number {
-  const systemTokens = estimateTokensFromText(systemPrompt) + 8;
-  return systemTokens + estimateTokensForMessages(messages);
-}
-
-export function shouldAutoCompact(totalTokens: number, maxContextTokens: number): boolean {
-  if (!Number.isFinite(maxContextTokens) || maxContextTokens <= 0) return false;
-  const threshold = Math.floor(maxContextTokens * 0.95);
-  return totalTokens >= threshold;
-}
-
-export function summarizeMessage(message: CompactableMessage, isLastUser: boolean): string {
-  if (message.role === "tool") {
-    const name = message.toolName || "tool";
-    const text = message.content || "";
-    const isError = text.toLowerCase().includes('error') || text.toLowerCase().includes('failed');
-    const status = isError ? 'FAILED' : 'OK';
-    const cleaned = normalizeWhitespace(text);
-    return `[tool:${name} ${status}] ${truncateText(cleaned, 120)}`;
-  }
-
-  if (message.role === "assistant") {
-    const cleaned = normalizeWhitespace(message.content || "");
-    const sentenceMatch = cleaned.match(/^[^.!?\n]{10,}[.!?]/);
-    const summary = sentenceMatch ? sentenceMatch[0] : cleaned;
-    return `assistant: ${truncateText(summary, 200)}`;
-  }
-
-  const cleaned = normalizeWhitespace(message.content || "");
-  const limit = isLastUser ? cleaned.length : 400;
-  return `user: ${truncateText(cleaned, limit)}`;
-}
-
-export function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
-  const maxChars = Math.max(0, maxTokens * 3);
-  let charCount = 0;
-  const lines: string[] = [];
-
-  let lastUserIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'user') { lastUserIndex = i; break; }
-  }
-
-  for (let i = 0; i < messages.length; i++) {
-    if (charCount >= maxChars) break;
-    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex)}`;
-    charCount += line.length + 1;
-    lines.push(line);
-  }
-
-  const full = lines.join("\n").trim();
-  return truncateText(full, maxChars);
-}
-
-export function collectContextFiles(messages: Message[]): string[] {
-  const files = new Set<string>();
-  for (const message of messages) {
-    if (message.role !== "tool") continue;
-    if (!message.toolArgs) continue;
-    const toolName = message.toolName || "";
-    if (!["read", "write", "edit", "list", "grep"].includes(toolName)) continue;
-    const path = message.toolArgs.path;
-    if (typeof path === "string" && path.trim()) {
-      files.add(path.trim());
-    }
-    const pattern = message.toolArgs.pattern;
-    if (toolName === "grep" && typeof pattern === "string" && pattern.trim()) {
-      files.add(pattern.trim());
-    }
-  }
-  return Array.from(files.values()).sort((a, b) => a.localeCompare(b));
-}
-
-export function appendContextFiles(summary: string, files: string[], maxTokens: number): string {
-  if (files.length === 0) return summary;
-  const maxChars = Math.max(0, maxTokens * 4);
-  const list = files.map(f => `- ${f}`).join("\n");
-  const block = `\n\nFiles kept after compaction:\n${list}`;
-  return truncateText(`${summary}${block}`, maxChars);
-}
-
-export function compactMessagesForUi(
-  messages: Message[],
-  systemPrompt: string,
-  maxContextTokens: number,
-  createId: () => string,
-  summaryOnly: boolean
-): { messages: Message[]; estimatedTokens: number; didCompact: boolean } {
-  const systemTokens = estimateTokensFromText(systemPrompt) + 8;
-  const totalTokens = systemTokens + estimateTokensForMessages(messages);
-  if (totalTokens <= maxContextTokens && !summaryOnly) {
-    return { messages, estimatedTokens: totalTokens - systemTokens, didCompact: false };
-  }
-
-  const summaryTokens = Math.min(2000, Math.max(400, Math.floor(maxContextTokens * 0.2)));
-  const recentBudget = Math.max(500, maxContextTokens - summaryTokens);
-
-  let recentTokens = 0;
-  const recent: Message[] = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!;
-    const msgTokens = estimateTokensForMessage(message);
-    if (recentTokens + msgTokens > recentBudget && recent.length > 0) break;
-    recent.unshift(message);
-    recentTokens += msgTokens;
-  }
-
-  const cutoff = messages.length - recent.length;
-  const older = cutoff > 0 ? messages.slice(0, cutoff) : [];
-  const files = collectContextFiles(messages);
-  const summaryBase = buildSummary(summaryOnly ? messages : (older.length > 0 ? older : messages), summaryTokens);
-  const summary = appendContextFiles(summaryBase, files, summaryTokens);
-  const summaryMessage: Message = {
-    id: createId(),
-    role: "assistant",
-    content: summary
-  };
-
-  const nextMessages = summaryOnly ? [summaryMessage] : [summaryMessage, ...recent];
-  const estimatedTokens = estimateTokensForMessages(nextMessages);
-  return { messages: nextMessages, estimatedTokens, didCompact: true };
-}
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
@@ -291,11 +58,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const initialMessageProcessed = useRef(false);
   const lastPromptTokensRef = useRef<number>(0);
   const exploreMessageIdRef = useRef<string | null>(null);
+
   const exploreToolsRef = useRef<Array<{ tool: string; info: string; success: boolean }>>([]);
   const explorePurposeRef = useRef<string>('');
   const disposedRef = useRef(false);
   const pendingCompactTokensRef = useRef<number | null>(null);
   const terminalHeightRef = useRef(process.stdout.rows || 24);
+
+  const chatModalOpenRef = useRef(false);
+  const handleChatModalOpenChange = useCallback((open: boolean) => {
+    chatModalOpenRef.current = open;
+  }, []);
 
   const [isReviewMode, setIsReviewMode] = useState(false);
   const [currentReviewChange, setCurrentReviewChange] = useState<PendingChange | null>(null);
@@ -584,6 +357,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, [copyRequestId, onCopy, messages]);
 
   useKeyboard((key) => {
+    if (shortcutsOpenRef.current || commandsOpenRef.current || chatModalOpenRef.current) {
+      if (key.name === 'escape') return;
+    }
+
     if ((key.name === 'c' && key.ctrl) || key.sequence === '\x03') {
       if (getCurrentQuestion()) {
         cancelQuestion();
@@ -629,12 +406,49 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       });
   };
 
-  const handleSubmit = async (value: string, meta?: InputSubmitMeta) => {
+  const getStreamCallbacks = (): AgentStreamCallbacks => ({
+    createId,
+    setMessages,
+    setCurrentTokens,
+    setIsProcessing,
+    setProcessingStartTime,
+    setCurrentTitle,
+    titleExtractedRef,
+    currentTitleRef,
+    lastPromptTokensRef,
+    exploreToolsRef,
+    explorePurposeRef,
+    exploreMessageIdRef,
+    disposedRef,
+    pendingCompactTokensRef,
+    abortControllerRef,
+    pendingChangesRef,
+    currentTitle,
+  });
+
+  const handleResubmitUserMessage = (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => {
+    if (isProcessing) return;
+    const byId = messages.findIndex(m => m.id === payload.id);
+    const targetIndex = byId >= 0 ? byId : payload.index;
+    if (targetIndex < 0 || targetIndex >= messages.length) return;
+    const target = messages[targetIndex];
+    if (!target || target.role !== 'user') return;
+    const baseMessages = messages.slice(0, targetIndex);
+    const safeImages = imagesSupported ? payload.images : [];
+    shouldAutoScroll.current = true;
+    setScrollOffset(0);
+    handleSubmit(payload.content, undefined, { baseMessages, images: safeImages });
+  };
+
+  const handleSubmit = async (value: string, meta?: InputSubmitMeta, options?: { baseMessages?: Message[]; images?: ImageAttachment[] }) => {
     if (isProcessing) return;
 
     const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
-    const hasImages = imagesSupported && pendingImages.length > 0;
+    const imagesForMessage = options?.images ?? (imagesSupported ? pendingImages : []);
+    const hasImages = imagesForMessage.length > 0;
     if (!value.trim() && !hasPastedContent && !hasImages) return;
+
+    const baseMessages = options?.baseMessages ?? messages;
 
     let shellCommandDisplay: string | undefined;
 
@@ -712,7 +526,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       value = `I ran this command: ${shellCommand}\n\nOutput:\n${shellResult}\n\nAnalyze the output and continue.`;
     }
 
-
     if (isCommand(value)) {
       debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
       const result = await executeCommand(value);
@@ -760,469 +573,20 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
             displayContent: value,
           };
 
-          setMessages((prev: Message[]) => [...prev, userMessage]);
+          setMessages(() => [...baseMessages, userMessage]);
           setIsProcessing(true);
-          const localStartTime = Date.now();
-          setProcessingStartTime(localStartTime);
-          setCurrentTokens(0);
-          lastPromptTokensRef.current = 0;
+          setProcessingStartTime(Date.now());
           shouldAutoScroll.current = true;
 
-          const conversationId = createId();
-          const conversationSteps: ConversationStep[] = [];
-          let totalTokens = { prompt: 0, completion: 0, total: 0 };
-          let stepCount = 0;
-          let totalChars = 0;
-          for (const m of messages) {
-            if (m.role === 'assistant') {
-              totalChars += m.content.length;
-              if (m.thinkingContent) totalChars += m.thinkingContent.length;
-            } else if (m.role === 'tool') {
-              totalChars += m.content.length;
-            }
-          }
-
-          const estimateTokens = () => Math.ceil(totalChars / 4);
-          setCurrentTokens(estimateTokens());
-          const config = readConfig();
-          const abortController = new AbortController();
-          abortControllerRef.current = abortController;
-          let abortNotified = false;
-          const notifyAbort = () => {
-            if (abortNotified) return;
-            abortNotified = true;
-            if (disposedRef.current) return;
-            setMessages((prev: Message[]) => {
-              const newMessages = [...prev];
-              newMessages.push({
-                id: createId(),
-                role: "tool",
-                success: false,
-                content: "Request interrupted by user. \n↪ What should Mosaic do instead?"
-              });
-              return newMessages;
-            });
-          };
-
-          conversationSteps.push({
-            type: 'user',
-            content: result.content,
-            timestamp: Date.now()
-          });
-
-          let responseDuration: number | null = null;
-          let responseBlendWord: string | undefined = undefined;
-
-          try {
-            const providerStatus = await Agent.ensureProviderReady();
-            if (!providerStatus.ready) {
-              setMessages((prev: Message[]) => {
-                const newMessages = [...prev];
-                newMessages.push({
-                  id: createId(),
-                  role: "assistant",
-                  content: `Ollama error: ${providerStatus.error || 'Could not start Ollama. Make sure Ollama is installed.'}`,
-                  isError: true
-                });
-                return newMessages;
-              });
-              setIsProcessing(false);
-              return;
-            }
-
-            const agent = new Agent();
-            const conversationHistory = buildConversationHistory([...messages, userMessage], imagesSupported);
-            let assistantChunk = '';
-            let thinkingChunk = '';
-            const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
-            let assistantMessageId: string | null = null;
-            let streamHadError = false;
-            titleExtractedRef.current = false;
-
-            for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
-              if (event.type === 'reasoning-delta') {
-                thinkingChunk += event.content;
-                totalChars += event.content.length;
-                setCurrentTokens(estimateTokens());
-
-                if (assistantMessageId === null) {
-                  assistantMessageId = createId();
-                }
-
-                const currentMessageId = assistantMessageId;
-                setMessages((prev: Message[]) => {
-                  const newMessages = [...prev];
-                  const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-                  if (messageIndex === -1) {
-                    newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
-                  } else {
-                    newMessages[messageIndex] = {
-                      ...newMessages[messageIndex]!,
-                      thinkingContent: thinkingChunk
-                    };
-                  }
-                  return newMessages;
-                });
-              } else if (event.type === 'text-delta') {
-                assistantChunk += event.content;
-                totalChars += event.content.length;
-                setCurrentTokens(estimateTokens());
-
-                const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
-
-                if (title) {
-                  titleExtractedRef.current = true;
-                  currentTitleRef.current = title;
-                  setCurrentTitle(title);
-                  setTerminalTitle(title);
-
-                  if (isTitlePseudoCall) {
-                    const toolArgs = { title } as Record<string, unknown>;
-                    const toolResult = { title } as Record<string, unknown>;
-                    const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
-                    conversationSteps.push({
-                      type: 'tool',
-                      content: toolContent,
-                      toolName: 'title',
-                      toolArgs,
-                      toolResult,
-                      timestamp: Date.now(),
-                    });
-                    setMessages((prev: Message[]) => ([
-                      ...prev,
-                      {
-                        id: createId(),
-                        role: 'tool',
-                        content: toolContent,
-                        toolName: 'title',
-                        toolArgs,
-                        toolResult,
-                        success,
-                        timestamp: Date.now(),
-                      },
-                    ]));
-                  }
-                } else if (noTitle) {
-                  titleExtractedRef.current = true;
-                }
-
-                if (isPending) continue;
-
-                if (assistantMessageId === null) {
-                  assistantMessageId = createId();
-                }
-
-                const displayContent = cleanContent;
-                const currentMessageId = assistantMessageId;
-                setMessages((prev: Message[]) => {
-                  const newMessages = [...prev];
-                  const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-                  if (messageIndex === -1) {
-                    newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
-                  } else {
-                    newMessages[messageIndex] = {
-                      ...newMessages[messageIndex]!,
-                      content: displayContent
-                    };
-                  }
-                  return newMessages;
-                });
-              } else if (event.type === 'step-start') {
-                stepCount++;
-              } else if (event.type === 'tool-call-end') {
-                totalChars += JSON.stringify(event.args).length;
-                setCurrentTokens(estimateTokens());
-
-                const needsApproval = event.toolName === 'write' || event.toolName === 'edit' || event.toolName === 'bash';
-                const isExploreTool = event.toolName === 'explore';
-                const isMcpTool = event.toolName.startsWith('mcp__');
-                const showRunning = event.toolName === 'bash' || isMcpTool;
-                let runningMessageId: string | undefined;
-
-                if (isExploreTool) {
-                  setExploreAbortController(abortController);
-                  exploreToolsRef.current = [];
-                  const purpose = (event.args.purpose as string) || 'exploring...';
-                  explorePurposeRef.current = purpose;
-                }
-
-                if (!needsApproval) {
-                  runningMessageId = createId();
-                  const { name: toolDisplayName, info: toolInfo } = parseToolHeader(event.toolName, event.args);
-                  const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
-
-                  if (isExploreTool) {
-                    exploreMessageIdRef.current = runningMessageId;
-                  }
-
-                  setMessages((prev: Message[]) => {
-                    const newMessages = [...prev];
-                    newMessages.push({
-                      id: runningMessageId!,
-                      role: "tool",
-                      content: runningContent,
-                      toolName: event.toolName,
-                      toolArgs: event.args,
-                      success: true,
-                      isRunning: showRunning || isExploreTool,
-                      runningStartTime: (showRunning || isExploreTool) ? Date.now() : undefined
-                    });
-                    return newMessages;
-                  });
-                }
-
-                pendingToolCalls.set(event.toolCallId, {
-                  toolName: event.toolName,
-                  args: event.args,
-                  messageId: runningMessageId
-                });
-              } else if (event.type === 'tool-result') {
-                const pending = pendingToolCalls.get(event.toolCallId);
-                const toolName = pending?.toolName ?? event.toolName;
-                const toolArgs = pending?.args ?? {};
-                const runningMessageId = pending?.messageId;
-                pendingToolCalls.delete(event.toolCallId);
-
-                if (toolName === 'title') {
-                  const nextTitle = extractTitleFromToolResult(event.result);
-                  if (nextTitle) {
-                    currentTitleRef.current = nextTitle;
-                    setCurrentTitle(nextTitle);
-                    setTerminalTitle(nextTitle);
-                  }
-                }
-                const { content: toolContent, success } = formatToolMessage(
-                  toolName,
-                  toolArgs,
-                  event.result,
-                  { maxLines: DEFAULT_MAX_TOOL_LINES }
-                );
-
-                const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
-                totalChars += toolResultStr.length;
-                setCurrentTokens(estimateTokens());
-
-                conversationSteps.push({
-                  type: 'tool',
-                  content: toolContent,
-                  toolName,
-                  toolArgs,
-                  toolResult: event.result,
-                  timestamp: Date.now()
-                });
-
-                setMessages((prev: Message[]) => {
-                  const newMessages = [...prev];
-
-                  let runningIndex = -1;
-                  if (runningMessageId) {
-                    runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-                  } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
-                    runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
-                  }
-
-                  if (runningIndex !== -1) {
-                    newMessages[runningIndex] = {
-                      ...newMessages[runningIndex]!,
-                      content: toolContent,
-                      toolArgs: toolArgs,
-                      toolResult: event.result,
-                      success,
-                      isRunning: false,
-                      runningStartTime: undefined,
-                      timestamp: Date.now()
-                    };
-                    return newMessages;
-                  }
-
-                  newMessages.push({
-                    id: createId(),
-                    role: "tool",
-                    content: toolContent,
-                    toolName,
-                    toolArgs: toolArgs,
-                    toolResult: event.result,
-                    success: success,
-                    timestamp: Date.now()
-                  });
-                  return newMessages;
-                });
-
-                assistantChunk = '';
-                assistantMessageId = null;
-              } else if (event.type === 'error') {
-                if (abortController.signal.aborted) {
-                  notifyAbort();
-                  streamHadError = true;
-                  break;
-                }
-                if (assistantChunk.trim() || thinkingChunk.trim()) {
-                  conversationSteps.push({
-                    type: 'assistant',
-                    content: assistantChunk,
-                    thinkingContent: thinkingChunk || undefined,
-                    timestamp: Date.now()
-                  });
-                }
-
-                const errorContent = formatErrorMessage('API', event.error);
-                conversationSteps.push({
-                  type: 'assistant',
-                  content: errorContent,
-                  timestamp: Date.now()
-                });
-
-                setMessages((prev: Message[]) => {
-                  const newMessages = [...prev];
-                  newMessages.push({
-                    id: createId(),
-                    role: 'assistant',
-                    content: errorContent,
-                    isError: true,
-                  });
-                  return newMessages;
-                });
-
-                assistantChunk = '';
-                assistantMessageId = null;
-                streamHadError = true;
-                break;
-              } else if (event.type === 'finish') {
-                if (event.usage && event.usage.totalTokens > 0) {
-                  totalTokens = {
-                    prompt: event.usage.promptTokens,
-                    completion: event.usage.completionTokens,
-                    total: event.usage.totalTokens
-                  };
-                  lastPromptTokensRef.current = event.usage.promptTokens;
-                  setCurrentTokens(event.usage.totalTokens);
-                }
-              }
-            }
-
-            if (abortController.signal.aborted) {
-              notifyAbort();
-              return;
-            }
-
-            if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
-              conversationSteps.push({
-                type: 'assistant',
-                content: assistantChunk,
-                thinkingContent: thinkingChunk || undefined,
-                timestamp: Date.now()
-              });
-            }
-
-            responseDuration = Date.now() - localStartTime;
-            if (responseDuration >= 60000) {
-              responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-              for (let i = conversationSteps.length - 1; i >= 0; i--) {
-                if (conversationSteps[i]?.type === 'assistant') {
-                  conversationSteps[i] = {
-                    ...conversationSteps[i]!,
-                    responseDuration,
-                    blendWord: responseBlendWord
-                  };
-                  break;
-                }
-              }
-            }
-
-            const conversationData: ConversationHistory = {
-              id: conversationId,
-              timestamp: Date.now(),
-              steps: conversationSteps,
-              totalSteps: stepCount,
-              title: currentTitleRef.current ?? currentTitle ?? null,
-              workspace: process.cwd(),
-              totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-              model: config.model,
-              provider: config.provider
-            };
-
-            saveConversation(conversationData);
-
-          } catch (error) {
-            if (abortController.signal.aborted) {
-              notifyAbort();
-              return;
-            }
-            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-            const errorContent = formatErrorMessage('Mosaic', errorMessage);
-            setMessages((prev: Message[]) => {
-              const newMessages = [...prev];
-              if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
-                newMessages[newMessages.length - 1] = {
-                  id: newMessages[newMessages.length - 1]!.id,
-                  role: "assistant",
-                  content: errorContent,
-                  isError: true
-                };
-              } else {
-                newMessages.push({
-                  id: createId(),
-                  role: "assistant",
-                  content: errorContent,
-                  isError: true
-                });
-              }
-              return newMessages;
-            });
-          } finally {
-            if (abortControllerRef.current === abortController) {
-              abortControllerRef.current = null;
-            }
-            if (!disposedRef.current) {
-              const duration = responseDuration ?? (Date.now() - localStartTime);
-              if (duration >= 60000) {
-                const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-                setMessages((prev: Message[]) => {
-                  const newMessages = [...prev];
-                  for (let i = newMessages.length - 1; i >= 0; i--) {
-                    if (newMessages[i]?.role === 'assistant') {
-                      newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
-                      break;
-                    }
-                  }
-                  return newMessages;
-                });
-              }
-
-              if (hasPendingChanges()) {
-                startReview().then((results) => {
-                  let revertedCount = 0;
-                  let keptCount = 0;
-
-                  for (let i = 0; i < results.length; i++) {
-                    if (results[i]) {
-                      keptCount++;
-                    } else {
-                      revertedCount++;
-                    }
-                  }
-
-                  if (revertedCount > 0 || keptCount > 0) {
-                    setMessages((prev: Message[]) => [...prev, {
-                      id: createId(),
-                      role: "tool",
-                      content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
-                      success: true,
-                    }]);
-                  }
-
-                  clearPendingChanges();
-                  setIsProcessing(false);
-                  setProcessingStartTime(null);
-                });
-              } else {
-                setIsProcessing(false);
-                setProcessingStartTime(null);
-              }
-            }
-          }
+          const convHistory = buildConversationHistory([...baseMessages, userMessage], imagesSupported);
+          await runAgentStream({
+            baseMessages,
+            userMessage,
+            conversationHistory: convHistory,
+            abortMessage: "Request interrupted by user. \n\u21AA What should Mosaic do instead?",
+            userStepContent: result.content,
+            autoCompact: false,
+          }, getStreamCallbacks());
 
           return;
         }
@@ -1250,8 +614,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
     addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : (hasImages ? '[Image]' : value)));
 
-    const imagesForMessage = imagesSupported ? pendingImages : [];
-
     const userMessage: Message = {
       id: createId(),
       role: "user",
@@ -1260,520 +622,25 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       images: imagesForMessage.length > 0 ? imagesForMessage : undefined,
     };
 
-    if (imagesForMessage.length > 0) {
+    if (!options?.images && imagesForMessage.length > 0) {
       setPendingImages([]);
     }
 
-    setMessages((prev: Message[]) => [...prev, userMessage]);
+    setMessages((prev: Message[]) => [...(options?.baseMessages ?? prev), userMessage]);
     setIsProcessing(true);
-    const localStartTime = Date.now();
-    setProcessingStartTime(localStartTime);
-    setCurrentTokens(0);
-    lastPromptTokensRef.current = 0;
+    setProcessingStartTime(Date.now());
     shouldAutoScroll.current = true;
 
-    const conversationId = createId();
-    const conversationSteps: ConversationStep[] = [];
-    let totalTokens = { prompt: 0, completion: 0, total: 0 };
-    let stepCount = 0;
-    let totalChars = 0;
-    for (const m of messages) {
-      if (m.role === 'assistant') {
-        totalChars += m.content.length;
-        if (m.thinkingContent) totalChars += m.thinkingContent.length;
-      } else if (m.role === 'tool') {
-        totalChars += m.content.length;
-      }
-    }
-
-    const estimateTokens = () => Math.ceil(totalChars / 4);
-    setCurrentTokens(estimateTokens());
-    const config = readConfig();
-    const resolveMaxContextTokens = async () => {
-      if (config.maxContextTokens) return config.maxContextTokens;
-      if (config.provider && config.model) {
-        const resolved = await getModelsDevContextLimit(config.provider, config.model);
-        if (typeof resolved === "number") return resolved;
-      }
-      return undefined;
-    };
-    const buildSystemPrompt = () => {
-      const rawSystemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-      return processSystemPrompt(rawSystemPrompt, true);
-    };
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-    let abortNotified = false;
-    const notifyAbort = () => {
-      if (abortNotified) return;
-      abortNotified = true;
-      if (disposedRef.current) return;
-      setMessages((prev: Message[]) => {
-        const newMessages = [...prev];
-        newMessages.push({
-          id: createId(),
-          role: "tool",
-          success: false,
-          content: "Generation aborted. \n↪ What should Mosaic do instead?"
-        });
-        return newMessages;
-      });
-    };
-
-    conversationSteps.push({
-      type: 'user',
-      content: composedContent,
-      timestamp: Date.now(),
-      images: imagesForMessage.length > 0 ? imagesForMessage : undefined
-    });
-
-    let responseDuration: number | null = null;
-    let responseBlendWord: string | undefined = undefined;
-
-    try {
-      const providerStatus = await Agent.ensureProviderReady();
-      if (!providerStatus.ready) {
-        setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          newMessages.push({
-            id: createId(),
-            role: "assistant",
-            content: `Ollama error: ${providerStatus.error || 'Could not start Ollama. Make sure Ollama is installed.'}`,
-            isError: true
-          });
-          return newMessages;
-        });
-        setIsProcessing(false);
-        return;
-      }
-
-      const agent = new Agent();
-      const conversationHistory = buildConversationHistory([...messages, userMessage], imagesSupported);
-      let assistantChunk = '';
-      let thinkingChunk = '';
-      const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
-      let assistantMessageId: string | null = null;
-      let streamHadError = false;
-      titleExtractedRef.current = false;
-
-      for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
-        if (event.type === 'reasoning-delta') {
-          thinkingChunk += event.content;
-          totalChars += event.content.length;
-          setCurrentTokens(estimateTokens());
-
-          if (assistantMessageId === null) {
-            assistantMessageId = createId();
-          }
-
-          const currentMessageId = assistantMessageId;
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-            if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
-            } else {
-              newMessages[messageIndex] = {
-                ...newMessages[messageIndex]!,
-                thinkingContent: thinkingChunk
-              };
-            }
-            return newMessages;
-          });
-        } else if (event.type === 'text-delta') {
-          assistantChunk += event.content;
-          totalChars += event.content.length;
-          setCurrentTokens(estimateTokens());
-
-          const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
-
-          if (title) {
-            titleExtractedRef.current = true;
-            currentTitleRef.current = title;
-            setCurrentTitle(title);
-            setTerminalTitle(title);
-            if (isTitlePseudoCall) {
-              const toolArgs = { title } as Record<string, unknown>;
-              const toolResult = { title } as Record<string, unknown>;
-              const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
-              conversationSteps.push({
-                type: 'tool',
-                content: toolContent,
-                toolName: 'title',
-                toolArgs,
-                toolResult,
-                timestamp: Date.now(),
-              });
-              setMessages((prev: Message[]) => ([
-                ...prev,
-                {
-                  id: createId(),
-                  role: 'tool',
-                  content: toolContent,
-                  toolName: 'title',
-                  toolArgs,
-                  toolResult,
-                  success,
-                  timestamp: Date.now(),
-                },
-              ]));
-            }
-          } else if (noTitle) {
-            titleExtractedRef.current = true;
-          }
-
-          if (isPending) continue;
-
-          if (assistantMessageId === null) {
-            assistantMessageId = createId();
-          }
-
-          const displayContent = cleanContent;
-          const currentMessageId = assistantMessageId;
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-            if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
-            } else {
-              newMessages[messageIndex] = {
-                ...newMessages[messageIndex]!,
-                content: displayContent,
-                thinkingContent: thinkingChunk
-              };
-            }
-            return newMessages;
-          });
-        } else if (event.type === 'step-start') {
-          stepCount++;
-        } else if (event.type === 'tool-call-end') {
-          totalChars += JSON.stringify(event.args).length;
-          setCurrentTokens(estimateTokens());
-
-          const normalized = normalizeToolCall(event.toolName, event.args ?? {});
-          const toolName = normalized.toolName;
-          const toolArgs = normalized.args;
-          const isExploreTool = toolName === 'explore';
-          const isMcpTool = toolName.startsWith('mcp__');
-          let runningMessageId: string | undefined;
-
-          if (isExploreTool) {
-            setExploreAbortController(abortController);
-            exploreToolsRef.current = [];
-            const purpose = (toolArgs.purpose as string) || 'exploring...';
-            explorePurposeRef.current = purpose;
-          }
-
-          if (isExploreTool || isMcpTool) {
-            runningMessageId = createId();
-            if (isExploreTool) {
-              exploreMessageIdRef.current = runningMessageId;
-            }
-            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, toolArgs);
-            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
-
-            setMessages((prev: Message[]) => {
-              const newMessages = [...prev];
-              newMessages.push({
-                id: runningMessageId!,
-                role: "tool",
-                content: runningContent,
-                toolName,
-                toolArgs,
-                success: true,
-                isRunning: true,
-                runningStartTime: Date.now()
-              });
-              return newMessages;
-            });
-          }
-
-          pendingToolCalls.set(event.toolCallId, {
-            toolName,
-            args: toolArgs,
-            messageId: runningMessageId
-          });
-
-        } else if (event.type === 'tool-result') {
-          const pending = pendingToolCalls.get(event.toolCallId);
-          const toolName = pending?.toolName ?? event.toolName;
-          const toolArgs = pending?.args ?? {};
-          const runningMessageId = pending?.messageId;
-          pendingToolCalls.delete(event.toolCallId);
-
-          if (toolName === 'title') {
-            const nextTitle = extractTitleFromToolResult(event.result);
-            if (nextTitle) {
-              currentTitleRef.current = nextTitle;
-              setCurrentTitle(nextTitle);
-              setTerminalTitle(nextTitle);
-            }
-          }
-
-          if (toolName === 'explore') {
-            exploreMessageIdRef.current = null;
-            setExploreAbortController(null);
-          }
-
-          const { content: toolContent, success } = formatToolMessage(
-            toolName,
-            toolArgs,
-            event.result,
-            { maxLines: DEFAULT_MAX_TOOL_LINES }
-          );
-
-          const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
-          totalChars += toolResultStr.length;
-          setCurrentTokens(estimateTokens());
-
-          if (assistantChunk.trim() || thinkingChunk.trim()) {
-            conversationSteps.push({
-              type: 'assistant',
-              content: assistantChunk,
-              thinkingContent: thinkingChunk || undefined,
-              timestamp: Date.now()
-            });
-          }
-
-          conversationSteps.push({
-            type: 'tool',
-            content: toolContent,
-            toolName,
-            toolArgs,
-            toolResult: event.result,
-            timestamp: Date.now()
-          });
-
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-
-            let runningIndex = -1;
-            if (runningMessageId) {
-              runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-            } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
-              runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
-            }
-
-            if (runningIndex !== -1) {
-              newMessages[runningIndex] = {
-                ...newMessages[runningIndex]!,
-                content: toolContent,
-                toolArgs: toolArgs,
-                toolResult: event.result,
-                success,
-                isRunning: false,
-                runningStartTime: undefined
-              };
-              return newMessages;
-            }
-
-            newMessages.push({
-              id: createId(),
-              role: "tool",
-              content: toolContent,
-              toolName,
-              toolArgs: toolArgs,
-              toolResult: event.result,
-              success: success
-            });
-            return newMessages;
-          });
-
-          assistantChunk = '';
-          thinkingChunk = '';
-          assistantMessageId = null;
-        } else if (event.type === 'error') {
-          if (abortController.signal.aborted) {
-            notifyAbort();
-            streamHadError = true;
-            break;
-          }
-          if (assistantChunk.trim() || thinkingChunk.trim()) {
-            conversationSteps.push({
-              type: 'assistant',
-              content: assistantChunk,
-              thinkingContent: thinkingChunk || undefined,
-              timestamp: Date.now()
-            });
-          }
-
-          const errorContent = formatErrorMessage('API', event.error);
-          conversationSteps.push({
-            type: 'assistant',
-            content: errorContent,
-            timestamp: Date.now()
-          });
-
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            newMessages.push({
-              id: createId(),
-              role: 'assistant',
-              content: errorContent,
-              isError: true,
-            });
-            return newMessages;
-          });
-
-          assistantChunk = '';
-          thinkingChunk = '';
-          assistantMessageId = null;
-          streamHadError = true;
-          break;
-        } else if (event.type === 'finish') {
-          if (event.usage && event.usage.totalTokens > 0) {
-            totalTokens = {
-              prompt: event.usage.promptTokens,
-              completion: event.usage.completionTokens,
-              total: event.usage.totalTokens
-            };
-            lastPromptTokensRef.current = event.usage.promptTokens;
-            setCurrentTokens(event.usage.totalTokens);
-          }
-        }
-      }
-
-      if (abortController.signal.aborted) {
-        notifyAbort();
-        return;
-      }
-
-      if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
-        conversationSteps.push({
-          type: 'assistant',
-          content: assistantChunk,
-          thinkingContent: thinkingChunk || undefined,
-          timestamp: Date.now()
-        });
-      }
-
-      responseDuration = Date.now() - localStartTime;
-      if (responseDuration >= 60000) {
-        responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-        for (let i = conversationSteps.length - 1; i >= 0; i--) {
-          if (conversationSteps[i]?.type === 'assistant') {
-            conversationSteps[i] = {
-              ...conversationSteps[i]!,
-              responseDuration,
-              blendWord: responseBlendWord
-            };
-            break;
-          }
-        }
-      }
-
-      const conversationData: ConversationHistory = {
-        id: conversationId,
-        timestamp: Date.now(),
-        steps: conversationSteps,
-        totalSteps: stepCount,
-        title: currentTitleRef.current ?? currentTitle ?? null,
-        workspace: process.cwd(),
-        totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-        model: config.model,
-        provider: config.provider
-      };
-
-      saveConversation(conversationData);
-      const resolvedMax = await resolveMaxContextTokens();
-      const maxContextTokens = resolvedMax ?? getDefaultContextBudget(config.provider);
-      if (!abortController.signal.aborted && !disposedRef.current) {
-        const realPromptTokens = lastPromptTokensRef.current;
-        const systemPrompt = buildSystemPrompt();
-        pendingCompactTokensRef.current = null;
-        setMessages(prev => {
-          const usedTokens = realPromptTokens > 0
-            ? realPromptTokens
-            : estimateTotalTokens(prev, systemPrompt);
-          if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
-          const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
-          pendingCompactTokensRef.current = compacted.estimatedTokens;
-          return compacted.messages;
-        });
-        setCurrentTokens(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
-      }
-
-    } catch (error) {
-      if (abortController.signal.aborted) {
-        notifyAbort();
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-      const errorContent = formatErrorMessage('Mosaic', errorMessage);
-      setMessages((prev: Message[]) => {
-        const newMessages = [...prev];
-        if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
-          newMessages[newMessages.length - 1] = {
-            id: newMessages[newMessages.length - 1]!.id,
-            role: "assistant",
-            content: errorContent,
-            isError: true
-          };
-        } else {
-          newMessages.push({
-            id: createId(),
-            role: "assistant",
-            content: errorContent,
-            isError: true
-          });
-        }
-        return newMessages;
-      });
-    } finally {
-      if (abortControllerRef.current === abortController) {
-        abortControllerRef.current = null;
-      }
-      if (!disposedRef.current) {
-        const duration = responseDuration ?? (Date.now() - localStartTime);
-        if (duration >= 60000) {
-          const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            for (let i = newMessages.length - 1; i >= 0; i--) {
-              if (newMessages[i]?.role === 'assistant') {
-                newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
-                break;
-              }
-            }
-            return newMessages;
-          });
-        }
-
-        if (hasPendingChanges()) {
-          startReview().then((results) => {
-            const changes = pendingChangesRef.current;
-            let revertedCount = 0;
-            let keptCount = 0;
-
-            for (let i = 0; i < results.length; i++) {
-              if (results[i]) {
-                keptCount++;
-              } else {
-                revertedCount++;
-              }
-            }
-
-            if (revertedCount > 0 || keptCount > 0) {
-              setMessages((prev: Message[]) => [...prev, {
-                id: createId(),
-                role: "tool",
-                content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
-                success: true,
-              }]);
-            }
-
-            clearPendingChanges();
-            setIsProcessing(false);
-            setProcessingStartTime(null);
-          });
-        } else {
-          setIsProcessing(false);
-          setProcessingStartTime(null);
-        }
-      }
-    }
+    const convHistory = buildConversationHistory([...baseMessages, userMessage], imagesSupported);
+    await runAgentStream({
+      baseMessages,
+      userMessage,
+      conversationHistory: convHistory,
+      abortMessage: "Generation aborted. \n\u21AA What should Mosaic do instead?",
+      userStepContent: composedContent,
+      userStepImages: imagesForMessage.length > 0 ? imagesForMessage : undefined,
+      autoCompact: true,
+    }, getStreamCallbacks());
   };
 
   useEffect(() => {
@@ -1844,21 +711,23 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   ) : undefined;
 
   return (
-      <ChatPage
-        messages={messages}
-        isProcessing={isProcessing && !isReviewMode}
-        processingStartTime={isReviewMode ? null : processingStartTime}
-        currentTokens={currentTokens}
+    <ChatPage
+      messages={messages}
+      isProcessing={isProcessing && !isReviewMode}
+      processingStartTime={isReviewMode ? null : processingStartTime}
+      currentTokens={currentTokens}
       scrollOffset={scrollOffset}
       terminalHeight={terminalHeight}
       terminalWidth={terminalWidth}
       pasteRequestId={pasteRequestId}
       shortcutsOpen={shortcutsOpen}
-        onSubmit={handleSubmit}
-        onCopyMessage={onCopy}
-        pendingImages={pendingImages}
-        reviewPanel={reviewPanelElement}
-        reviewMenu={reviewMenuElement}
-      />
+      onModalOpenChange={handleChatModalOpenChange}
+      onSubmit={handleSubmit}
+      onCopyMessage={onCopy}
+      onResubmitUserMessage={handleResubmitUserMessage}
+      pendingImages={pendingImages}
+      reviewPanel={reviewPanelElement}
+      reviewMenu={reviewMenuElement}
+    />
   );
 }
