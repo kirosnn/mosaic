@@ -1,7 +1,7 @@
 import { streamText, CoreMessage } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
-import { shouldEnableReasoning } from './reasoning';
+import { getGoogleReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
 
@@ -13,7 +13,8 @@ export class GoogleProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    const googleReasoning = getGoogleReasoningOptions(reasoningEnabled);
 
     const google = createGoogleGenerativeAI({
       apiKey: cleanApiKey,
@@ -32,15 +33,7 @@ export class GoogleProvider implements Provider {
           maxSteps: config.maxSteps || 100,
           maxRetries: 0,
           abortSignal: options?.abortSignal,
-          providerOptions: reasoningEnabled
-            ? {
-              google: {
-                thinkingConfig: {
-                  style: 'THINKING_STYLE_DETAILED',
-                },
-              },
-            }
-            : undefined,
+          providerOptions: googleReasoning ? { google: googleReasoning } : undefined,
         });
 
         for await (const chunk of result.fullStream as any) {
