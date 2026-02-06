@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { TextAttributes, SyntaxStyle, RGBA, type KeyEvent } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
-import { renderMarkdownSegment, parseAndWrapMarkdown } from "../../utils/markdown";
-import { getToolParagraphIndent, getToolWrapTarget, getToolWrapWidth } from "../../utils/toolFormatting";
+import { renderMarkdownSegment } from "../../utils/markdown";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
 import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
 import { subscribeApprovalMode } from "../../utils/approvalModeBridge";
@@ -13,13 +12,12 @@ import { notifyNotification } from "../../utils/notificationBridge";
 import { CustomInput } from "../CustomInput";
 import type { Message } from "./types";
 import type { ImageAttachment } from "../../utils/images";
-import { wrapText } from "./wrapText";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
-import { parseToolHeader } from "../../utils/toolFormatting";
-import { getNativeMcpToolName } from "../../mcp/types";
+import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuilder";
+import { UserMessageModal, type UserMessageModalState } from "./UserMessageModal";
 
 const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
   keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
@@ -121,46 +119,6 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
   return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
 }
 
-function getPlanProgress(messages: Message[]): { inProgressStep?: string; nextStep?: string } {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (!message || message.role !== 'tool' || message.toolName !== 'plan') continue;
-    const result = message.toolResult;
-    if (!result || typeof result !== 'object') continue;
-    const obj = result as Record<string, unknown>;
-    const planItems = Array.isArray(obj.plan) ? obj.plan : [];
-    const normalized = planItems
-      .map((item) => {
-        if (!item || typeof item !== 'object') return null;
-        const entry = item as Record<string, unknown>;
-        const step = typeof entry.step === 'string' ? entry.step.trim() : '';
-        const status = typeof entry.status === 'string' ? entry.status : 'pending';
-        if (!step) return null;
-        return { step, status };
-      })
-      .filter((item): item is { step: string; status: string } => !!item);
-
-    if (normalized.length === 0) return {};
-
-    const inProgressIndex = normalized.findIndex(item => item.status === 'in_progress');
-    const inProgressStep = inProgressIndex >= 0 ? normalized[inProgressIndex]?.step : undefined;
-    let nextStep: string | undefined;
-
-    if (inProgressIndex >= 0) {
-      const after = normalized.slice(inProgressIndex + 1).find(item => item.status === 'pending');
-      nextStep = after?.step;
-    }
-
-    if (!nextStep) {
-      nextStep = normalized.find(item => item.status === 'pending')?.step;
-    }
-
-    return { inProgressStep, nextStep };
-  }
-
-  return {};
-}
-
 interface ChatPageProps {
   messages: Message[];
   isProcessing: boolean;
@@ -173,9 +131,11 @@ interface ChatPageProps {
   shortcutsOpen: boolean;
   onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
   onCopyMessage?: (text: string) => void;
+  onResubmitUserMessage?: (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => void;
   pendingImages: ImageAttachment[];
   reviewPanel?: React.ReactNode;
   reviewMenu?: React.ReactNode;
+  onModalOpenChange?: (open: boolean) => void;
 }
 
 export function ChatPage({
@@ -190,9 +150,11 @@ export function ChatPage({
   shortcutsOpen,
   onSubmit,
   onCopyMessage,
+  onResubmitUserMessage,
   pendingImages,
   reviewPanel,
   reviewMenu,
+  onModalOpenChange,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const renderer = useRenderer();
@@ -202,65 +164,9 @@ export function ChatPage({
   const [timerTick, setTimerTick] = useState(0);
   const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
   const [hoveredUserMessageId, setHoveredUserMessageId] = useState<string | null>(null);
-  const [userMessageModal, setUserMessageModal] = useState<{ id: string; index: number; content: string; images: ImageAttachment[] } | null>(null);
-  const [hoveredActionId, setHoveredActionId] = useState<string | null>(null);
+  const [userMessageModal, setUserMessageModal] = useState<UserMessageModalState | null>(null);
   const scrollboxRef = useRef<any>(null);
-
-  function isCompactTool(toolName?: string): boolean {
-    if (!toolName) return false;
-    if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title') return true;
-    if (toolName.startsWith('mcp__')) {
-      const nativeName = getNativeMcpToolName(toolName);
-      return nativeName === 'navigation_search';
-    }
-    return false;
-  }
-
-  function getFirstBodyLine(content: string): string {
-    const lines = (content || '').split('\n');
-    for (let i = 1; i < lines.length; i++) {
-      const s = (lines[i] || '').trim();
-      if (s) return s;
-    }
-    return '';
-  }
-
-  function getCompactResult(message: Message): string {
-    if (message.isRunning) return 'running...';
-    const toolName = message.toolName;
-    if (toolName === 'title') {
-      const argsTitle = message.toolArgs && typeof (message.toolArgs as any).title === 'string'
-        ? String((message.toolArgs as any).title)
-        : '';
-      const resultObj = message.toolResult && typeof message.toolResult === 'object'
-        ? (message.toolResult as Record<string, unknown>)
-        : null;
-      const resultTitle = typeof resultObj?.title === 'string' ? resultObj.title : '';
-      const t = (argsTitle || resultTitle).replace(/[\r\n]+/g, ' ').trim();
-      return t || 'Completed';
-    }
-    if (toolName === 'read' && typeof message.toolResult === 'string') {
-      const lineCount = message.toolResult ? message.toolResult.split(/\r?\n/).length : 0;
-      return `Read ${lineCount} lines`;
-    }
-    if ((toolName === 'glob' || toolName === 'list') && typeof message.toolResult === 'string') {
-      try {
-        const parsed = JSON.parse(message.toolResult);
-        if (Array.isArray(parsed)) {
-          return `${parsed.length} results`;
-        }
-        if (parsed && typeof parsed === 'object') {
-          const obj = parsed as Record<string, unknown>;
-          const files = Array.isArray(obj.files) ? obj.files : null;
-          if (files) return `${files.length} results`;
-        }
-      } catch {
-      }
-    }
-
-    const body = getFirstBodyLine(message.displayContent ?? message.content);
-    return body || 'Completed';
-  }
+  const userMessageModalRef = useRef(userMessageModal);
 
   useEffect(() => {
     return subscribeQuestion(setQuestionRequest);
@@ -298,15 +204,17 @@ export function ChatPage({
   }, []);
 
   useEffect(() => {
-    if (!userMessageModal) {
-      setHoveredActionId(null);
-    }
+    userMessageModalRef.current = userMessageModal;
   }, [userMessageModal]);
+
+  useEffect(() => {
+    onModalOpenChange?.(Boolean(userMessageModal));
+  }, [onModalOpenChange, userMessageModal]);
 
   useEffect(() => {
     const handleKeyPress = (key: KeyEvent) => {
       const k = key as any;
-      if (k.name === "escape" && userMessageModal) {
+      if (k.name === "escape" && userMessageModalRef.current) {
         setUserMessageModal(null);
       }
     };
@@ -314,7 +222,7 @@ export function ChatPage({
     return () => {
       renderer.keyInput.off("keypress", handleKeyPress);
     };
-  }, [renderer.keyInput, userMessageModal]);
+  }, [renderer.keyInput]);
 
   const planProgress = getPlanProgress(messages);
   const extraInputLines = pendingImages.length > 0 ? 1 : 0;
@@ -338,474 +246,47 @@ export function ChatPage({
     setUserMessageModal(null);
   };
 
-  const modalActions = [
-    { id: "copy", label: "Copy message text to clipboard", onActivate: handleCopyMessage }
-  ];
-
-  interface RenderItem {
-    key: string;
-    type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact';
-    content?: string;
-    role: "user" | "assistant" | "tool" | "slash";
-    toolName?: string;
-    isFirst: boolean;
-    indent?: number;
-    paragraphIndex?: number;
-    wrappedLineIndex?: number;
-    segments?: import("../../utils/markdown").MarkdownSegment[];
-    success?: boolean;
-    isError?: boolean;
-    isSpacer?: boolean;
-    questionRequest?: QuestionRequest;
-    approvalRequest?: ApprovalRequest;
-    visualLines: number;
-    blendDuration?: number;
-    blendWord?: string;
-    isRunning?: boolean;
-    runningStartTime?: number;
-    isThinking?: boolean;
-    isCodeBlock?: boolean;
-    codeLanguage?: string;
-    codeContent?: string;
-    codeHeight?: number;
-    isTableRow?: boolean;
-    tableCells?: string[];
-    tableColumnWidths?: number[];
-    tableRowIndex?: number;
-    isPadding?: boolean;
-    planStatus?: 'pending' | 'in_progress' | 'completed';
-    isCompactTool?: boolean;
-    compactLabel?: string;
-    compactResult?: string;
-    messageId?: string;
-    messageIndex?: number;
-    userMessageText?: string;
-    userMessageImages?: ImageAttachment[];
-  }
-
-  const allItems: RenderItem[] = [];
-  let pendingBlend: { key: string; blendDuration: number; blendWord: string } | null = null;
-
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    const message = messages[messageIndex]!;
-    const messageKey = message.id || `m-${messageIndex}`;
-    const messageRole = message.displayRole ?? message.role;
-    const userMessageText = message.displayContent ?? message.content;
-    const userMessageImages = message.images ?? [];
-    const userMessageMeta = messageRole === "user"
-      ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
-      : null;
-    const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
-    const shouldPadMessage = (messageRole === 'user' || messageRole === 'tool' || messageRole === 'slash')
-      && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
-      && !compactTool;
-
-    if (messageRole === 'user' && pendingBlend) {
-      allItems.push({
-        key: pendingBlend.key,
-        type: 'blend',
-        role: 'assistant',
-        isFirst: false,
-        visualLines: 1,
-        blendDuration: pendingBlend.blendDuration,
-        blendWord: pendingBlend.blendWord
-      });
-      pendingBlend = null;
-    }
-
-    if (shouldPadMessage) {
-      allItems.push({
-        key: `${messageKey}-message-top-pad`,
-        type: 'line',
-        content: '',
-        role: messageRole,
-        toolName: message.toolName,
-        isFirst: false,
-        isSpacer: false,
-        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
-        isRunning: message.isRunning,
-        runningStartTime: message.runningStartTime,
-        visualLines: 1,
-        isPadding: true,
-        ...(userMessageMeta ?? {})
-      });
-    }
-
-    if (messageRole === 'assistant') {
-      if (message.thinkingContent) {
-        const headerLines = wrapText('Thinking:', maxWidth);
-        for (let i = 0; i < headerLines.length; i++) {
-          allItems.push({
-            key: `${messageKey}-thinking-header-${i}`,
-            type: 'line',
-            content: headerLines[i] || '',
-            role: messageRole,
-            isFirst: false,
-            visualLines: 1,
-            isThinking: true
-          });
-        }
-
-        const thinkingLines = message.thinkingContent.split('\n');
-        for (let i = 0; i < thinkingLines.length; i++) {
-          const wrapped = wrapText(thinkingLines[i] || '', Math.max(10, maxWidth - 2));
-          for (let j = 0; j < wrapped.length; j++) {
-            allItems.push({
-              key: `${messageKey}-thinking-${i}-${j}`,
-              type: 'line',
-              content: wrapped[j] || '',
-              role: messageRole,
-              isFirst: false,
-              indent: 2,
-              visualLines: 1,
-              isThinking: true
-            });
-          }
-        }
-
-        allItems.push({
-          key: `${messageKey}-thinking-spacer`,
-          type: 'line',
-          content: '',
-          role: messageRole,
-          isFirst: false,
-          isSpacer: true,
-          visualLines: 1,
-          isThinking: true
-        });
-      }
-
-      const blocks = parseAndWrapMarkdown(message.content, maxWidth);
-      let isFirstContent = true;
-
-      for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-        const block = blocks[blockIndex]!;
-        if (block.type === 'code' && block.codeLines) {
-          allItems.push({
-            key: `${messageKey}-code-${blockIndex}-header`,
-            type: 'line',
-            role: messageRole,
-            toolName: message.toolName,
-            isFirst: isFirstContent,
-            isCodeBlock: true,
-            codeLanguage: block.language,
-            codeContent: block.codeLines.join('\n'),
-            codeHeight: Math.max(1, block.codeLines.length),
-            visualLines: Math.max(1, block.codeLines.length)
-          });
-          if (block.codeLines.some(line => line.trim().length > 0)) {
-            isFirstContent = false;
-          }
-          continue;
-        }
-
-        if (block.type === 'table' && block.tableRows && block.columnWidths && block.tableCellLines) {
-          for (let rowIndex = 0; rowIndex < block.tableRows.length; rowIndex++) {
-            const rowLines = block.tableCellLines[rowIndex] || [];
-            const rowHeight = Math.max(1, ...rowLines.map(lines => lines.length));
-            for (let lineIndex = 0; lineIndex < rowHeight; lineIndex++) {
-              allItems.push({
-                key: `${messageKey}-table-${blockIndex}-${rowIndex}-${lineIndex}`,
-                type: 'line',
-                content: '',
-                role: messageRole,
-                toolName: message.toolName,
-                isFirst: isFirstContent && rowIndex === 0 && lineIndex === 0,
-                isTableRow: true,
-                tableCells: rowLines.map(lines => lines[lineIndex] ?? ''),
-                tableColumnWidths: block.columnWidths,
-                tableRowIndex: rowIndex,
-                visualLines: 1
-              });
-            }
-          }
-          if (block.tableRows.some(row => row.some(cell => cell.trim().length > 0))) {
-            isFirstContent = false;
-          }
-          continue;
-        }
-
-        if (block.type !== 'line' || !block.wrappedLines) continue;
-
-        for (let j = 0; j < block.wrappedLines.length; j++) {
-          const wrapped = block.wrappedLines[j];
-          if (wrapped) {
-            allItems.push({
-              key: `${messageKey}-line-${blockIndex}-${j}`,
-              type: 'line',
-              content: wrapped.text || '',
-              role: messageRole,
-              toolName: message.toolName,
-              isFirst: isFirstContent && j === 0,
-              segments: wrapped.segments,
-              isError: message.isError,
-              visualLines: 1
-            });
-            if (wrapped.text && wrapped.text.trim()) {
-              isFirstContent = false;
-            }
-          }
-        }
-      }
-    } else {
-      if (messageRole === 'tool' && compactTool) {
-        const { name, info } = parseToolHeader(message.toolName || '', message.toolArgs || {});
-        const label = message.toolName === 'title' ? name : (info ? `${name} (${info})` : name);
-        allItems.push({
-          key: `${messageKey}-compact`,
-          type: 'tool_compact',
-          role: messageRole,
-          toolName: message.toolName,
-          isFirst: true,
-          visualLines: 1,
-          success: message.success,
-          isRunning: message.isRunning,
-          runningStartTime: message.runningStartTime,
-          isCompactTool: true,
-          compactLabel: label,
-          compactResult: getCompactResult(message)
-        });
-      } else {
-        if (messageRole === "user" && message.images && message.images.length > 0) {
-          for (let i = 0; i < message.images.length; i++) {
-            const image = message.images[i]!;
-            allItems.push({
-              key: `${messageKey}-image-${i}`,
-              type: "line",
-              content: `[image] ${image.name}`,
-              role: messageRole,
-              toolName: message.toolName,
-              isFirst: i === 0,
-              indent: 0,
-              paragraphIndex: 0,
-              wrappedLineIndex: 0,
-              success: undefined,
-              isSpacer: false,
-              visualLines: 1,
-              ...(userMessageMeta ?? {})
-            });
-          }
-        }
-
-        const messageText = message.displayContent ?? message.content;
-        const paragraphs = messageText.split('\n');
-        let isFirstContent = true;
-        const planStatuses: Array<'pending' | 'in_progress' | 'completed'> = (messageRole === 'tool' && message.toolName === 'plan' && message.toolResult && typeof message.toolResult === 'object')
-          ? (Array.isArray((message.toolResult as Record<string, unknown>).plan)
-            ? (message.toolResult as Record<string, unknown>).plan as Array<Record<string, unknown>>
-            : [])
-            .map((item) => {
-              if (!item || typeof item !== 'object') return 'pending';
-              const status = (item as Record<string, unknown>).status;
-              return status === 'completed' || status === 'in_progress' ? status : 'pending';
-            })
-          : [];
-        const hasPending = planStatuses.includes('pending');
-        const resolvedPlanStatuses = hasPending
-          ? planStatuses
-          : planStatuses.map((status) => (status === 'in_progress' ? 'completed' : status));
-        let planStatusIndex = 0;
-
-        for (let i = 0; i < paragraphs.length; i++) {
-          const paragraph = paragraphs[i] ?? '';
-          if (paragraph === '') {
-            allItems.push({
-              key: `${messageKey}-paragraph-${i}-empty`,
-              type: 'line',
-              content: '',
-              role: messageRole,
-              toolName: message.toolName,
-              isFirst: false,
-              indent: messageRole === 'tool' ? getToolParagraphIndent(i) : 0,
-              paragraphIndex: i,
-              wrappedLineIndex: 0,
-              success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
-              isSpacer: messageRole !== 'tool' && messageRole !== 'slash',
-              visualLines: 1,
-              isRunning: message.isRunning,
-              runningStartTime: message.runningStartTime,
-              ...(userMessageMeta ?? {})
-            });
-          } else {
-            const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
-            const wrapTarget = messageRole === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
-            const wrapWidth = messageRole === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
-            const wrappedLines = wrapText(wrapTarget, wrapWidth);
-            for (let j = 0; j < wrappedLines.length; j++) {
-              const isPlanItemLine = messageRole === 'tool'
-                && message.toolName === 'plan'
-                && wrappedLines[j]
-                && /^\[(.)\]\s+/.test(wrappedLines[j] || '');
-              const planStatus = isPlanItemLine ? (resolvedPlanStatuses[planStatusIndex] ?? 'pending') : undefined;
-              if (isPlanItemLine) planStatusIndex += 1;
-              allItems.push({
-                key: `${messageKey}-paragraph-${i}-line-${j}`,
-                type: 'line',
-                content: wrappedLines[j] || '',
-                role: messageRole,
-                toolName: message.toolName,
-                isFirst: isFirstContent && i === 0 && j === 0,
-                indent,
-                paragraphIndex: i,
-                wrappedLineIndex: j,
-                success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
-                isSpacer: false,
-                visualLines: 1,
-                planStatus,
-                isRunning: message.isRunning,
-                runningStartTime: message.runningStartTime,
-                ...(userMessageMeta ?? {})
-              });
-            }
-            isFirstContent = false;
-          }
-        }
-      }
-    }
-
-    if (!compactTool && shouldPadMessage) {
-      allItems.push({
-        key: `${messageKey}-message-bottom-pad`,
-        type: 'line',
-        content: '',
-        role: messageRole,
-        toolName: message.toolName,
-        isFirst: false,
-        isSpacer: false,
-        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
-        isRunning: message.isRunning,
-        runningStartTime: message.runningStartTime,
-        visualLines: 1,
-        isPadding: true,
-        ...(userMessageMeta ?? {})
-      });
-    }
-
-    if (message.isRunning && message.runningStartTime && messageRole === 'tool' && message.toolName !== 'explore' && !compactTool) {
-      allItems.push({
-        key: `${messageKey}-running`,
-        type: 'line',
-        content: '',
-        role: messageRole,
-        toolName: message.toolName,
-        isFirst: false,
-        indent: 2,
-        paragraphIndex: 1,
-        success: message.success,
-        isSpacer: false,
-        visualLines: 1,
-        isRunning: true,
-        runningStartTime: message.runningStartTime
-      });
-    }
-
-    if (message.responseDuration && messageRole === 'assistant' && message.responseDuration > 60000) {
-      pendingBlend = {
-        key: `${messageKey}-blend`,
-        blendDuration: message.responseDuration,
-        blendWord: message.blendWord || 'Blended'
-      };
-    }
-
-    allItems.push({
-      key: `${messageKey}-spacer`,
-      type: 'line',
-      content: '',
-      role: messageRole,
-      toolName: message.toolName,
-      isFirst: false,
-      isSpacer: true,
-      visualLines: 1
+  const handleRetryMessage = () => {
+    if (!userMessageModal) return;
+    onResubmitUserMessage?.({
+      id: userMessageModal.id,
+      index: userMessageModal.index,
+      content: userMessageModal.content ?? '',
+      images: userMessageModal.images ?? []
     });
-  }
+    setUserMessageModal(null);
+  };
 
-  if (pendingBlend) {
-    allItems.push({
-      key: pendingBlend.key,
-      type: 'blend',
-      role: 'assistant',
-      isFirst: false,
-      visualLines: 1,
-      blendDuration: pendingBlend.blendDuration,
-      blendWord: pendingBlend.blendWord
+  const handleOpenEdit = () => {
+    if (!userMessageModal) return;
+    setUserMessageModal({
+      ...userMessageModal,
+      mode: 'edit',
+      editSeed: userMessageModal.content ?? ''
     });
-  }
+  };
 
-  if (questionRequest) {
-    const questionPanelLines = Math.max(6, 5 + questionRequest.options.length);
-    const currentTotalLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
-    const linesFromBottom = currentTotalLines % viewportHeight;
-    const spaceNeeded = viewportHeight - linesFromBottom;
-
-    if (linesFromBottom > 0 && questionPanelLines + 2 > spaceNeeded) {
-      allItems.push({
-        key: `question-${questionRequest.id}-pagebreak`,
-        type: 'line',
-        content: '',
-        role: 'assistant',
-        isFirst: false,
-        isSpacer: true,
-        visualLines: spaceNeeded,
-      });
-    }
-
-    allItems.push({
-      key: `question-${questionRequest.id}`,
-      type: 'question',
-      role: 'assistant',
-      isFirst: true,
-      questionRequest,
-      visualLines: questionPanelLines,
+  const handleCloseEdit = () => {
+    if (!userMessageModal) return;
+    setUserMessageModal({
+      ...userMessageModal,
+      mode: 'actions'
     });
-    allItems.push({
-      key: `question-${questionRequest.id}-spacer`,
-      type: 'line',
-      content: '',
-      role: 'assistant',
-      isFirst: false,
-      isSpacer: true,
-      visualLines: 1,
-    });
-  }
+  };
 
-  if (approvalRequest) {
-    const previewLines = approvalRequest.preview.content.split('\n').length;
-    const maxVisibleLines = Math.min(previewLines, viewportHeight - 10);
-    const approvalPanelLines = Math.max(8, 6 + maxVisibleLines);
-    const currentTotalLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
-    const linesFromBottom = currentTotalLines % viewportHeight;
-    const spaceNeeded = viewportHeight - linesFromBottom;
-
-    if (linesFromBottom > 0) {
-      allItems.push({
-        key: `approval-${approvalRequest.id}-pagebreak`,
-        type: 'line',
-        content: '',
-        role: 'assistant',
-        isFirst: false,
-        isSpacer: true,
-        visualLines: spaceNeeded,
-      });
-    }
-
-    allItems.push({
-      key: `approval-${approvalRequest.id}`,
-      type: 'approval',
-      role: 'assistant',
-      isFirst: true,
-      approvalRequest,
-      visualLines: approvalPanelLines,
+  const handleEditSubmit = (value: string) => {
+    if (!userMessageModal) return;
+    if (!value.trim() && (userMessageModal.images?.length ?? 0) === 0) return;
+    onResubmitUserMessage?.({
+      id: userMessageModal.id,
+      index: userMessageModal.index,
+      content: value,
+      images: userMessageModal.images ?? []
     });
-    allItems.push({
-      key: `approval-${approvalRequest.id}-spacer`,
-      type: 'line',
-      content: '',
-      role: 'assistant',
-      isFirst: false,
-      isSpacer: true,
-      visualLines: 1,
-    });
-  }
+    setUserMessageModal(null);
+  };
+
+  const allItems = buildChatItems({ messages, maxWidth, viewportHeight, questionRequest, approvalRequest });
 
   const totalVisualLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
   const maxScrollOffset = Math.max(0, totalVisualLines - viewportHeight);
@@ -917,7 +398,8 @@ export function ChatPage({
               id: item.messageId!,
               index: item.messageIndex ?? 0,
               content: item.userMessageText ?? '',
-              images: item.userMessageImages ?? []
+              images: item.userMessageImages ?? [],
+              mode: 'actions'
             });
             setHoveredUserMessageId(null);
           } : undefined;
@@ -1096,61 +578,19 @@ export function ChatPage({
       )}
 
       {userMessageModal && (
-        <box
-          position="absolute"
-          top={0}
-          left={0}
-          right={0}
-          bottom={0}
-          zIndex={20}
-          onMouseDown={() => setUserMessageModal(null)}
-        >
-          <box width="100%" height="100%" justifyContent="center" alignItems="center">
-            <box
-              flexDirection="column"
-              width={modalWidth}
-              height={modalHeight}
-              backgroundColor="#141414"
-              opacity={0.92}
-              padding={1}
-              onMouseDown={(event: any) => event?.stopPropagation?.()}
-            >
-              <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
-                <text attributes={TextAttributes.BOLD}>Message Actions</text>
-                <box flexDirection="row">
-                  <text fg="white">esc </text>
-                  <text attributes={TextAttributes.DIM}>close</text>
-                </box>
-              </box>
-              <box flexDirection="column" width="100%" flexGrow={1} overflow="hidden">
-                <box flexDirection="column" width="100%" overflow="scroll">
-                  {modalActions.map((action) => {
-                    const isHovered = hoveredActionId === action.id;
-                    return (
-                      <box
-                        key={`user-modal-action-${action.id}`}
-                        flexDirection="row"
-                        width="100%"
-                        backgroundColor={isHovered ? "#2a2a2a" : "transparent"}
-                        paddingLeft={1}
-                        paddingRight={1}
-                        onMouseOver={() => setHoveredActionId(action.id)}
-                        onMouseOut={() => setHoveredActionId(null)}
-                        onMouseDown={(event: any) => {
-                          event?.stopPropagation?.();
-                          action.onActivate();
-                        }}
-                      >
-                        <text fg="#ffca38">› </text>
-                        <text>{action.label}</text>
-                      </box>
-                    );
-                  })}
-                </box>
-              </box>
-            </box>
-          </box>
-        </box>
+        <UserMessageModal
+          modal={userMessageModal}
+          modalWidth={modalWidth}
+          modalHeight={modalHeight}
+          shortcutsOpen={shortcutsOpen}
+          isProcessing={isProcessing}
+          onClose={() => setUserMessageModal(null)}
+          onRetry={handleRetryMessage}
+          onOpenEdit={handleOpenEdit}
+          onCloseEdit={handleCloseEdit}
+          onEditSubmit={handleEditSubmit}
+          onCopy={handleCopyMessage}
+        />
       )}
     </box>
   );
