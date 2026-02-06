@@ -1,8 +1,9 @@
 import { streamText, CoreMessage } from 'ai';
 import { createXai } from '@ai-sdk/xai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
-import { shouldEnableReasoning } from './reasoning';
+import { getXaiReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
+import { debugLog } from '../../utils/debug';
 
 export class XaiProvider implements Provider {
   async *sendMessage(
@@ -12,7 +13,9 @@ export class XaiProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    const xaiReasoning = getXaiReasoningOptions(reasoningEnabled);
+    debugLog(`[xai] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
 
     const xai = createXai({
       apiKey: cleanApiKey,
@@ -30,13 +33,7 @@ export class XaiProvider implements Provider {
           maxSteps: config.maxSteps || 100,
           maxRetries: 0,
           abortSignal: options?.abortSignal,
-          providerOptions: reasoningEnabled
-            ? {
-              xai: {
-                reasoningEffort: 'high',
-              },
-            }
-            : undefined,
+          providerOptions: xaiReasoning ? { xai: xaiReasoning } : undefined,
         });
 
         for await (const chunk of result.fullStream as any) {
