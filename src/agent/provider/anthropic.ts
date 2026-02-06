@@ -1,7 +1,7 @@
 import { streamText, CoreMessage } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
-import { shouldEnableReasoning } from './reasoning';
+import { getAnthropicReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
 
@@ -13,7 +13,8 @@ export class AnthropicProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    const anthropicReasoning = getAnthropicReasoningOptions(reasoningEnabled);
 
     const anthropic = createAnthropic({
       apiKey: cleanApiKey,
@@ -31,13 +32,7 @@ export class AnthropicProvider implements Provider {
           maxSteps: config.maxSteps || 100,
           maxRetries: 0,
           abortSignal: options?.abortSignal,
-          experimental_providerMetadata: reasoningEnabled
-            ? {
-              anthropic: {
-                thinkingBudgetTokens: 10000,
-              },
-            }
-            : undefined,
+          providerOptions: anthropicReasoning ? { anthropic: anthropicReasoning } : undefined,
         });
 
         for await (const chunk of result.fullStream as any) {
