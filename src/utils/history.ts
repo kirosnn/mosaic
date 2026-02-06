@@ -48,6 +48,7 @@ export function saveConversation(conversation: ConversationHistory): void {
   const filepath = join(historyDir, filename);
 
   writeFileSync(filepath, JSON.stringify(conversation, null, 2), 'utf-8');
+  setLastConversationId(conversation.id);
 }
 
 export function updateConversationTitle(id: string, title: string | null): boolean {
@@ -82,6 +83,52 @@ export function deleteConversation(id: string): boolean {
     return true;
   } catch (error) {
     return false;
+  }
+}
+
+export function loadConversationById(id: string): ConversationHistory | null {
+  const historyDir = getHistoryDir();
+  const filepath = join(historyDir, `${id}.json`);
+
+  if (!existsSync(filepath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(filepath, 'utf-8');
+    const parsed = JSON.parse(content) as ConversationHistory;
+    if (!parsed || !Array.isArray(parsed.steps)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+const LAST_CONVERSATION_FILENAME = 'last.txt';
+
+export function setLastConversationId(id: string): void {
+  const historyDir = getHistoryDir();
+  const filepath = join(historyDir, LAST_CONVERSATION_FILENAME);
+  try {
+    writeFileSync(filepath, String(id || '').trim(), 'utf-8');
+  } catch {
+  }
+}
+
+export function getLastConversationId(): string | null {
+  const historyDir = getHistoryDir();
+  const filepath = join(historyDir, LAST_CONVERSATION_FILENAME);
+
+  if (!existsSync(filepath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(filepath, 'utf-8');
+    const trimmed = String(content || '').trim();
+    return trimmed || null;
+  } catch {
+    return null;
   }
 }
 
