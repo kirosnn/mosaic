@@ -2,7 +2,7 @@ import { streamText, CoreMessage, CoreTool } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { z } from 'zod';
-import { shouldEnableReasoning } from './reasoning';
+import { getOpenAIReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
 import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
@@ -95,7 +95,9 @@ export class OpenAIProvider implements Provider {
       cleanModel = mapModelForOAuth(cleanModel);
     }
 
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    const openaiReasoning = getOpenAIReasoningOptions(reasoningEnabled);
+    debugLog(`[openai] reasoning=${reasoningEnabled}`);
 
     const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
       if (!oauthAuth?.refreshToken) return oauthAuth;
@@ -231,12 +233,12 @@ export class OpenAIProvider implements Provider {
         maxSteps: config.maxSteps ?? 100,
         maxRetries: 0,
         abortSignal: options?.abortSignal,
-        providerOptions: {
-          openai: {
-            strictJsonSchema,
-            ...(reasoningEnabled ? { reasoningEffort: 'high' } : {}),
+          providerOptions: {
+            openai: {
+              strictJsonSchema,
+              ...(openaiReasoning ?? {}),
+            },
           },
-        },
       });
 
       let stepCounter = 0;
