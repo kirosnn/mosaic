@@ -4,13 +4,38 @@ import { CoreMessage, CoreTool } from 'ai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { z } from 'zod';
-import { shouldEnableReasoning } from './reasoning';
+import { getOllamaThinkFlag, resolveReasoningEnabled } from './reasoningConfig';
 import { getErrorSignature, getRetryDecision } from './rateLimit';
+import { debugLog } from '../../utils/debug';
 
 let serveStartPromise: Promise<void> | null = null;
 const pullPromises = new Map<string, Promise<void>>();
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const TOOL_MARKER_REGEX = /<\s*[|\uFF5C]\s*(tool[_\u2581]calls[_\u2581]begin|tool[_\u2581]call[_\u2581]begin|tool[_\u2581]call[_\u2581]end|tool[_\u2581]calls[_\u2581]end|tool[_\u2581]sep)\s*[|\uFF5C]\s*>/g;
+
+function normalizeUnicodeTokens(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\uFF5C/g, '|')
+    .replace(/\u2581/g, '_');
+}
+
+function stripToolMarkers(text: string): string {
+  if (!text) return '';
+  return text.replace(TOOL_MARKER_REGEX, '');
+}
+
+function normalizeToolMarkers(text: string): string {
+  if (!text) return '';
+  return normalizeUnicodeTokens(text)
+    .replace(/<\s*\|\s*tool_calls_begin\s*\|\s*>/g, '<|tool_calls_begin|>')
+    .replace(/<\s*\|\s*tool_call_begin\s*\|\s*>/g, '<|tool_call_begin|>')
+    .replace(/<\s*\|\s*tool_call_end\s*\|\s*>/g, '<|tool_call_end|>')
+    .replace(/<\s*\|\s*tool_calls_end\s*\|\s*>/g, '<|tool_calls_end|>')
+    .replace(/<\s*\|\s*tool_sep\s*\|\s*>/g, '<|tool_sep|>');
+}
 
 function isTransientError(error: unknown): boolean {
   const decision = getRetryDecision(error);
@@ -92,7 +117,6 @@ async function ensureOllamaServe(_apiKey?: string): Promise<void> {
       });
       child.unref();
     } catch {
-      // ignore
     }
 
     await sleep(500);
@@ -124,7 +148,6 @@ async function ensureOllamaReachableLocal(ollamaClient: Ollama, apiKey?: string)
     await ollamaVersion(ollamaClient);
     return;
   } catch {
-    // fallthrough
   }
 
   await ensureOllamaServe(apiKey);
@@ -294,12 +317,12 @@ function coreMessagesToOllamaMessages(messages: CoreMessage[]): any[] {
                 : result == null
                   ? ''
                   : (() => {
-                      try {
-                        return JSON.stringify(result);
-                      } catch {
-                        return String(result);
-                      }
-                    })(),
+                    try {
+                      return JSON.stringify(result);
+                    } catch {
+                      return String(result);
+                    }
+                  })(),
           };
         }
 
@@ -332,6 +355,89 @@ function coreMessagesToOllamaMessages(messages: CoreMessage[]): any[] {
     .filter(Boolean);
 }
 
+const OLLAMA_TOOL_CALLS_BEGIN = '<|tool_calls_begin|>';
+const OLLAMA_TOOL_CALL_BEGIN = '<|tool_call_begin|>';
+const OLLAMA_TOOL_CALL_END = '<|tool_call_end|>';
+const OLLAMA_TOOL_CALLS_END = '<|tool_calls_end|>';
+const OLLAMA_TOOL_SEP = '<|tool_sep|>';
+
+type ParsedOllamaToolCalls = {
+  reasoning: string;
+  content: string;
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
+  hadMarkers: boolean;
+};
+
+function mergeText(base: string, next: string): string {
+  if (!base) return next;
+  if (!next) return base;
+  const needsNewline = !base.endsWith('\n') && !next.startsWith('\n');
+  return needsNewline ? `${base}\n${next}` : `${base}${next}`;
+}
+
+function parseOllamaToolCalls(content: string): ParsedOllamaToolCalls {
+  const normalized = normalizeToolMarkers(content);
+
+  const beginIndex = normalized.indexOf(OLLAMA_TOOL_CALLS_BEGIN);
+  const altIndex = normalized.indexOf(OLLAMA_TOOL_CALL_BEGIN);
+  const startIndex = beginIndex >= 0 ? beginIndex : altIndex;
+  if (startIndex === -1) {
+    return { reasoning: '', content: stripToolMarkers(content), calls: [], hadMarkers: false };
+  }
+
+  const reasoning = normalized.slice(0, startIndex);
+  const rest = normalized.slice(startIndex);
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let cursor = 0;
+
+  while (true) {
+    const callStart = rest.indexOf(OLLAMA_TOOL_CALL_BEGIN, cursor);
+    if (callStart === -1) break;
+    const nameStart = callStart + OLLAMA_TOOL_CALL_BEGIN.length;
+    const sepIndex = rest.indexOf(OLLAMA_TOOL_SEP, nameStart);
+    if (sepIndex === -1) break;
+    const endIndex = rest.indexOf(OLLAMA_TOOL_CALL_END, sepIndex + OLLAMA_TOOL_SEP.length);
+    if (endIndex === -1) break;
+
+    const name = rest.slice(nameStart, sepIndex).trim();
+    const argsText = rest.slice(sepIndex + OLLAMA_TOOL_SEP.length, endIndex).trim();
+    let args: Record<string, unknown> = {};
+    if (argsText) {
+      try {
+        const parsed = JSON.parse(argsText);
+        if (parsed && typeof parsed === 'object') {
+          args = parsed as Record<string, unknown>;
+        } else {
+          args = { input: parsed };
+        }
+      } catch {
+        args = { input: argsText };
+      }
+    }
+
+    if (name) {
+      calls.push({ name, args });
+    }
+
+    cursor = endIndex + OLLAMA_TOOL_CALL_END.length;
+  }
+
+  let trailing = '';
+  const callsEnd = rest.indexOf(OLLAMA_TOOL_CALLS_END, cursor);
+  if (callsEnd !== -1) {
+    trailing = rest.slice(callsEnd + OLLAMA_TOOL_CALLS_END.length);
+  } else if (cursor > 0) {
+    trailing = rest.slice(cursor);
+  }
+
+  return {
+    reasoning: stripToolMarkers(reasoning),
+    content: stripToolMarkers(trailing),
+    calls,
+    hadMarkers: true,
+  };
+}
+
 export async function checkAndStartOllama(): Promise<{ running: boolean; started: boolean; error?: string }> {
   const ollamaClient = new Ollama();
 
@@ -339,7 +445,6 @@ export async function checkAndStartOllama(): Promise<{ running: boolean; started
     await ollamaVersion(ollamaClient);
     return { running: true, started: false };
   } catch {
-    // Ollama is not running, try to start it
   }
 
   try {
@@ -363,7 +468,9 @@ export class OllamaProvider implements Provider {
   ): AsyncGenerator<AgentEvent> {
     const apiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
-    const reasoningEnabled = await shouldEnableReasoning(config.provider, cleanModel);
+    const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
+    const think = getOllamaThinkFlag(reasoningEnabled);
+    debugLog(`[ollama] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
 
     if (options?.abortSignal?.aborted) {
       return;
@@ -431,6 +538,7 @@ export class OllamaProvider implements Provider {
 
     const toolsSchema = toOllamaTools(config.tools);
     const maxSteps = config.maxSteps || 100;
+    const shouldBufferForToolCalls = Boolean(toolsSchema);
 
     const baseMessages = config.systemPrompt
       ? [{ role: 'system' as const, content: config.systemPrompt }, ...messages]
@@ -448,7 +556,11 @@ export class OllamaProvider implements Provider {
 
         let assistantContent = '';
         let assistantThinking = '';
+        let pendingThinking = '';
+        let hasContent = false;
+        let contentBuffer = '';
         const toolCalls: any[] = [];
+        let rawThinkingBuffer = '';
 
         const stream = await retry(
           () =>
@@ -457,7 +569,7 @@ export class OllamaProvider implements Provider {
               messages: ollamaMessages,
               tools: toolsSchema,
               stream: true,
-              think: reasoningEnabled,
+              think,
               signal: options?.abortSignal,
             } as any) as any,
           2,
@@ -466,22 +578,45 @@ export class OllamaProvider implements Provider {
 
         for await (const chunk of stream as AsyncGenerator<any>) {
           if (options?.abortSignal?.aborted) return;
-          const thinkingDelta = chunk?.message?.thinking;
-          if (typeof thinkingDelta === 'string' && thinkingDelta) {
-            assistantThinking += thinkingDelta;
-            yield {
-              type: 'reasoning-delta',
-              content: thinkingDelta,
-            };
+          const thinkingDeltaRaw = chunk?.message?.thinking;
+          if (typeof thinkingDeltaRaw === 'string' && thinkingDeltaRaw) {
+            rawThinkingBuffer += thinkingDeltaRaw;
+            if (!shouldBufferForToolCalls) {
+              const thinkingDelta = stripToolMarkers(thinkingDeltaRaw);
+              assistantThinking += thinkingDelta;
+              if (hasContent) {
+                yield {
+                  type: 'reasoning-delta',
+                  content: thinkingDelta,
+                };
+              } else {
+                pendingThinking += thinkingDelta;
+              }
+            }
           }
 
           const contentDelta = chunk?.message?.content;
           if (typeof contentDelta === 'string' && contentDelta) {
-            assistantContent += contentDelta;
-            yield {
-              type: 'text-delta',
-              content: contentDelta,
-            };
+            if (!hasContent) {
+              hasContent = true;
+              if (pendingThinking) {
+                yield {
+                  type: 'reasoning-delta',
+                  content: stripToolMarkers(pendingThinking),
+                };
+                assistantThinking = mergeText(assistantThinking, pendingThinking);
+                pendingThinking = '';
+              }
+            }
+            if (shouldBufferForToolCalls) {
+              contentBuffer += contentDelta;
+            } else {
+              assistantContent += contentDelta;
+              yield {
+                type: 'text-delta',
+                content: stripToolMarkers(contentDelta),
+              };
+            }
           }
 
           const partialToolCalls = chunk?.message?.tool_calls;
@@ -490,11 +625,103 @@ export class OllamaProvider implements Provider {
           }
         }
 
+        if (shouldBufferForToolCalls && contentBuffer) {
+          const parsed = parseOllamaToolCalls(contentBuffer);
+          if (parsed.hadMarkers) {
+            if (parsed.reasoning.trim()) {
+              assistantThinking = mergeText(assistantThinking, parsed.reasoning);
+              yield {
+                type: 'reasoning-delta',
+                content: stripToolMarkers(parsed.reasoning),
+              };
+            }
+            if (parsed.content.trim()) {
+              assistantContent += parsed.content;
+              yield {
+                type: 'text-delta',
+                content: stripToolMarkers(parsed.content),
+              };
+            }
+            if (parsed.calls.length > 0 && toolCalls.length === 0) {
+              for (const call of parsed.calls) {
+                toolCalls.push({
+                  function: {
+                    name: call.name,
+                    arguments: call.args,
+                  },
+                });
+              }
+            }
+          } else {
+            assistantContent += parsed.content;
+            if (parsed.content) {
+              yield {
+                type: 'text-delta',
+                content: stripToolMarkers(parsed.content),
+              };
+            }
+          }
+          contentBuffer = '';
+        }
+
+        if (rawThinkingBuffer) {
+          const parsedFromThinking = parseOllamaToolCalls(rawThinkingBuffer);
+
+          if (shouldBufferForToolCalls) {
+            const cleanThinking = parsedFromThinking.hadMarkers
+              ? parsedFromThinking.reasoning.trim()
+              : stripToolMarkers(rawThinkingBuffer).trim();
+            if (cleanThinking) {
+              assistantThinking = cleanThinking;
+              yield {
+                type: 'reasoning-delta',
+                content: cleanThinking,
+              };
+            }
+          } else if (!hasContent) {
+            const cleanThinking = parsedFromThinking.hadMarkers
+              ? stripToolMarkers(parsedFromThinking.reasoning)
+              : stripToolMarkers(rawThinkingBuffer);
+            if (cleanThinking.trim()) {
+              yield {
+                type: 'reasoning-delta',
+                content: cleanThinking,
+              };
+              assistantThinking = cleanThinking;
+            }
+            pendingThinking = '';
+          }
+
+          if (toolCalls.length === 0 && parsedFromThinking.hadMarkers && parsedFromThinking.calls.length > 0) {
+            debugLog(`[ollama] extracted ${parsedFromThinking.calls.length} tool call(s) from thinking content`);
+            for (const call of parsedFromThinking.calls) {
+              toolCalls.push({
+                function: {
+                  name: call.name,
+                  arguments: call.args,
+                },
+              });
+            }
+          }
+        } else if (!hasContent && pendingThinking) {
+          const cleanThinking = stripToolMarkers(pendingThinking);
+          if (cleanThinking.trim()) {
+            yield {
+              type: 'reasoning-delta',
+              content: cleanThinking,
+            };
+            assistantThinking = cleanThinking;
+          }
+          pendingThinking = '';
+        }
+
         const assistantMessage: any = {
           role: 'assistant',
           content: assistantContent,
         };
 
+        assistantThinking = stripToolMarkers(assistantThinking);
+        pendingThinking = stripToolMarkers(pendingThinking);
         if (assistantThinking) assistantMessage.thinking = assistantThinking;
         if (toolCalls.length) assistantMessage.tool_calls = toolCalls;
         ollamaMessages.push(assistantMessage);
@@ -544,16 +771,16 @@ export class OllamaProvider implements Provider {
               tool_name: call.name,
               content:
                 typeof toolResult === 'string'
-                  ? toolResult
+                  ? stripToolMarkers(toolResult)
                   : toolResult == null
                     ? ''
                     : (() => {
-                        try {
-                          return JSON.stringify(toolResult);
-                        } catch {
-                          return String(toolResult);
-                        }
-                      })(),
+                      try {
+                        return JSON.stringify(toolResult);
+                      } catch {
+                        return String(toolResult);
+                      }
+                    })(),
             });
           }
 
@@ -563,6 +790,38 @@ export class OllamaProvider implements Provider {
             finishReason: 'tool-calls',
           };
           continue;
+        }
+
+        if (!assistantContent && assistantThinking && normalizedCalls.length === 0 && stepNumber < maxSteps - 1) {
+          debugLog('[ollama] no text content produced, forcing text response with think=false');
+          const textStream = await retry(
+            () =>
+              ollamaClient.chat({
+                model: requestModel,
+                messages: ollamaMessages,
+                stream: true,
+                think: false,
+                signal: options?.abortSignal,
+              } as any) as any,
+            2,
+            500
+          );
+
+          for await (const chunk of textStream as AsyncGenerator<any>) {
+            if (options?.abortSignal?.aborted) return;
+            const contentDelta = chunk?.message?.content;
+            if (typeof contentDelta === 'string' && contentDelta) {
+              assistantContent += contentDelta;
+              yield {
+                type: 'text-delta',
+                content: contentDelta,
+              };
+            }
+          }
+
+          if (assistantContent) {
+            ollamaMessages.push({ role: 'assistant', content: assistantContent });
+          }
         }
 
         yield {
