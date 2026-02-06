@@ -42,6 +42,7 @@ interface ParsedArgs {
   authCommand?: boolean;
   authArgs?: string[];
   resumeCommand?: boolean;
+  resumeId?: string;
 }
 
 class CLI {
@@ -64,7 +65,13 @@ class CLI {
         i = args.length;
       } else if (arg === 'resume') {
         parsed.resumeCommand = true;
-        i++;
+        const candidate = args[i + 1];
+        if (candidate && !candidate.startsWith('-')) {
+          parsed.resumeId = candidate;
+          i += 2;
+        } else {
+          i++;
+        }
       } else if (arg === 'uninstall') {
         parsed.uninstall = true;
         if (args[i + 1] === '--force') {
@@ -113,7 +120,7 @@ ${gold('Options')}
 
 ${gold('Commands')}
   run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
-  resume                    ${gray('Open a menu to resume a previous conversation session')}
+  resume [id]               ${gray('Open a menu to resume a previous conversation session (or resume directly by id)')}
   web                       ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
   auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
@@ -137,6 +144,7 @@ ${gold('Examples')}
   ${gray('mosaic ./my-project')}                 # Start in specific directory
   ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
   ${gray('mosaic resume')}                       # Resume a previous session
+  ${gray('mosaic resume <id>')}                  # Resume a specific session by id
   ${gray('mosaic web')}                          # Start the web UI
   ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
@@ -239,12 +247,18 @@ import { appendFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Message } from './components/main/types';
-import type { ConversationHistory, ConversationStep } from './utils/history';
+import { getLastConversationId, loadConversationById, type ConversationHistory, type ConversationStep } from './utils/history';
 
 const DEBUG_LOG = join(homedir(), '.mosaic', 'debug.log');
 const debugLog = (msg: string) => {
   try { appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch { }
 };
+
+function printResumeHint(): void {
+  const lastId = getLastConversationId();
+  if (!lastId) return;
+  console.log(`\nVous pouvez poursuivre la conversation avec : mosaic resume ${lastId}\n`);
+}
 
 function convertStepsToMessages(steps: ConversationStep[]): Message[] {
   return steps.map((step, index) => {
@@ -300,6 +314,7 @@ const cleanup = async (code = 0) => {
     await shutdownMcp();
   } catch { }
   process.stdout.write('\x1b[?25h');
+  printResumeHint();
   process.exit(code);
 };
 
@@ -326,37 +341,60 @@ try {
   debugLog('Renderer created, mounting React...');
 
   if (parsed.resumeCommand) {
-    const { Resume } = await import('./components/Resume');
+    if (parsed.resumeId) {
+      const conversation = loadConversationById(parsed.resumeId);
+      if (!conversation) {
+        console.error(`Session introuvable pour l'id : ${parsed.resumeId}`);
+        cleanup(1);
+      } else {
+        const messages = convertStepsToMessages(conversation.steps);
+        const title = conversation.title ?? null;
+        const workspace = conversation.workspace;
 
-    let hasSelected = false;
+        if (workspace && existsSync(workspace)) {
+          process.chdir(workspace);
+        }
 
-    const handleSelect = (conversation: ConversationHistory) => {
-      if (hasSelected) return;
-      hasSelected = true;
-
-      const messages = convertStepsToMessages(conversation.steps);
-      const title = conversation.title ?? null;
-      const workspace = conversation.workspace;
-
-      if (workspace && existsSync(workspace)) {
-        process.chdir(workspace);
+        createRoot(renderer).render(
+          <App
+            initialMessages={messages}
+            initialTitle={title}
+          />
+        );
       }
+    } else {
+      const { Resume } = await import('./components/Resume');
+
+      let hasSelected = false;
+
+      const handleSelect = (conversation: ConversationHistory) => {
+        if (hasSelected) return;
+        hasSelected = true;
+
+        const messages = convertStepsToMessages(conversation.steps);
+        const title = conversation.title ?? null;
+        const workspace = conversation.workspace;
+
+        if (workspace && existsSync(workspace)) {
+          process.chdir(workspace);
+        }
+
+        createRoot(renderer).render(
+          <App
+            initialMessages={messages}
+            initialTitle={title}
+          />
+        );
+      };
+
+      const handleCancel = () => {
+        cleanup(0);
+      };
 
       createRoot(renderer).render(
-        <App
-          initialMessages={messages}
-          initialTitle={title}
-        />
+        <Resume onSelect={handleSelect} onCancel={handleCancel} />
       );
-    };
-
-    const handleCancel = () => {
-      cleanup(0);
-    };
-
-    createRoot(renderer).render(
-      <Resume onSelect={handleSelect} onCancel={handleCancel} />
-    );
+    }
   } else {
     createRoot(renderer).render(<App initialMessage={parsed.initialMessage} />);
   }
