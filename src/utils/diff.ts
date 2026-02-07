@@ -159,9 +159,10 @@ export interface ParsedDiffLine {
 }
 
 export function parseDiffLine(line: string): ParsedDiffLine {
-  const match = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
+  const numberedMatch = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
+  const continuationMatch = line.match(/^([+-])\s*\|\s*(.*)$/);
 
-  if (!match) {
+  if (!numberedMatch && !continuationMatch) {
     return {
       isDiffLine: false,
       isAdded: false,
@@ -169,7 +170,9 @@ export function parseDiffLine(line: string): ParsedDiffLine {
     };
   }
 
-  const [, prefix, lineNum, content] = match;
+  const prefix = (numberedMatch?.[1] ?? continuationMatch?.[1]) as string;
+  const lineNum = numberedMatch?.[2];
+  const content = (numberedMatch?.[3] ?? continuationMatch?.[2] ?? '') as string;
   const isAdded = prefix === '+';
   const isRemoved = prefix === '-';
 
