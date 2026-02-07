@@ -13,11 +13,13 @@ interface QuestionPanelProps {
 
 export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }: QuestionPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [remaining, setRemaining] = useState<number | null>(request.timeout ?? null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedIndex(0);
+    setHoveredIndex(null);
     setValidationError(null);
     setRemaining(request.timeout ?? null);
   }, [request.id]);
@@ -106,7 +108,26 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
                   <text fg="#888888" attributes={TextAttributes.BOLD}>{option.group}</text>
                 </box>
               )}
-              <box flexDirection="row" backgroundColor={selected ? '#2a2a2a' : 'transparent'} paddingLeft={1} paddingRight={1}>
+              <box
+                flexDirection="row"
+                backgroundColor={selected ? '#2a2a2a' : (hoveredIndex === index ? '#202020' : 'transparent')}
+                paddingLeft={1}
+                paddingRight={1}
+                onMouseOver={() => {
+                  if (disabled) return;
+                  setHoveredIndex(index);
+                }}
+                onMouseOut={() => {
+                  setHoveredIndex(prev => (prev === index ? null : prev));
+                }}
+                onMouseDown={(event: any) => {
+                  if (disabled) return;
+                  if (event?.isSelecting) return;
+                  if (event?.button !== undefined && event.button !== 0) return;
+                  setSelectedIndex(index);
+                  onAnswer(index);
+                }}
+              >
                 <text fg={selected ? '#ffca38' : 'white'} attributes={selected ? TextAttributes.BOLD : TextAttributes.NONE}>
                   {prefix}{number}{option.label}
                 </text>
