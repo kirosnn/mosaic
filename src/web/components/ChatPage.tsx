@@ -240,12 +240,12 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
         }
     };
 
-    const handleApprovalResponse = async (approved: boolean, customResponse?: string) => {
+    const handleApprovalResponse = async (approved: boolean, customResponse?: string, ruleAction?: 'auto-run') => {
         try {
             await fetch('/api/approval/respond', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approved, customResponse })
+                body: JSON.stringify({ approved, customResponse, ruleAction })
             });
         } catch (err) {
             console.error(err);
