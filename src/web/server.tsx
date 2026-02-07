@@ -2,7 +2,7 @@ import { serve } from "bun";
 import { join } from "path";
 import { existsSync, readdirSync } from "fs";
 import { build } from "bun";
-import { createCliRenderer, TextAttributes } from "@opentui/core";
+import { createCliRenderer, TextAttributes, ScrollBoxRenderable, TextRenderable } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import React from "react";
 import { exec } from "child_process";
@@ -193,12 +193,12 @@ function buildConversationHistory(
     const filtered = history.filter((m) => m.role === "user" || m.role === "assistant");
     const sliced = filtered.slice(-MAX_HISTORY_MESSAGES);
     return sliced.map((m) => {
-            if (m.role === "user") {
-                const content = allowImages ? buildUserContent(m.content, m.images) : m.content;
-                return { role: "user" as const, content };
-            }
-            return { role: "assistant" as const, content: m.content };
-        });
+        if (m.role === "user") {
+            const content = allowImages ? buildUserContent(m.content, m.images) : m.content;
+            return { role: "user" as const, content };
+        }
+        return { role: "assistant" as const, content: m.content };
+    });
 }
 
 async function buildApp() {
@@ -428,6 +428,21 @@ async function startServer(port: number, maxRetries = 10) {
                             provider: config.provider,
                             model: config.model,
                             requireApprovals: config.requireApprovals !== false
+                        }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
+                    if (url.pathname === "/api/config" && request.method === "POST") {
+                        const body = await request.json() as { provider?: string; model?: string };
+                        const { setActiveProvider, setActiveModel, readConfig } = await import("../utils/config");
+                        if (body.provider) setActiveProvider(body.provider);
+                        if (body.model) setActiveModel(body.model);
+                        const config = readConfig();
+                        return new Response(JSON.stringify({
+                            success: true,
+                            provider: config.provider,
+                            model: config.model,
                         }), {
                             headers: { "Content-Type": "application/json" },
                         });
@@ -816,89 +831,107 @@ async function startServer(port: number, maxRetries = 10) {
 
 await startServer(PORT);
 
-function ServerStatus() {
-    const [logList, setLogList] = React.useState<LogEntry[]>(logs);
-    const [scrollOffset, setScrollOffset] = React.useState(0);
-    const [terminalHeight, setTerminalHeight] = React.useState(process.stdout.rows || 24);
+async function startTui() {
+    const { createCliRenderer, ScrollBoxRenderable, TextRenderable, BoxRenderable, TextAttributes, ASCIIFontRenderable } = await import("@opentui/core");
 
-    React.useEffect(() => {
-        const listener = () => {
-            setLogList([...logs]);
-            setScrollOffset(Math.max(0, logs.length - (terminalHeight - 6)));
-        };
-        listeners.add(listener);
-        return () => {
-            listeners.delete(listener);
-        };
-    }, [terminalHeight]);
+    const renderer = await createCliRenderer();
 
-    React.useEffect(() => {
-        const handleResize = () => {
-            setTerminalHeight(process.stdout.rows || 24);
-        };
-        process.stdout.on('resize', handleResize);
-        return () => {
-            process.stdout.off('resize', handleResize);
-        };
-    }, []);
+    const rootBox = new BoxRenderable(renderer, {
+        id: "root",
+        width: "100%",
+        height: "100%",
+        flexDirection: "column",
+        justifyContent: "flex-start",
+        alignItems: "center",
+        paddingTop: 1
+    });
+    renderer.root.add(rootBox);
 
-    React.useEffect(() => {
-        const handleData = (data: Buffer) => {
-            const str = data.toString();
-            if (str.includes('\x03')) {
-                process.exit(0);
-            }
+    try {
+        const banner = new ASCIIFontRenderable(renderer, {
+            text: "MOSAIC",
+            font: "ansi",
+            fg: "#ffca38"
+        } as any);
+        rootBox.add(banner);
+    } catch (e) {
+        const title = new TextRenderable(renderer, {
+            content: "MOSAIC SERVER",
+            fg: "#ffca38",
+            attributes: TextAttributes.BOLD
+        } as any);
+        rootBox.add(title);
+    }
 
-            if (str.match(/\x1b\[<64;\d+;\d+M/)) {
-                setScrollOffset(prev => Math.max(0, prev - 1));
-            } else if (str.match(/\x1b\[<65;\d+;\d+M/)) {
-                setScrollOffset(prev => prev + 1);
-            }
-        };
+    const headerBox = new BoxRenderable(renderer, {
+        width: "100%",
+        height: 1,
+        flexDirection: "row",
+        justifyContent: "center",
+        marginBottom: 1,
+        marginTop: 1
+    });
 
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(true);
-            process.stdout.write('\x1b[?1000h\x1b[?1006h\x1b[?1003h');
-            process.stdin.on('data', handleData);
-        }
+    headerBox.add(new TextRenderable(renderer, {
+        content: "Web interface: ",
+        fg: "#ffca38",
+        attributes: TextAttributes.BOLD
+    } as any));
 
-        return () => {
-            if (process.stdin.isTTY) {
-                process.stdin.off('data', handleData);
-                process.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?1003l');
-                process.stdin.setRawMode(false);
-            }
-        };
-    }, []);
+    headerBox.add(new TextRenderable(renderer, {
+        content: `http://${HOST}:${currentPort}`,
+        fg: "white",
+        attributes: TextAttributes.UNDERLINE
+    } as any));
 
-    const logsHeight = Math.max(5, terminalHeight - 6);
-    const visibleLogs = logList.slice(scrollOffset, scrollOffset + logsHeight);
+    rootBox.add(headerBox);
 
-    return (
-        <box flexDirection="column" width="100%" height="100%" justifyContent="flex-start" alignItems="center" paddingTop={1}>
-            <box flexDirection="row" marginBottom={1}>
-                <text fg="#ffca38" attributes={TextAttributes.BOLD}>
-                    Web interface:{" "}
-                </text>
-                <text fg="gray">http://{HOST}:{currentPort}</text>
-            </box>
+    const scrollBox = new ScrollBoxRenderable(renderer, {
+        id: "logs",
+        width: "90%",
+        height: "70%",
+        borderStyle: "rounded",
+        borderColor: "gray",
+        title: "Server Logs",
+        scrollStep: 1,
+        stickToBottom: true,
+        scrollbarSize: 1,
+        scrollbarTrack: { bg: "black" },
+        scrollbarThumb: { bg: "gray" }
+    } as any);
 
-            <box flexDirection="column" width={80} height={logsHeight} borderStyle="rounded" borderColor="gray" title={`Server Logs`}>
-                {logList.length === 0 ? (
-                    <text fg="gray" attributes={TextAttributes.DIM}>
-                        No logs yet...
-                    </text>
-                ) : (
-                    visibleLogs.map((log, i) => (
-                        <text key={i} fg="gray">
-                            [{log.timestamp}] {log.message}
-                        </text>
-                    ))
-                )}
-            </box>
-        </box>
-    );
+    rootBox.add(scrollBox);
+
+    const footerBox = new BoxRenderable(renderer, {
+        width: "100%",
+        height: 1,
+        flexDirection: "row",
+        justifyContent: "center",
+        marginTop: 1
+    });
+
+    footerBox.add(new TextRenderable(renderer, {
+        content: "Press Ctrl+C to stop",
+        fg: "gray",
+        attributes: TextAttributes.DIM
+    } as any));
+
+    rootBox.add(footerBox);
+
+    const syncLogs = () => {
+        (scrollBox as any).children = [];
+
+        logs.forEach(log => {
+            scrollBox.add(new TextRenderable(renderer, {
+                content: `[${log.timestamp}] ${log.message}`,
+                fg: "white"
+            } as any));
+        });
+    };
+
+    syncLogs();
+
+    listeners.add(syncLogs);
 }
 
-const renderer = await createCliRenderer();
-createRoot(renderer).render(<ServerStatus />);
+startTui().catch(console.error);
