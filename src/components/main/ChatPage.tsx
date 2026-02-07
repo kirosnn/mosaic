@@ -10,10 +10,11 @@ import { subscribeFileChanges } from "../../utils/fileChangesBridge";
 import type { FileChanges } from "../../utils/fileChangeTracker";
 import { notifyNotification } from "../../utils/notificationBridge";
 import { CustomInput } from "../CustomInput";
-import type { Message } from "./types";
+import type { Message, TokenBreakdown } from "./types";
 import type { ImageAttachment } from "../../utils/images";
 import { QuestionPanel } from "./QuestionPanel";
-import { ApprovalPanel } from "./ApprovalPanel";
+import { ApprovalPanel, type RuleAction } from "./ApprovalPanel";
+import { addAutoRunRule } from "../../utils/localRules";
 import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuilder";
@@ -49,7 +50,7 @@ function normalizeCodeFiletype(language?: string): string {
   return CODE_FILETYPE_MAP[key] || "javascript";
 }
 
-function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number, toolName?: string, planStatus?: 'pending' | 'in_progress' | 'completed') {
+function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number, toolName?: string, planStatus?: 'pending' | 'in_progress' | 'completed', codeLanguage?: string) {
   if (toolName === 'plan') {
     const leftPad = paragraphIndex === 0 ? 3 : indent + 1;
     const padText = ' '.repeat(leftPad);
@@ -111,12 +112,12 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
   }
 
 
-  const diffLineRender = renderInlineDiffLine(content);
+  const diffLineRender = renderInlineDiffLine(content, codeLanguage);
   if (diffLineRender) {
     return diffLineRender;
   }
 
-  return <text fg="white">{`${' '.repeat(indent)}${content || ' '}`}</text>;
+  return <text fg="white" attributes={paragraphIndex > 0 ? TextAttributes.DIM : 0}>{`${' '.repeat(indent)}${content || ' '}`}</text>;
 }
 
 interface ChatPageProps {
@@ -124,6 +125,7 @@ interface ChatPageProps {
   isProcessing: boolean;
   processingStartTime: number | null;
   currentTokens: number;
+  tokenBreakdown?: TokenBreakdown;
   scrollOffset: number;
   terminalHeight: number;
   terminalWidth: number;
@@ -143,6 +145,7 @@ export function ChatPage({
   isProcessing,
   processingStartTime,
   currentTokens,
+  tokenBreakdown,
   scrollOffset,
   terminalHeight,
   terminalWidth,
@@ -166,6 +169,7 @@ export function ChatPage({
   const [hoveredUserMessageId, setHoveredUserMessageId] = useState<string | null>(null);
   const [userMessageModal, setUserMessageModal] = useState<UserMessageModalState | null>(null);
   const scrollboxRef = useRef<any>(null);
+  const prevScrollOffsetRef = useRef(scrollOffset);
   const userMessageModalRef = useRef(userMessageModal);
 
   useEffect(() => {
@@ -233,7 +237,7 @@ export function ChatPage({
     inProgressStep: planProgress.inProgressStep,
     nextStep: planProgress.nextStep,
   }) + extraInputLines;
-  const viewportHeight = Math.max(5, terminalHeight - (bottomReservedLines + 2));
+  const viewportHeight = Math.max(5, terminalHeight - bottomReservedLines);
   const isUserModalOpen = Boolean(userMessageModal);
   const modalWidth = Math.min(70, Math.max(28, Math.floor(terminalWidth * 0.6)));
   const modalHeight = Math.max(7, Math.min(16, Math.floor(terminalHeight * 0.4)));
@@ -294,10 +298,15 @@ export function ChatPage({
   const scrollYPosition = Math.max(0, totalVisualLines - viewportHeight - clampedScrollOffset);
 
   useEffect(() => {
-    if (scrollboxRef.current && typeof scrollboxRef.current.scrollTop === 'number') {
-      scrollboxRef.current.scrollTop = scrollYPosition;
+    const sb = scrollboxRef.current;
+    if (!sb || typeof sb.scrollTo !== 'function') return;
+
+    if (scrollOffset !== prevScrollOffsetRef.current) {
+      sb.scrollTo(scrollYPosition);
     }
-  }, [scrollYPosition]);
+
+    prevScrollOffsetRef.current = scrollOffset;
+  }, [scrollYPosition, scrollOffset]);
 
   return (
     <box flexDirection="column" width="100%" height="100%" position="relative">
@@ -337,7 +346,13 @@ export function ChatPage({
                 <ApprovalPanel
                   request={req}
                   disabled={shortcutsOpen}
-                  onRespond={(approved, customResponse) => respondApproval(approved, customResponse)}
+                  onRespond={(approved, customResponse, ruleAction) => {
+                    if (ruleAction === 'auto-run' && req.toolName === 'bash') {
+                      const command = String(req.args.command ?? '');
+                      if (command) addAutoRunRule(command);
+                    }
+                    respondApproval(approved, customResponse);
+                  }}
                   maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
@@ -363,26 +378,29 @@ export function ChatPage({
           }
 
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
-          const showToolBar = item.role === "tool" && item.isSpacer === false && item.toolName !== "plan";
           const showSlashBar = item.role === "slash" && item.isSpacer === false;
-          const showToolBackground = item.role === "tool" && item.isSpacer === false;
           const showSlashBackground = item.role === "slash" && item.isSpacer === false;
           const isRunningTool = item.isRunning && item.runningStartTime;
 
-          const showToolBarResolved = showToolBar && !isRunningTool && !item.isCompactTool;
-          const showToolBackgroundResolved = showToolBackground && !isRunningTool && !item.isCompactTool;
-
+          const isToolItem = item.role === "tool";
+          const needsToolPadding = isToolItem && !item.isSpacer && !item.isCompactTool && !isRunningTool && item.toolName !== "plan";
           const diffBackground = item.isCodeBlock || item.isTableRow ? null : getDiffLineBackground(item.content || '');
+          const isInlineDiff = isToolItem && Boolean(diffBackground);
+          const isWriteEditInlineDiff = isToolItem
+            && (item.toolName === "write" || item.toolName === "edit")
+            && Boolean(diffBackground);
+          const leftPadding = needsToolPadding ? 1 : 0;
 
           const codeBackground = null;
           const isUserMessageLine = item.role === "user" && Boolean(item.messageId) && !item.isSpacer;
           const isUserHover = isUserMessageLine && hoveredUserMessageId === item.messageId;
-          const hasMessageBackground = item.isPadding
-            || ((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar);
+          const hasMessageBackground = (item.isPadding && !isToolItem)
+            || ((item.role === "user" && item.content) || showSlashBackground || showErrorBar);
           const hoverBackground = isUserHover ? "#262626" : null;
           const runningBackground = isRunningTool || item.isCompactTool
             ? "transparent"
             : (hoverBackground || codeBackground || diffBackground || (hasMessageBackground ? "#1a1a1a" : "transparent"));
+          const rowBackground = isInlineDiff ? "transparent" : runningBackground;
           const handleUserMouseOver = isUserMessageLine ? () => {
             if (!isUserModalOpen) {
               setHoveredUserMessageId(item.messageId!);
@@ -409,17 +427,15 @@ export function ChatPage({
               key={item.key}
               flexDirection="row"
               width="100%"
-              backgroundColor={runningBackground}
-              paddingRight={((item.role === "user" && item.content) || showToolBackgroundResolved || showSlashBackground || showErrorBar) ? 1 : 0}
+              backgroundColor={rowBackground}
+              paddingLeft={leftPadding}
+              paddingRight={((item.role === "user" && item.content) || showSlashBackground || showErrorBar) ? 1 : 0}
               onMouseOver={handleUserMouseOver}
               onMouseOut={handleUserMouseOut}
               onMouseDown={handleUserMouseDown}
             >
               {item.role === "user" && (item.content || item.isPadding) && (
                 <text fg="#ffca38">▎ </text>
-              )}
-              {showToolBarResolved && (
-                <text fg={item.success ? "#1a3a1a" : "#3a1a1a"}>▎ </text>
               )}
               {showSlashBar && (
                 <text fg="white">▎ </text>
@@ -432,9 +448,10 @@ export function ChatPage({
                 (() => {
                   const isRunning = Boolean(item.isRunning);
                   const blinkOn = timerTick % 2 === 0;
+                  const isReview = item.toolName === 'review';
                   const arrowColor = isRunning
                     ? (blinkOn ? 'white' : '#808080')
-                    : (item.success ? '#44aa88' : '#ff3838');
+                    : isReview ? '#44aa88' : (item.success ? '#44aa88' : '#ff3838');
                   const label = item.compactLabel || '';
                   const result = item.compactResult || '';
                   return (
@@ -444,8 +461,10 @@ export function ChatPage({
                     </box>
                   );
                 })()
+              ) : item.isHorizontalRule ? (
+                <text fg="#3a3a3a">{'─'.repeat(Math.max(0, terminalWidth - 4))}</text>
               ) : item.isThinking ? (
-                <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
+                <text fg="#9a9a9a" attributes={TextAttributes.DIM | TextAttributes.ITALIC}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.isCodeBlock ? (
                 <box flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={1}>
                   <code
@@ -476,10 +495,17 @@ export function ChatPage({
                 </box>
               ) : item.role === "tool" ? (
                 <box flexDirection="row">
-                  {isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
+                  {isInlineDiff && diffBackground ? (
+                    <box flexDirection="row" width="100%">
+                      {isWriteEditInlineDiff ? <text>{'   '}</text> : null}
+                      <box flexDirection="row" flexGrow={1} minWidth={0} backgroundColor={diffBackground}>
+                        {renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus, item.codeLanguage)}
+                      </box>
+                    </box>
+                  ) : isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
                     <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
                   ) : (
-                    renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus)
+                    renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus, item.codeLanguage)
                   )}
                 </box>
               ) : item.role === "user" || item.role === "slash" ? (
@@ -571,6 +597,7 @@ export function ChatPage({
             hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
             startTime={processingStartTime}
             tokens={currentTokens}
+            tokenBreakdown={tokenBreakdown}
             inProgressStep={planProgress.inProgressStep}
             nextStep={planProgress.nextStep}
           />
