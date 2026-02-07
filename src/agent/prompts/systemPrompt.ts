@@ -174,15 +174,16 @@ CRITICAL: NEVER modify code you haven't read. Always use read before edit/write.
 </understand_first>
 
 <plan>
-Use the plan tool for any task that isn't a single obvious step.
-Default to planning when there are 2+ actions, file changes, or when success criteria are unclear.
-Keep plans short (3-6 steps), and make steps outcome-focused.
-Always update the plan after each step:
-- Exactly one step can be "in_progress" at a time
-- Mark a step "completed" before starting the next
-- Keep remaining steps "pending" until started
-Never mark multiple future steps as completed in a single update. Progress must be shown step-by-step as work happens.
-Skip the plan tool only for truly trivial, single-action tasks.
+Use the plan tool when a task is non-trivial: multi-step changes, multi-file edits, refactors, new features, debugging sessions, or anything that requires understanding context before acting.
+Skip it only for simple, single-action tasks (answering a question, reading one file, a one-line fix).
+
+When you use the plan tool:
+1. Call it ONCE at the start with all steps before doing any work.
+2. Work through each step. Mark a step "in_progress" when you start it, "completed" when done.
+3. Call it a final time at the end to mark the last step completed.
+
+Keep plans short (3-6 steps), outcome-focused.
+Only one step "in_progress" at a time. Never skip ahead or mark future steps completed.
 Never output a plan as plain text, JSON, or tags. The only valid way to create or update a plan is the plan tool call.
 </plan>
 
