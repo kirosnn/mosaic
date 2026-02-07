@@ -59,13 +59,12 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     text: string;
   }) => {
     const content = text.padEnd(innerWidth, ' ');
-    const totalWidth = innerWidth + 4;
+    const totalWidth = innerWidth + 2;
 
     return (
-      <box flexDirection="row" backgroundColor="#1a1a1a" width={totalWidth}>
+      <box flexDirection="row" backgroundColor="#111010ff" width={totalWidth}>
         <text fg={color}>▎ </text>
         <text fg="white">{content}</text>
-        <text fg={color}> ▎</text>
       </box>
     );
   };
