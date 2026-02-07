@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { requestApproval } from '../../utils/approvalBridge';
 import { shouldRequireApprovals } from '../../utils/config';
+import { getLocalBashDecision } from '../../utils/localRules';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import { debugLog } from '../../utils/debug';
@@ -336,6 +337,140 @@ const EXCLUDED_DIRECTORIES = new Set([
   '.idea',
   '.vscode',
 ]);
+
+const BASH_REVIEW_MAX_FILES = 2000;
+const BASH_REVIEW_MAX_FILE_BYTES = 512 * 1024;
+const BASH_REVIEW_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+
+interface WorkspaceReviewSnapshot {
+  files: Map<string, string>;
+  truncated: boolean;
+  skipped: number;
+}
+
+function normalizeWorkspaceRelativePath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+function shouldTrackBashFileChanges(command: string): boolean {
+  const trimmed = (command || '').trim();
+  if (!trimmed) return false;
+
+  const mutationPattern = /\b(remove-item|ri|del|erase|rmdir|rm|move-item|mv|copy-item|cp|xcopy|robocopy|new-item|mkdir|md|rename-item|ren|set-content|add-content|clear-content|out-file|touch|truncate)\b/i;
+  if (mutationPattern.test(trimmed)) return true;
+  if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
+  if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
+  if (/[>;]|>>/.test(trimmed)) return true;
+
+  return !isSafeBashCommand(trimmed);
+}
+
+async function captureWorkspaceReviewSnapshot(workspace: string): Promise<WorkspaceReviewSnapshot> {
+  const files = new Map<string, string>();
+  const stack: string[] = [''];
+  let truncated = false;
+  let skipped = 0;
+  let totalBytes = 0;
+
+  while (stack.length > 0) {
+    const relDir = stack.pop() ?? '';
+    const absDir = relDir ? resolve(workspace, relDir) : workspace;
+    let entries;
+    try {
+      entries = await readdir(absDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const relPath = relDir ? join(relDir, entry.name) : entry.name;
+
+      if (entry.isDirectory()) {
+        if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+        stack.push(relPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (files.size >= BASH_REVIEW_MAX_FILES) {
+        truncated = true;
+        continue;
+      }
+
+      const absPath = resolve(workspace, relPath);
+      let fileStats;
+      try {
+        fileStats = await stat(absPath);
+      } catch {
+        continue;
+      }
+
+      if (fileStats.size > BASH_REVIEW_MAX_FILE_BYTES || (totalBytes + fileStats.size) > BASH_REVIEW_MAX_TOTAL_BYTES) {
+        skipped++;
+        continue;
+      }
+
+      let raw: Buffer;
+      try {
+        raw = await readFile(absPath);
+      } catch {
+        continue;
+      }
+
+      if (isBinaryFile(raw)) {
+        skipped++;
+        continue;
+      }
+
+      const content = raw.toString('utf-8');
+      if (content.includes('\u0000')) {
+        skipped++;
+        continue;
+      }
+
+      files.set(normalizeWorkspaceRelativePath(relPath), content);
+      totalBytes += raw.length;
+    }
+  }
+
+  return { files, truncated, skipped };
+}
+
+async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceReviewSnapshot | null): Promise<number> {
+  if (!before) return 0;
+  const after = await captureWorkspaceReviewSnapshot(workspace);
+  const allPaths = Array.from(new Set([...before.files.keys(), ...after.files.keys()])).sort((a, b) => a.localeCompare(b));
+  let changedCount = 0;
+
+  for (const path of allPaths) {
+    const oldContent = before.files.get(path) ?? '';
+    const newContent = after.files.get(path) ?? '';
+    if (oldContent === newContent) continue;
+
+    trackFileChange(path, oldContent, newContent);
+
+    const diff = generateDiff(oldContent, newContent);
+    const diffLines = formatDiffForDisplay(diff, 0);
+    const type: 'write' | 'edit' | 'delete' = oldContent === '' ? 'write' : (newContent === '' ? 'delete' : 'edit');
+    const title = type === 'write'
+      ? `Create (${path})`
+      : type === 'delete'
+        ? `Delete (${path})`
+        : `Edit (${path})`;
+
+    addPendingChange(type, path, oldContent, newContent, {
+      title,
+      content: diffLines.join('\n'),
+    });
+    changedCount++;
+  }
+
+  if (before.truncated || before.skipped > 0 || after.truncated || after.skipped > 0) {
+    debugLog(`[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={files:${after.files.size},truncated:${after.truncated},skipped:${after.skipped}}`);
+  }
+
+  return changedCount;
+}
 
 function matchGlob(filename: string, pattern: string): boolean {
   let regex = globPatternCache.get(pattern);
@@ -759,7 +894,24 @@ export async function executeTool(toolName: string, args: Record<string, unknown
   try {
     const isBashTool = toolName === 'bash';
     const bashCommand = isBashTool ? (args.command as string) : '';
-    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && shouldRequireApprovals();
+
+    if (isBashTool) {
+      const localDecision = getLocalBashDecision(bashCommand);
+      if (localDecision === 'disallow') {
+        return {
+          success: false,
+          error: `Command disallowed by local rules (.mosaic/rules.json): ${bashCommand}`,
+        };
+      }
+      if (localDecision === 'auto-run') {
+        debugLog(`[tool] bash auto-run by local rules: ${bashCommand}`);
+      }
+    }
+
+    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && shouldRequireApprovals()
+      && getLocalBashDecision(bashCommand) !== 'auto-run';
+    const shouldTrackBashChanges = isBashTool && shouldRequireApprovals() && shouldTrackBashFileChanges(bashCommand);
+    let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
 
     if (bashNeedsApproval) {
       const preview = await generatePreview(toolName, args, workspace);
@@ -807,6 +959,15 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           error: agentError,
           userMessage: userMessage,
         };
+      }
+    }
+
+    if (shouldTrackBashChanges) {
+      try {
+        bashSnapshotBefore = await captureWorkspaceReviewSnapshot(workspace);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLog(`[tool] bash snapshot-before failed: ${message}`);
       }
     }
 
@@ -992,6 +1153,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case 'bash': {
         let command = args.command as string;
         let timeout = 30000;
+        const flushBashTrackedChanges = async () => {
+          if (!bashSnapshotBefore) return;
+          try {
+            const changedCount = await trackBashWorkspaceChanges(workspace, bashSnapshotBefore);
+            if (changedCount > 0) {
+              debugLog(`[tool] bash queued ${changedCount} filesystem change(s) for review`);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugLog(`[tool] bash snapshot-after failed: ${message}`);
+          }
+        };
 
         const timeoutMatch = command.match(/\s+--timeout\s+(\d+)$/);
         if (timeoutMatch) {
@@ -1018,6 +1191,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           });
 
           const output = normalizeCommandOutput((stdout || '') + (stderr || ''));
+          await flushBashTrackedChanges();
           return {
             success: true,
             result: output || 'Command executed with no output'
@@ -1032,6 +1206,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               ? `Command output (timed out after ${timeout}ms):\n${partialOutput}\n\n[Process continues running in background]`
               : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
 
+            await flushBashTrackedChanges();
             return {
               success: false,
               result: output
@@ -1044,6 +1219,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             ? `Command exited with code ${exitCode ?? 'unknown'}:\n${output}`
             : `Command failed: ${errorMessage}`;
 
+          await flushBashTrackedChanges();
           return {
             success: false,
             result: fullOutput
