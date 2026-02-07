@@ -552,7 +552,17 @@ async function startServer(port: number, maxRetries = 10) {
                     }
 
                     if (url.pathname === "/api/approval/respond" && request.method === "POST") {
-                        const body = (await request.json()) as { approved: boolean; customResponse?: string };
+                        const body = (await request.json()) as { approved: boolean; customResponse?: string; ruleAction?: 'auto-run' };
+                        if (body.ruleAction === 'auto-run') {
+                            const currentReq = getCurrentApproval();
+                            if (currentReq && currentReq.toolName === 'bash') {
+                                const command = String(currentReq.args.command ?? '');
+                                if (command) {
+                                    const { addAutoRunRule } = await import("../utils/localRules");
+                                    addAutoRunRule(command);
+                                }
+                            }
+                        }
                         respondApproval(body.approved, body.customResponse);
                         return new Response(JSON.stringify({ success: true }), {
                             headers: { "Content-Type": "application/json" },
