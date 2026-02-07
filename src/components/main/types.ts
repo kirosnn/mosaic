@@ -46,6 +46,13 @@ export interface Message {
   timestamp?: number;
 }
 
+export interface TokenBreakdown {
+  prompt: number;
+  reasoning: number;
+  output: number;
+  tools: number;
+}
+
 export interface MainProps {
   pasteRequestId?: number;
   copyRequestId?: number;
