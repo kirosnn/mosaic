@@ -3,7 +3,7 @@ import { saveConversation, type ConversationHistory, type ConversationStep } fro
 import { readConfig } from "../../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from "../../utils/toolFormatting";
 import { setExploreAbortController } from "../../utils/exploreBridge";
-import { BLEND_WORDS, type Message } from "./types";
+import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
 import { extractTitle, extractTitleFromToolResult, setTerminalTitle } from "./titleUtils";
 import { compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./compaction";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
@@ -17,6 +17,7 @@ export interface AgentStreamCallbacks {
   createId: () => string;
   setMessages: (updater: (prev: Message[]) => Message[]) => void;
   setCurrentTokens: (updater: number | ((prev: number) => number)) => void;
+  setTokenBreakdown: (updater: TokenBreakdown | ((prev: TokenBreakdown) => TokenBreakdown)) => void;
   setIsProcessing: (value: boolean) => void;
   setProcessingStartTime: (value: number | null) => void;
   setCurrentTitle: (title: string) => void;
@@ -61,6 +62,7 @@ export async function runAgentStream(
     createId,
     setMessages,
     setCurrentTokens,
+    setTokenBreakdown,
     setIsProcessing,
     setProcessingStartTime,
     setCurrentTitle,
@@ -79,13 +81,18 @@ export async function runAgentStream(
 
   const localStartTime = Date.now();
   setCurrentTokens(0);
+  setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
   lastPromptTokensRef.current = 0;
+  let maxTokensSeen = 0;
 
   const conversationId = createId();
   const conversationSteps: ConversationStep[] = [];
   let totalTokens = { prompt: 0, completion: 0, total: 0 };
   let stepCount = 0;
   let totalChars = 0;
+  let reasoningChars = 0;
+  let outputChars = 0;
+  let toolChars = 0;
   for (const m of baseMessages) {
     if (m.role === 'assistant') {
       totalChars += m.content.length;
@@ -96,7 +103,49 @@ export async function runAgentStream(
   }
 
   const estimateTokens = () => Math.ceil(totalChars / 4);
-  setCurrentTokens(estimateTokens());
+  const setCurrentTokensMonotonic = (updater: number | ((prev: number) => number)) => {
+    setCurrentTokens((prev) => {
+      const prevValue = typeof prev === "number" ? prev : 0;
+      const candidate = typeof updater === "function" ? updater(prevValue) : updater;
+      const safeCandidate = Number.isFinite(candidate) ? candidate : prevValue;
+      const next = Math.max(prevValue, safeCandidate, maxTokensSeen);
+      maxTokensSeen = next;
+      return next;
+    });
+  };
+  const allocateTokensByWeight = (total: number, weights: number[]): number[] => {
+    if (total <= 0) return weights.map(() => 0);
+    const cleaned = weights.map((w) => Math.max(0, w));
+    const sum = cleaned.reduce((acc, w) => acc + w, 0);
+    if (sum <= 0) {
+      const base = Math.floor(total / cleaned.length);
+      const remainder = total - (base * cleaned.length);
+      return cleaned.map((_, i) => base + (i < remainder ? 1 : 0));
+    }
+
+    const raw = cleaned.map((w) => (w / sum) * total);
+    const floored = raw.map((v) => Math.floor(v));
+    let remaining = total - floored.reduce((acc, v) => acc + v, 0);
+    const byFraction = raw
+      .map((v, i) => ({ i, fraction: v - floored[i]! }))
+      .sort((a, b) => b.fraction - a.fraction);
+
+    for (let i = 0; i < byFraction.length && remaining > 0; i++) {
+      floored[byFraction[i]!.i] = floored[byFraction[i]!.i]! + 1;
+      remaining--;
+    }
+
+    return floored;
+  };
+  const updateBreakdown = () => {
+    setTokenBreakdown({
+      prompt: 0,
+      reasoning: Math.ceil(reasoningChars / 4),
+      output: Math.ceil(outputChars / 4),
+      tools: Math.ceil(toolChars / 4),
+    });
+  };
+  setCurrentTokensMonotonic(estimateTokens());
   const config = readConfig();
 
   const resolveMaxContextTokens = async () => {
@@ -125,6 +174,7 @@ export async function runAgentStream(
       newMessages.push({
         id: createId(),
         role: "tool",
+        toolName: "abort",
         success: false,
         content: abortMessage
       });
@@ -171,7 +221,9 @@ export async function runAgentStream(
       if (event.type === 'reasoning-delta') {
         thinkingChunk += event.content;
         totalChars += event.content.length;
-        setCurrentTokens(estimateTokens());
+        reasoningChars += event.content.length;
+        setCurrentTokensMonotonic(estimateTokens());
+        updateBreakdown();
 
         if (assistantMessageId === null) {
           assistantMessageId = createId();
@@ -195,7 +247,9 @@ export async function runAgentStream(
       } else if (event.type === 'text-delta') {
         assistantChunk += event.content;
         totalChars += event.content.length;
-        setCurrentTokens(estimateTokens());
+        outputChars += event.content.length;
+        setCurrentTokensMonotonic(estimateTokens());
+        updateBreakdown();
 
         const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
 
@@ -260,8 +314,11 @@ export async function runAgentStream(
       } else if (event.type === 'step-start') {
         stepCount++;
       } else if (event.type === 'tool-call-end') {
-        totalChars += JSON.stringify(event.args).length;
-        setCurrentTokens(estimateTokens());
+        const argsLen = JSON.stringify(event.args).length;
+        totalChars += argsLen;
+        toolChars += argsLen;
+        setCurrentTokensMonotonic(estimateTokens());
+        updateBreakdown();
 
         const normalized = normalizeToolCall(event.toolName, event.args ?? {});
         const toolName = normalized.toolName;
@@ -337,7 +394,9 @@ export async function runAgentStream(
 
         const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
         totalChars += toolResultStr.length;
-        setCurrentTokens(estimateTokens());
+        toolChars += toolResultStr.length;
+        setCurrentTokensMonotonic(estimateTokens());
+        updateBreakdown();
 
         if (assistantChunk.trim() || thinkingChunk.trim()) {
           conversationSteps.push({
@@ -435,13 +494,32 @@ export async function runAgentStream(
         break;
       } else if (event.type === 'finish') {
         if (event.usage && event.usage.totalTokens > 0) {
+          const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
+          const completionTokens = Math.max(
+            0,
+            (event.usage.completionTokens ?? 0) || (event.usage.totalTokens - promptTokens)
+          );
+          const allocatedTokens = allocateTokensByWeight(
+            completionTokens,
+            [reasoningChars, outputChars, toolChars]
+          );
+          const reasoningTokens = allocatedTokens[0] ?? 0;
+          const outputTokens = allocatedTokens[1] ?? 0;
+          const toolTokens = allocatedTokens[2] ?? 0;
+
           totalTokens = {
             prompt: event.usage.promptTokens,
             completion: event.usage.completionTokens,
             total: event.usage.totalTokens
           };
           lastPromptTokensRef.current = event.usage.promptTokens;
-          setCurrentTokens(event.usage.totalTokens);
+          setCurrentTokensMonotonic(event.usage.totalTokens);
+          setTokenBreakdown({
+            prompt: promptTokens,
+            reasoning: reasoningTokens,
+            output: outputTokens,
+            tools: toolTokens
+          });
         }
       }
     }
@@ -505,7 +583,7 @@ export async function runAgentStream(
           pendingCompactTokensRef.current = compacted.estimatedTokens;
           return compacted.messages;
         });
-        setCurrentTokens(prev => typeof prev === 'number' && pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
+        setCurrentTokensMonotonic(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
       }
     }
 
@@ -572,6 +650,7 @@ export async function runAgentStream(
             setMessages((prev: Message[]) => [...prev, {
               id: createId(),
               role: "tool",
+              toolName: "review",
               content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
               success: true,
             }]);
