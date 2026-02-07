@@ -337,7 +337,7 @@ await new Promise(resolve => setTimeout(resolve, 100));
 
 debugLog('Creating renderer...');
 try {
-  const renderer = await createCliRenderer();
+  const renderer = await createCliRenderer({ exitOnCtrlC: true });
   debugLog('Renderer created, mounting React...');
 
   if (parsed.resumeCommand) {
