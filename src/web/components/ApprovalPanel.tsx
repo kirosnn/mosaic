@@ -2,15 +2,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ApprovalRequest } from '../../utils/approvalBridge';
 
+export type RuleAction = 'auto-run';
+
 interface ApprovalPanelProps {
     request: ApprovalRequest;
-    onRespond: (approved: boolean, customResponse?: string) => void;
+    onRespond: (approved: boolean, customResponse?: string, ruleAction?: RuleAction) => void;
 }
 
 export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
     const [customText, setCustomText] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
     const [selectedIndex, setSelectedIndex] = useState(0);
+    const isBash = request.toolName === 'bash';
+    const bashCommand = isBash ? String(request.args.command ?? '') : '';
+    const bashBaseCommand = (() => {
+        if (!bashCommand) return '';
+        const tokens = bashCommand.trim().split(/\s+/);
+        const first = tokens[0];
+        if (!first) return '';
+        const second = tokens[1];
+        if (second && /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(second)) {
+            return first + ' ' + second;
+        }
+        return first;
+    })();
+    const allOptions = isBash
+        ? ['Yes', 'Yes, always allow', 'No'] as const
+        : ['Yes', 'No'] as const;
 
     const titleMatch = request.preview.title.match(/^(.+?)\s*\((.+)\)$/);
     const toolName = titleMatch ? titleMatch[1] : request.preview.title;
@@ -25,16 +43,18 @@ export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowUp') {
             e.preventDefault();
-            setSelectedIndex(prev => (prev === 0 ? 1 : 0));
+            setSelectedIndex(prev => (prev === 0 ? allOptions.length - 1 : prev - 1));
         } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setSelectedIndex(prev => (prev === 1 ? 0 : 1));
+            setSelectedIndex(prev => (prev === allOptions.length - 1 ? 0 : prev + 1));
         } else if (e.key === 'Enter') {
             e.preventDefault();
             if (customText.trim()) {
                 onRespond(false, customText);
             } else {
-                if (selectedIndex === 0) onRespond(true);
+                const option = allOptions[selectedIndex];
+                if (option === 'Yes') onRespond(true);
+                else if (option === 'Yes, always allow') onRespond(true, undefined, 'auto-run');
                 else onRespond(false);
             }
         }
@@ -75,18 +95,22 @@ export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
                 </div>
 
                 <div className="approval-options">
-                    <div
-                        className={`approval-option ${selectedIndex === 0 ? 'selected' : ''}`}
-                        onClick={() => onRespond(true)}
-                    >
-                        Yes
-                    </div>
-                    <div
-                        className={`approval-option ${selectedIndex === 1 ? 'selected' : ''}`}
-                        onClick={() => onRespond(false)}
-                    >
-                        No
-                    </div>
+                    {allOptions.map((option, index) => (
+                        <div
+                            key={option}
+                            className={`approval-option ${selectedIndex === index ? 'selected' : ''}`}
+                            onClick={() => {
+                                if (option === 'Yes') onRespond(true);
+                                else if (option === 'Yes, always allow') onRespond(true, undefined, 'auto-run');
+                                else onRespond(false);
+                            }}
+                        >
+                            {option}
+                            {option === 'Yes, always allow' && bashBaseCommand
+                                ? <span className="text-muted"> "{bashBaseCommand}"</span>
+                                : null}
+                        </div>
+                    ))}
                 </div>
 
                 <div className="custom-input-container">
