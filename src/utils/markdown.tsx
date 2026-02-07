@@ -229,7 +229,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 }
 
 export interface WrappedMarkdownBlock {
-  type: 'line' | 'code' | 'table';
+  type: 'line' | 'code' | 'table' | 'hr';
   wrappedLines?: { text: string; segments: MarkdownSegment[] }[];
   codeLines?: string[];
   tableRows?: string[][];
@@ -330,6 +330,12 @@ function isTableSeparator(line: string): boolean {
   return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
 }
 
+function parseHorizontalRuleLine(line: string): { isRule: boolean; trailingText: string } {
+  const match = line.match(/^\s*-{3,}(?:\s+(.+))?\s*$/);
+  if (!match) return { isRule: false, trailingText: '' };
+  return { isRule: true, trailingText: (match[1] ?? '').trim() };
+}
+
 function reflowParagraphs(text: string): string {
   const rawLines = text.split('\n');
   const result: string[] = [];
@@ -350,6 +356,11 @@ function reflowParagraphs(text: string): string {
     }
 
     if (line.trim() === '') {
+      result.push(line);
+      continue;
+    }
+
+    if (parseHorizontalRuleLine(line).isRule) {
       result.push(line);
       continue;
     }
@@ -403,6 +414,18 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
 
     if (inCodeBlock) {
       codeLines.push(line);
+      continue;
+    }
+
+    const hrLine = parseHorizontalRuleLine(line);
+    if (hrLine.isRule) {
+      blocks.push({ type: 'hr' });
+      if (hrLine.trailingText) {
+        blocks.push({
+          type: 'line',
+          wrappedLines: wrapMarkdownText(hrLine.trailingText, maxWidth)
+        });
+      }
       continue;
     }
 
