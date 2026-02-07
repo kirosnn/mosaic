@@ -5,26 +5,53 @@ import { CustomInput } from '../CustomInput';
 import type { ApprovalRequest } from '../../utils/approvalBridge';
 import { renderDiffBlock } from '../../utils/diffRendering';
 
+export type RuleAction = 'auto-run';
+
 interface ApprovalPanelProps {
   request: ApprovalRequest;
   disabled?: boolean;
-  onRespond: (approved: boolean, customResponse?: string) => void;
+  onRespond: (approved: boolean, customResponse?: string, ruleAction?: RuleAction) => void;
   maxWidth?: number;
 }
 
 export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }: ApprovalPanelProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const allOptions = ['Yes', 'No'];
+  const isBash = request.toolName === 'bash';
+  const bashCommand = isBash ? String(request.args.command ?? '') : '';
+  const bashBaseCommand = (() => {
+    if (!bashCommand) return '';
+    const tokens = bashCommand.trim().split(/\s+/);
+    const first = tokens[0];
+    if (!first) return '';
+    const second = tokens[1];
+    if (second && /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(second)) {
+      return first + ' ' + second;
+    }
+    return first;
+  })();
+  const allOptions = isBash ? ['Allow execution', 'Always allow execution for', 'Deny execution'] : ['Yes', 'No'];
 
   useEffect(() => {
     setSelectedIndex(0);
+    setHoveredIndex(null);
     setScrollOffset(0);
   }, [request.id]);
 
   const previewLines = request.preview.content.split('\n');
   const maxVisiblePreviewLines = 15;
   const canScroll = previewLines.length > maxVisiblePreviewLines;
+  const executeSelection = (index: number) => {
+    const option = allOptions[index];
+    if (option === 'Allow execution') {
+      onRespond(true);
+    } else if (option === 'Always allow execution for') {
+      onRespond(true, undefined, 'auto-run');
+    } else {
+      onRespond(false);
+    }
+  };
 
   useKeyboard((key) => {
     if (disabled) return;
@@ -50,11 +77,7 @@ export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }
     }
 
     if (key.name === 'return') {
-      if (selectedIndex === 0) {
-        onRespond(true);
-      } else {
-        onRespond(false);
-      }
+      executeSelection(selectedIndex);
       return;
     }
   });
@@ -109,21 +132,39 @@ export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }
       <box flexDirection="column">
         {allOptions.map((option, index) => {
           const selected = index === selectedIndex;
+          const hovered = hoveredIndex === index;
 
           return (
             <box
               key={`${request.id}-${index}`}
               flexDirection="row"
-              backgroundColor='transparent'
+              backgroundColor={selected ? '#2a2a2a' : (hovered ? '#202020' : 'transparent')}
               paddingLeft={1}
               paddingRight={1}
+              onMouseOver={() => {
+                if (disabled) return;
+                setHoveredIndex(index);
+              }}
+              onMouseOut={() => {
+                setHoveredIndex(prev => (prev === index ? null : prev));
+              }}
+              onMouseDown={(event: any) => {
+                if (disabled) return;
+                if (event?.isSelecting) return;
+                if (event?.button !== undefined && event.button !== 0) return;
+                setSelectedIndex(index);
+                executeSelection(index);
+              }}
             >
               <text
-                fg='white'
-                attributes={selected ? TextAttributes.NONE : TextAttributes.DIM}
+                fg={selected ? '#e6e6e6' : 'white'}
+                attributes={selected ? TextAttributes.BOLD : TextAttributes.DIM}
               >
                 {selected ? '> ' : '  '}{option}
               </text>
+              {option === 'Always allow execution for' && bashBaseCommand ? (
+                <text> "{bashBaseCommand}"</text>
+              ) : null}
             </box>
           );
         })}
