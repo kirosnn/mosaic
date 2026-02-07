@@ -38,6 +38,7 @@ export interface RenderItem {
   tableColumnWidths?: number[];
   tableRowIndex?: number;
   isPadding?: boolean;
+  isHorizontalRule?: boolean;
   planStatus?: 'pending' | 'in_progress' | 'completed';
   isCompactTool?: boolean;
   compactLabel?: string;
@@ -50,7 +51,7 @@ export interface RenderItem {
 
 export function isCompactTool(toolName?: string): boolean {
   if (!toolName) return false;
-  if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title') return true;
+  if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title' || toolName === 'abort' || toolName === 'review') return true;
   if (toolName.startsWith('mcp__')) {
     const nativeName = getNativeMcpToolName(toolName);
     return nativeName === 'navigation_search';
@@ -152,6 +153,29 @@ export interface BuildChatItemsParams {
   approvalRequest: ApprovalRequest | null;
 }
 
+function wrapToolDiffLine(line: string, maxWidth: number): string[] {
+  const match = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
+  if (!match) return wrapText(line, maxWidth);
+
+  const sign = match[1] ?? '+';
+  const lineNumber = match[2] ?? '';
+  const content = match[3] ?? '';
+  const lineNumberWidth = 5;
+  const leftVisualPadding = 1;
+  const signWidth = 1;
+  const numberColumnWidth = Math.max(lineNumberWidth, lineNumber.length);
+  const separatorWidth = 1;
+  const contentWidth = Math.max(
+    1,
+    maxWidth - (leftVisualPadding + signWidth + numberColumnWidth + separatorWidth)
+  );
+  const chunks = wrapText(content, contentWidth);
+
+  return chunks.map((chunk, index) => index === 0
+    ? `${sign} ${lineNumber} ${chunk || ''}`
+    : `${sign} | ${chunk || ''}`);
+}
+
 export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
   const { messages, maxWidth, viewportHeight, questionRequest, approvalRequest } = params;
   const allItems: RenderItem[] = [];
@@ -205,10 +229,11 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
     if (messageRole === 'assistant') {
       if (message.thinkingContent) {
         const thinkingLines = message.thinkingContent.split('\n');
+        const thinkingItems: RenderItem[] = [];
         for (let i = 0; i < thinkingLines.length; i++) {
-          const wrapped = wrapText(thinkingLines[i] || '', maxWidth);
+          const wrapped = wrapText(thinkingLines[i] || '', maxWidth - 2);
           for (let j = 0; j < wrapped.length; j++) {
-            allItems.push({
+            thinkingItems.push({
               key: `${messageKey}-thinking-${i}-${j}`,
               type: 'line',
               content: wrapped[j] || '',
@@ -219,6 +244,13 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
             });
           }
         }
+
+        if (thinkingItems.length > 0) {
+          thinkingItems[0]!.content = '"' + (thinkingItems[0]!.content || '');
+          const last = thinkingItems[thinkingItems.length - 1]!;
+          last.content = (last.content || '') + '"';
+        }
+        allItems.push(...thinkingItems);
 
         allItems.push({
           key: `${messageKey}-thinking-spacer`,
@@ -237,6 +269,19 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
 
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         const block = blocks[blockIndex]!;
+        if (block.type === 'hr') {
+          allItems.push({
+            key: `${messageKey}-hr-${blockIndex}`,
+            type: 'line',
+            role: messageRole,
+            isFirst: false,
+            isHorizontalRule: true,
+            visualLines: 1,
+            content: '',
+          });
+          continue;
+        }
+
         if (block.type === 'code' && block.codeLines) {
           allItems.push({
             key: `${messageKey}-code-${blockIndex}-header`,
@@ -306,8 +351,17 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       }
     } else {
       if (messageRole === 'tool' && compactTool) {
-        const { name, info } = parseToolHeader(message.toolName || '', message.toolArgs || {});
-        const label = message.toolName === 'title' ? name : (info ? `${name} (${info})` : name);
+        let label: string;
+        let result: string;
+        if (message.toolName === 'abort' || message.toolName === 'review') {
+          const firstLine = (message.displayContent ?? message.content ?? '').split('\n')[0]?.trim() || 'Interrupted';
+          label = firstLine;
+          result = '';
+        } else {
+          const { name, info } = parseToolHeader(message.toolName || '', message.toolArgs || {});
+          label = message.toolName === 'title' ? name : (info ? `${name} (${info})` : name);
+          result = getCompactResult(message);
+        }
         allItems.push({
           key: `${messageKey}-compact`,
           type: 'tool_compact',
@@ -320,7 +374,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
           runningStartTime: message.runningStartTime,
           isCompactTool: true,
           compactLabel: label,
-          compactResult: getCompactResult(message)
+          compactResult: result
         });
       } else {
         if (messageRole === "user" && message.images && message.images.length > 0) {
@@ -343,6 +397,15 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
             });
           }
         }
+
+        const toolCodeLanguage = (messageRole === 'tool' && message.toolArgs)
+          ? (() => {
+            const path = typeof (message.toolArgs as Record<string, unknown>)?.path === 'string'
+              ? (message.toolArgs as Record<string, unknown>).path as string : '';
+            const m = path.match(/\.([a-zA-Z0-9]+)$/);
+            return m ? m[1]!.toLowerCase() : undefined;
+          })()
+          : undefined;
 
         const messageText = message.displayContent ?? message.content;
         const paragraphs = messageText.split('\n');
@@ -387,7 +450,13 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
             const indent = messageRole === 'tool' ? getToolParagraphIndent(i) : 0;
             const wrapTarget = messageRole === 'tool' ? getToolWrapTarget(paragraph, i) : paragraph;
             const wrapWidth = messageRole === 'tool' ? getToolWrapWidth(maxWidth, i) : maxWidth;
-            const wrappedLines = wrapText(wrapTarget, wrapWidth);
+            const isToolDiffLine = messageRole === 'tool'
+              && i > 0
+              && /^([+-])\s*(\d+)\s*\|?\s*(.*)$/.test(wrapTarget);
+            const diffLeftInset = messageRole === 'tool' && (message.toolName === 'write' || message.toolName === 'edit') ? 3 : 0;
+            const wrappedLines = isToolDiffLine
+              ? wrapToolDiffLine(wrapTarget, Math.max(1, wrapWidth - diffLeftInset))
+              : wrapText(wrapTarget, wrapWidth);
             for (let j = 0; j < wrappedLines.length; j++) {
               const isPlanItemLine = messageRole === 'tool'
                 && message.toolName === 'plan'
@@ -411,6 +480,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
                 planStatus,
                 isRunning: message.isRunning,
                 runningStartTime: message.runningStartTime,
+                codeLanguage: toolCodeLanguage,
                 ...(userMessageMeta ?? {})
               });
             }
@@ -564,5 +634,38 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
     });
   }
 
-  return allItems;
+  const deduplicated: RenderItem[] = [];
+  for (let i = 0; i < allItems.length; i++) {
+    const item = allItems[i]!;
+    const isEmptyLine = !item.content?.trim()
+      && !item.isPadding
+      && !item.isCodeBlock
+      && !item.isTableRow
+      && !item.isHorizontalRule
+      && item.type !== 'question'
+      && item.type !== 'approval'
+      && item.type !== 'tool_compact'
+      && item.type !== 'blend';
+
+    if (isEmptyLine && deduplicated.length > 0) {
+      const prev = deduplicated[deduplicated.length - 1]!;
+      const prevIsEmpty = !prev.content?.trim()
+        && !prev.isPadding
+        && !prev.isCodeBlock
+        && !prev.isTableRow
+        && !prev.isHorizontalRule
+        && prev.type !== 'question'
+        && prev.type !== 'approval'
+        && prev.type !== 'tool_compact'
+        && prev.type !== 'blend';
+
+      if (prevIsEmpty) {
+        continue;
+      }
+    }
+
+    deduplicated.push(item);
+  }
+
+  return deduplicated;
 }
