@@ -13,7 +13,7 @@ import { subscribeApprovalAccepted } from "../utils/approvalBridge";
 import { setExploreToolCallback } from "../utils/exploreBridge";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
 import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
-import { type MainProps, type Message } from "./main/types";
+import { type MainProps, type Message, type TokenBreakdown } from "./main/types";
 import { setTerminalTitle } from "./main/titleUtils";
 import { compactMessagesForUi } from "./main/compaction";
 import { runAgentStream, type AgentStreamCallbacks } from "./main/useAgentStream";
@@ -38,6 +38,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [currentTokens, setCurrentTokens] = useState(0);
+  const [tokenBreakdown, setTokenBreakdown] = useState<TokenBreakdown>({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
   const [scrollOffset, setScrollOffset] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
@@ -157,6 +158,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       lastExploreTokens = totalTokens;
       if (tokenDelta > 0) {
         setCurrentTokens(prev => prev + tokenDelta);
+        setTokenBreakdown(prev => ({ ...prev, tools: prev.tools + tokenDelta }));
       }
 
       if (exploreMessageIdRef.current) {
@@ -165,7 +167,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           const idx = newMessages.findIndex(m => m.id === exploreMessageIdRef.current);
           if (idx !== -1) {
             const toolLines = exploreToolsRef.current.map(t => {
-              const icon = t.success ? '→' : '-';
+              const icon = t.success ? '➔ ' : '-';
               return `  ${icon} ${t.tool}(${t.info})`;
             });
             const purpose = explorePurposeRef.current;
@@ -311,10 +313,10 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
           if (button === 64) {
             shouldAutoScroll.current = false;
-            setScrollOffset((prev) => prev + 1);
+            setScrollOffset((prev) => prev + 3);
           } else if (button === 65) {
             setScrollOffset((prev) => {
-              const newOffset = Math.max(0, prev - 1);
+              const newOffset = Math.max(0, prev - 3);
               if (newOffset === 0) {
                 shouldAutoScroll.current = true;
               }
@@ -395,21 +397,30 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   };
 
   const buildConversationHistory = (base: Message[], includeImages: boolean) => {
-    return base
-      .filter((m): m is Message & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant")
-      .map((m) => {
-        if (m.role === "user") {
-          const content = includeImages ? buildUserContent(m.content, m.images) : m.content;
-          return { role: "user" as const, content };
+    const result: Array<{ role: "user" | "assistant"; content: UserContent }> = [];
+    for (const m of base) {
+      if (m.role === "tool" && m.toolName === "abort") {
+        const last = result[result.length - 1];
+        if (last && last.role === "assistant" && typeof last.content === "string") {
+          last.content += "\n\n[Your previous response was interrupted by the user.]";
         }
-        return { role: "assistant" as const, content: m.content };
-      });
+        continue;
+      }
+      if (m.role === "user") {
+        const content = includeImages ? buildUserContent(m.content, m.images) : m.content;
+        result.push({ role: "user" as const, content });
+      } else if (m.role === "assistant") {
+        result.push({ role: "assistant" as const, content: m.content });
+      }
+    }
+    return result;
   };
 
   const getStreamCallbacks = (): AgentStreamCallbacks => ({
     createId,
     setMessages,
     setCurrentTokens,
+    setTokenBreakdown,
     setIsProcessing,
     setProcessingStartTime,
     setCurrentTitle,
@@ -636,7 +647,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       baseMessages,
       userMessage,
       conversationHistory: convHistory,
-      abortMessage: "Generation aborted. \n\u21AA What should Mosaic do instead?",
+      abortMessage: "Generation aborted. What should Mosaic do instead ?",
       userStepContent: composedContent,
       userStepImages: imagesForMessage.length > 0 ? imagesForMessage : undefined,
       autoCompact: true,
@@ -716,6 +727,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       isProcessing={isProcessing && !isReviewMode}
       processingStartTime={isReviewMode ? null : processingStartTime}
       currentTokens={currentTokens}
+      tokenBreakdown={tokenBreakdown}
       scrollOffset={scrollOffset}
       terminalHeight={terminalHeight}
       terminalWidth={terminalWidth}
