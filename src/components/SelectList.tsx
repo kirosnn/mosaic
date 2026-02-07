@@ -16,6 +16,13 @@ interface SelectListProps {
 
 export function SelectList({ options, onSelect, disabled = false }: SelectListProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  const handleSelect = (index: number) => {
+    const option = options[index];
+    if (!option) return;
+    onSelect(option.value);
+  };
 
   useKeyboard((key) => {
     if (disabled) return;
@@ -24,24 +31,43 @@ export function SelectList({ options, onSelect, disabled = false }: SelectListPr
     } else if (key.name === 'down' || key.name === 'j') {
       setSelectedIndex(prev => prev === options.length - 1 ? 0 : prev + 1);
     } else if (key.name === 'return') {
-      onSelect(options[selectedIndex]?.value);
+      handleSelect(selectedIndex);
     }
   });
 
   return (
     <box flexDirection="column">
-      {options.map((option, index) => (
+      {options.map((option, index) => {
+          const isSelected = index === selectedIndex;
+          const isHovered = hoveredIndex === index;
+          const bg = isSelected ? '#2a2a2a' : (isHovered ? '#202020' : 'transparent');
+          return (
         <box
           key={index}
           padding={1}
-          backgroundColor={index === selectedIndex ? '#2a2a2a' : 'transparent'}
+          backgroundColor={bg}
+          onMouseOver={() => {
+            if (disabled) return;
+            setHoveredIndex(index);
+          }}
+          onMouseOut={() => {
+            setHoveredIndex(prev => (prev === index ? null : prev));
+          }}
+          onMouseDown={(event: any) => {
+            if (disabled) return;
+            if (event?.isSelecting) return;
+            if (event?.button !== undefined && event.button !== 0) return;
+            setSelectedIndex(index);
+            handleSelect(index);
+          }}
         >
           <box flexDirection="column">
-            <text fg={index === selectedIndex ? "#ffca38" : undefined} attributes={index === selectedIndex ? TextAttributes.BOLD : TextAttributes.NONE}>{index === selectedIndex ? '> ' : '  '}{option.name}</text>
+            <text fg={isSelected ? "#ffca38" : undefined} attributes={isSelected ? TextAttributes.BOLD : TextAttributes.NONE}>{isSelected ? '> ' : '  '}{option.name}</text>
             <text attributes={TextAttributes.DIM}>{'  '}{option.description}</text>
           </box>
         </box>
-      ))}
+          );
+      })}
     </box>
   );
 }
