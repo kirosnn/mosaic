@@ -38,6 +38,7 @@ function getFirstUserMessage(conversation: ConversationHistory): string {
 export function Resume({ onSelect, onCancel }: ResumeProps) {
     const [conversations, setConversations] = useState<ConversationHistory[]>([]);
     const [selected, setSelected] = useState(0);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {
         setConversations(loadConversations());
@@ -100,26 +101,43 @@ export function Resume({ onSelect, onCancel }: ResumeProps) {
                 Resume Session ({conversations.length})
             </text>
             <text fg="gray" marginBottom={1} attributes={TextAttributes.DIM}>
-                [↑↓] navigate  [Enter] select  [Del] delete  [Esc] quit
+                [↑↓] navigate  [Enter/click] select  [Del] delete  [Esc] quit
             </text>
 
             {visible.map((conv, i) => {
                 const idx = start + i;
                 const isSel = idx === selected;
+                const isHovered = hovered === idx;
                 const title = conv.title || 'Untitled';
                 const msg = getFirstUserMessage(conv);
                 const time = formatDate(conv.timestamp);
                 const line = `${truncate(title, 25).padEnd(26)} ${truncate(msg, 40).padEnd(41)} ${time}`;
 
                 return (
-                    <text
+                    <box
                         key={conv.id}
-                        fg={isSel ? 'black' : 'white'}
-                        bg={isSel ? '#ffca38' : undefined}
-                        attributes={isSel ? TextAttributes.BOLD : undefined}
+                        flexDirection="row"
+                        backgroundColor={isSel ? '#ffca38' : (isHovered ? '#202020' : 'transparent')}
+                        onMouseOver={() => {
+                            setHovered(idx);
+                        }}
+                        onMouseOut={() => {
+                            setHovered(prev => (prev === idx ? null : prev));
+                        }}
+                        onMouseDown={(event: any) => {
+                            if (event?.isSelecting) return;
+                            if (event?.button !== undefined && event.button !== 0) return;
+                            setSelected(idx);
+                            onSelect(conv);
+                        }}
                     >
-                        {isSel ? '> ' : '  '}{line}
-                    </text>
+                        <text
+                            fg={isSel ? 'black' : 'white'}
+                            attributes={isSel ? TextAttributes.BOLD : undefined}
+                        >
+                            {isSel ? '> ' : '  '}{line}
+                        </text>
+                    </box>
                 );
             })}
 
