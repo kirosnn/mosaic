@@ -1,10 +1,21 @@
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, unlink } from 'fs/promises';
 import { resolve, dirname } from 'path';
 import type { PendingChange } from './pendingChangesBridge';
 
 export async function revertChange(change: PendingChange): Promise<void> {
     const workspace = process.cwd();
     const fullPath = resolve(workspace, change.path);
+
+    const wasCreatedByChange = change.originalContent === '' && change.newContent !== '';
+    if (wasCreatedByChange) {
+        try {
+            await unlink(fullPath);
+        } catch (error) {
+            const e = error as NodeJS.ErrnoException;
+            if (e?.code !== 'ENOENT') throw error;
+        }
+        return;
+    }
 
     await mkdir(dirname(fullPath), { recursive: true });
     await writeFile(fullPath, change.originalContent, 'utf-8');
