@@ -278,7 +278,13 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
       {step === 'provider' && (
         <box flexDirection="column" flexGrow={1}>
           <box marginBottom={1}>
-            <text>Select your AI provider (↑/↓ to navigate, Enter to select):</text>
+            <box flexDirection="row">
+              <text attributes={TextAttributes.DIM}>Select your AI provider (</text>
+              <text fg="white">↑/↓ </text>
+              <text attributes={TextAttributes.DIM}>to navigate,</text>
+              <text fg="white"> enter </text>
+              <text attributes={TextAttributes.DIM}>to select):</text>
+            </box>
           </box>
           <SelectList options={providerOptions} onSelect={handleProviderSelect} disabled={shortcutsOpen} />
         </box>
@@ -296,233 +302,345 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
             placeholder="My Custom Provider"
           />
           <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-description' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter a description for {customName}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomDescriptionSubmit}
-            placeholder="Description of the provider"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-baseurl' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter the API base URL:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomBaseUrlSubmit}
-            placeholder="https://api.example.com/v1"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-apikey-required' && (
-        <box flexDirection="column" flexGrow={1} justifyContent="center">
-          <text>Does this provider require an API key?</text>
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Y for Yes, N for No</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-name' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter model name{customModels.length > 0 ? ` (${customModels.length} added)` : ''}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelNameSubmit}
-            placeholder="GPT-4 or Claude Opus"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-id' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter model ID for {tempModelName}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelIdSubmit}
-            placeholder="gpt-4 or claude-opus-4"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-description' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter description for {tempModelName}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelDescriptionSubmit}
-            placeholder="Best for complex tasks"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-add-another-model' && (
-        <box flexDirection="column" flexGrow={1} justifyContent="center">
-          <text>Model added: {customModels[customModels.length - 1]?.name}</text>
-          <box marginTop={1}>
-            <text>Add another model?</text>
-          </box>
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Y for Yes, N for No</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'model' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Select the AI model (↑/↓ to navigate, Enter to select):</text>
-          </box>
-          <SelectList options={modelOptions} onSelect={handleModelSelect} disabled={shortcutsOpen} />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'add-custom-model' && (
-        <box flexDirection="column" flexGrow={1} justifyContent="center">
-          <text>Add a custom model for {currentProvider?.name}</text>
-          <box marginTop={2} flexDirection="column" alignItems="flex-start">
-            <text>You can add custom models that are not in the default list.</text>
-            <text>This is useful for new models or specific configurations.</text>
-          </box>
-          <box marginTop={2}>
-            <text attributes={TextAttributes.DIM}>Press Enter to continue, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-name-existing' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter model name:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelNameExistingSubmit}
-            placeholder="GPT-4o-mini or Claude 3.5 Sonnet"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-id-existing' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter model ID for {tempModelName}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelIdExistingSubmit}
-            placeholder="gpt-4o-mini or claude-3-5-sonnet-20241022"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'custom-model-description-existing' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>Enter description for {tempModelName}:</text>
-          </box>
-          <CustomInput
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            onSubmit={handleCustomModelDescriptionExistingSubmit}
-            placeholder="Fast and efficient model for general tasks"
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
-          </box>
-        </box>
-      )}
-
-      {step === 'apikey' && (
-        <box flexDirection="column" flexGrow={1}>
-          <box marginBottom={1}>
-            <text>
-              Enter your {currentProvider?.name} API key:
-            </text>
-          </box>
-          {isOllamaCloudModel && (
-            <box marginBottom={1} flexDirection="column" alignItems="flex-start">
-              <text>
-                This is an Ollama Cloud model. You must create an API key on:
-              </text>
-              <text attributes={TextAttributes.DIM}>https://ollama.com/settings/keys</text>
+            <box flexDirection="row">
+              <text attributes={TextAttributes.DIM}>Press</text>
+              <text fg="white"> enter </text>
+              <text attributes={TextAttributes.DIM}>when done,</text>
+              <text fg="white"> escape </text>
+              <text attributes={TextAttributes.DIM}>to go back</text>
             </box>
-          )}
-          <CustomInput
-            onSubmit={handleApiKeySubmit}
-            focused={!shortcutsOpen}
-            pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
-            placeholder={isOllamaCloudModel ? "ollama_..." : "sk-..."}
-          />
-          <box marginTop={1}>
-            <text attributes={TextAttributes.DIM}>Press Enter when done, Escape to go back</text>
           </box>
         </box>
       )}
 
-      {step === 'confirm' && (
-        <box flexDirection="column" justifyContent="center" alignItems="center" flexGrow={1}>
-          <text attributes={TextAttributes.BOLD}>Configuration Complete!</text>
-          <box marginTop={2} flexDirection="column" alignItems="flex-start">
-            <text>Provider: {currentProvider?.name}</text>
-            <text>Model: {currentProvider?.models.find(m => m.id === selectedModel)?.name}</text>
-            {apiKey && <text>API Key: ********************</text>}
+      {
+        step === 'custom-description' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter a description for {customName}:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomDescriptionSubmit}
+              placeholder="Description of the provider"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
           </box>
-          <box marginTop={2}>
-            <text attributes={TextAttributes.DIM}>Press Enter to continue, Escape to go back</text>
+        )
+      }
+
+      {
+        step === 'custom-baseurl' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter the API base URL:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomBaseUrlSubmit}
+              placeholder="https://api.example.com/v1"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
           </box>
-        </box>
-      )}
-    </box>
+        )
+      }
+
+      {
+        step === 'custom-apikey-required' && (
+          <box flexDirection="column" flexGrow={1} justifyContent="center">
+            <text>Does this provider require an API key?</text>
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> Y </text>
+                <text attributes={TextAttributes.DIM}>for Yes — </text>
+                <text fg="white"> N </text>
+                <text attributes={TextAttributes.DIM}>for No</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-name' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter model name{customModels.length > 0 ? ` (${customModels.length} added)` : ''}:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelNameSubmit}
+              placeholder="GPT-4 or Claude Opus"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-id' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter model ID for {tempModelName}:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelIdSubmit}
+              placeholder="gpt-4 or claude-opus-4"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-description' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter description for {tempModelName}:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelDescriptionSubmit}
+              placeholder="Best for complex tasks"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-add-another-model' && (
+          <box flexDirection="column" flexGrow={1} justifyContent="center">
+            <text>Model added: {customModels[customModels.length - 1]?.name}</text>
+            <box marginTop={1}>
+              <text>Add another model?</text>
+            </box>
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> Y </text>
+                <text attributes={TextAttributes.DIM}>for Yes,</text>
+                <text fg="white"> N </text>
+                <text attributes={TextAttributes.DIM}>for No</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'model' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Select the AI model (↑/↓ to navigate, Enter to select):</text>
+            </box>
+            <SelectList options={modelOptions} onSelect={handleModelSelect} disabled={shortcutsOpen} />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'add-custom-model' && (
+          <box flexDirection="column" flexGrow={1} justifyContent="center">
+            <text>Add a custom model for {currentProvider?.name}</text>
+            <box marginTop={2} flexDirection="column" alignItems="flex-start">
+              <text>You can add custom models that are not in the default list.</text>
+              <text>This is useful for new models or specific configurations.</text>
+            </box>
+            <box marginTop={2}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>to continue,</text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-name-existing' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter model name:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelNameExistingSubmit}
+              placeholder="GPT-4o-mini or Claude 3.5 Sonnet"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done — </text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-id-existing' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter model ID for {tempModelName}:</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelIdExistingSubmit}
+              placeholder="gpt-4o-mini or claude-3-5-sonnet-20241022"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done — </text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'custom-model-description-existing' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter description for {tempModelName} :</text>
+            </box>
+            <CustomInput
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              onSubmit={handleCustomModelDescriptionExistingSubmit}
+              placeholder="Fast and efficient model for general tasks"
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done — </text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'apikey' && (
+          <box flexDirection="column" flexGrow={1}>
+            <box marginBottom={1}>
+              <text>Enter your {currentProvider?.name} API key : </text>
+            </box>
+            {isOllamaCloudModel && (
+              <box marginBottom={1} flexDirection="column" alignItems="flex-start">
+                <text>This is an Ollama Cloud model. You must create an API key on :</text>
+                <text attributes={TextAttributes.DIM}>https://ollama.com/settings/keys</text>
+              </box>
+            )}
+            <CustomInput
+              onSubmit={handleApiKeySubmit}
+              focused={!shortcutsOpen}
+              pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
+              placeholder={isOllamaCloudModel ? "ollama_..." : "sk-..."}
+            />
+            <box marginTop={1}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>when done — </text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+
+      {
+        step === 'confirm' && (
+          <box flexDirection="column" justifyContent="center" alignItems="center" flexGrow={1}>
+            <text attributes={TextAttributes.BOLD}>Configuration complete.</text>
+            <box marginTop={2} flexDirection="column" alignItems="flex-start">
+              <text>Provider : {currentProvider?.name}</text>
+              <text>Model : {currentProvider?.models.find(m => m.id === selectedModel)?.name}</text>
+              {apiKey && <text>API Key : ********************</text>}
+            </box>
+            <box marginTop={2}>
+              <box flexDirection="row">
+                <text attributes={TextAttributes.DIM}>Press</text>
+                <text fg="white"> enter </text>
+                <text attributes={TextAttributes.DIM}>to continue — </text>
+                <text fg="white"> escape </text>
+                <text attributes={TextAttributes.DIM}>to go back</text>
+              </box>
+            </box>
+          </box>
+        )
+      }
+    </box >
   );
 }
