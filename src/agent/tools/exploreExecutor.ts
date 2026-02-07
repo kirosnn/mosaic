@@ -319,8 +319,23 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       const xai = createXai({ apiKey: cleanApiKey });
       return xai(cleanModel);
     }
-    case 'ollama':
-      throw new Error('Ollama provider is not supported for explore tool');
+    case 'ollama': {
+      const isCloud = cleanModel.endsWith(':cloud') || cleanModel.endsWith('-cloud') || cleanModel.includes(':cloud') || cleanModel.includes('-cloud');
+      const ollamaBaseURL = isCloud && cleanApiKey
+        ? 'https://ollama.com/v1'
+        : 'http://localhost:11434/v1';
+      let ollamaModel = cleanModel;
+      if (isCloud) {
+        if (ollamaModel.endsWith(':cloud')) ollamaModel = ollamaModel.slice(0, -':cloud'.length);
+        else if (ollamaModel.endsWith('-cloud')) ollamaModel = ollamaModel.slice(0, -'-cloud'.length);
+      }
+      const ollamaOpenAI = createOpenAI({
+        apiKey: cleanApiKey || 'ollama',
+        baseURL: ollamaBaseURL,
+        compatibility: 'compatible',
+      });
+      return ollamaOpenAI(ollamaModel);
+    }
     default:
       throw new Error(`Unknown provider: ${config.provider}`);
   }
@@ -486,7 +501,7 @@ function formatExploreLogs(): string {
   const lines = ['Tools used:'];
   for (const log of exploreLogs) {
     const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
-    const status = log.success ? '→' : '-';
+    const status = log.success ? '➔ ' : '-';
     lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
   }
   return lines.join('\n');
