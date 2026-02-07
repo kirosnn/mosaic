@@ -1,0 +1,23 @@
+{
+  "name": "mosaic-bench",
+  "version": "1",
+  "description": "Benchmark suite for Mosaic AI code agent",
+  "type": "module",
+  "scripts": {
+    "bench": "bun run src/index.ts",
+    "bench:tool-use": "bun run src/index.ts --suite tool-use",
+    "bench:reasoning": "bun run src/index.ts --suite reasoning",
+    "bench:code-reading": "bun run src/index.ts --suite code-reading",
+    "bench:protocol": "bun run src/index.ts --suite protocol",
+    "bench:safety": "bun run src/index.ts --suite safety",
+    "visual": "bun run src/visual/generate.ts",
+    "compare": "bun run src/visual/compare.ts"
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
