@@ -2,7 +2,7 @@ import { generateDiff, formatDiffForDisplay } from './diff';
 
 export interface PendingChange {
     id: string;
-    type: 'write' | 'edit';
+    type: 'write' | 'edit' | 'delete';
     path: string;
     originalContent: string;
     newContent: string;
@@ -42,10 +42,11 @@ function createId(): string {
 
 function buildPreview(path: string, originalContent: string, newContent: string): { title: string; content: string } {
     const isCreate = originalContent === '' && newContent !== '';
+    const isDelete = originalContent !== '' && newContent === '';
     const diff = generateDiff(originalContent, newContent);
     const lines = diff.hasChanges ? formatDiffForDisplay(diff, 0) : ['No changes'];
     return {
-        title: `${isCreate ? 'Create' : 'Edit'} (${path})`,
+        title: `${isCreate ? 'Create' : isDelete ? 'Delete' : 'Edit'} (${path})`,
         content: lines.join('\n'),
     };
 }
@@ -107,7 +108,7 @@ export function subscribeReviewMode(listener: ReviewModeListener): () => void {
 }
 
 export function addPendingChange(
-    type: 'write' | 'edit',
+    type: 'write' | 'edit' | 'delete',
     path: string,
     originalContent: string,
     newContent: string,
