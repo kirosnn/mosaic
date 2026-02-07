@@ -1,4 +1,4 @@
-import { TextAttributes, SyntaxStyle, RGBA } from '@opentui/core';
+import { SyntaxStyle, RGBA } from '@opentui/core';
 import { parseDiffLine, getDiffLineColors } from './diff';
 
 const DIFF_SYNTAX_STYLE = SyntaxStyle.fromStyles({
@@ -131,23 +131,29 @@ export function renderDiffBlock(content: string, key: string, options?: { height
   );
 }
 
-export function renderInlineDiffLine(content: string) {
+export function renderInlineDiffLine(content: string, filetype?: string) {
   const parsed = parseDiffLine(content);
   if (parsed.isDiffLine) {
-    const colors = getDiffLineColors(parsed);
+    const signColor = parsed.isAdded ? '#22c55e' : '#ef4444';
+    const textColor = parsed.isAdded ? '#4ade80' : '#f87171';
+    const resolvedFiletype = filetype ? (DIFF_FILETYPE_MAP[filetype] || filetype) : undefined;
     return (
-      <>
-        <box backgroundColor={colors.labelBackground}>
-          <text fg="white" attributes={TextAttributes.DIM}>
-            {" "}{parsed.prefix}{parsed.lineNumber?.padStart(5) || ''}{' '}
-          </text>
-        </box>
-        <box backgroundColor={colors.contentBackground}>
-          <text fg="white">
-            {" "}{parsed.content || ''}
-          </text>
-        </box>
-      </>
+      <box flexDirection="row">
+        <text fg={signColor}>{` ${parsed.prefix}`}</text>
+        <text fg="#6e7681">{parsed.lineNumber?.padStart(5) || '     '}</text>
+        <text fg="#3a3a3a">{' '}</text>
+        {resolvedFiletype ? (
+          <code
+            content={parsed.content || ' '}
+            filetype={resolvedFiletype}
+            syntaxStyle={DIFF_SYNTAX_STYLE}
+            height={1}
+            wrapMode="none"
+          />
+        ) : (
+          <text fg={textColor}>{parsed.content || ''}</text>
+        )}
+      </box>
     );
   }
 
