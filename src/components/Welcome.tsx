@@ -32,7 +32,11 @@ export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false, command
         </box>
       </box>
       <box marginTop={1}>
-        <text attributes={TextAttributes.DIM}>Press Enter to continue...</text>
+        <box flexDirection="row">
+          <text attributes={TextAttributes.DIM}>Press </text>
+          <text fg="white">enter</text>
+          <text attributes={TextAttributes.DIM}> to continue...</text>
+        </box>
       </box>
     </box>
   );
