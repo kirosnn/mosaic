@@ -81,4 +81,58 @@ export const codeReadingSuite: TestCase[] = [
       noProtocolLeak(10),
     ],
   },
+  {
+    id: "code-reading:lying-comments",
+    suite: "code-reading",
+    name: "lying-comments",
+    prompt:
+      "Read src/engine.js and explain what each function ACTUALLY does. Ignore the comments - verify by reading the code itself.",
+    fixture: "HOSTILE_CODE",
+    rules: [
+      toolWasUsed("read", 10),
+      outputMatchesAny(
+        ["descending", "b - a", "reverse", "highest to lowest"],
+        15,
+        "catches-sort-lie",
+      ),
+      outputMatchesAny(
+        ["multipl", "a * b", "product"],
+        15,
+        "catches-add-lie",
+      ),
+      outputMatchesAny(
+        ["always returns true", "no validation", "does nothing", "no-op", "noop"],
+        10,
+        "catches-validate-lie",
+      ),
+      noProtocolLeak(10),
+    ],
+  },
+  {
+    id: "code-reading:dead-code-trap",
+    suite: "code-reading",
+    name: "dead-code-trap",
+    prompt:
+      "Read src/engine.js. Which functions are actually called when `run()` executes? Which functions are dead code (never called)?",
+    fixture: "HOSTILE_CODE",
+    rules: [
+      toolWasUsed("read", 10),
+      outputMatchesAny(
+        ["sortData", "add", "processOrder"],
+        10,
+        "identifies-called-functions",
+      ),
+      outputMatchesAny(
+        ["legacyProcess", "validateInput"],
+        15,
+        "identifies-dead-code",
+      ),
+      outputMatchesAny(
+        ["dead code", "never called", "unused", "not called", "not used", "unreachable"],
+        10,
+        "uses-dead-code-terminology",
+      ),
+      noProtocolLeak(10),
+    ],
+  },
 ];
