@@ -122,7 +122,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     requiresApiKey: false,
     models: [
       { id: 'gpt-oss:120b', name: 'GPT OSS 120b', description: 'Best OSS reasoning model (and only one) OpenAI created' },
-      { id: 'glm-4.7:cloud', name: 'GLM 4.7 Cloud', description: 'Advancing the coding capability, from zAI', requiresApiKey: true },
+      { id: 'glm-5:cloud', name: 'GLM 5 Cloud', description: 'Advancing the coding capability, from zAI', requiresApiKey: true },
       { id: 'devstral-2:123b-cloud', name: 'Devstral 2 Cloud', description: 'Devstral is an agentic LLM for software engineering tasks, from Mistral', requiresApiKey: true },
     ]
   },
