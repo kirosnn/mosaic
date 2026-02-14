@@ -31,14 +31,15 @@ export function shouldAutoCompact(totalTokens: number, maxContextTokens: number)
   return totalTokens >= threshold;
 }
 
-export function summarizeMessage(message: CompactableMessage, isLastUser: boolean): string {
+export function summarizeMessage(message: CompactableMessage, isLastUser: boolean, isFirstUser: boolean = false): string {
   if (message.role === "tool") {
     const name = message.toolName || "tool";
     const text = message.content || "";
     const isError = text.toLowerCase().includes('error') || text.toLowerCase().includes('failed');
     const status = isError ? 'FAILED' : 'OK';
     const cleaned = normalizeWhitespace(text);
-    return `[tool:${name} ${status}] ${truncateText(cleaned, 120)}`;
+    const toolLimit = name === 'plan' ? 600 : (name === 'glob' || name === 'grep' || name === 'read') ? 300 : 120;
+    return `[tool:${name} ${status}] ${truncateText(cleaned, toolLimit)}`;
   }
 
   if (message.role === "assistant") {
@@ -49,7 +50,7 @@ export function summarizeMessage(message: CompactableMessage, isLastUser: boolea
   }
 
   const cleaned = normalizeWhitespace(message.content || "");
-  const limit = isLastUser ? cleaned.length : 400;
+  const limit = (isLastUser || isFirstUser) ? cleaned.length : 400;
   return `user: ${truncateText(cleaned, limit)}`;
 }
 
@@ -59,13 +60,17 @@ export function buildSummary(messages: CompactableMessage[], maxTokens: number):
   const lines: string[] = [];
 
   let lastUserIndex = -1;
+  let firstUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role === 'user') { lastUserIndex = i; break; }
+  }
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]!.role === 'user') { firstUserIndex = i; break; }
   }
 
   for (let i = 0; i < messages.length; i++) {
     if (charCount >= maxChars) break;
-    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex)}`;
+    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex, i === firstUserIndex)}`;
     charCount += line.length + 1;
     lines.push(line);
   }
