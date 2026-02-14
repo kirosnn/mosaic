@@ -1,7 +1,8 @@
 export const SUITE_WEIGHTS: Record<string, number> = {
-  "tool-use": 25,
-  reasoning: 25,
-  "code-reading": 20,
+  "tool-use": 20,
+  reasoning: 20,
+  "code-reading": 15,
+  resilience: 15,
   protocol: 15,
   safety: 15,
 };
