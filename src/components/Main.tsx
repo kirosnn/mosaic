@@ -30,6 +30,8 @@ import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, g
 import { ReviewPanel } from "./main/ReviewPanel";
 import { ReviewMenu } from "./main/ReviewMenu";
 import { revertChange } from "../utils/revertChanges";
+import { CommandSelectMenu } from "./main/CommandSelectMenu";
+import type { SelectOption } from "../utils/commands/types";
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
@@ -46,6 +48,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [currentTitle, setCurrentTitle] = useState<string | null>(initialTitle ?? null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [imagesSupported, setImagesSupported] = useState(false);
+  const [selectMenu, setSelectMenu] = useState<{ title: string; options: SelectOption[]; onSelect: (value: string) => void } | null>(null);
   const currentTitleRef = useRef<string | null>(initialTitle ?? null);
   const lastAppliedTerminalTitleRef = useRef<string | null>(null);
   const titleExtractedRef = useRef(false);
@@ -541,6 +544,11 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
       const result = await executeCommand(value);
       if (result) {
+        if (result.showSelectMenu) {
+          setSelectMenu(result.showSelectMenu);
+          return;
+        }
+
         if (result.shouldClearMessages === true) {
           const commandMessage: Message = {
             id: createId(),
@@ -662,9 +670,19 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, [initialMessage, currentPage, handleSubmit]);
 
   if (currentPage === "home") {
-    const handleHomeSubmit = (value: string, meta?: InputSubmitMeta) => {
+    const handleHomeSubmit = async (value: string, meta?: InputSubmitMeta) => {
       const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
       if (!value.trim() && !hasPastedContent) return;
+
+      if (isCommand(value)) {
+        const result = await executeCommand(value);
+        if (result?.showSelectMenu) {
+          setCurrentPage("chat");
+          setSelectMenu(result.showSelectMenu);
+          return;
+        }
+      }
+
       setCurrentPage("chat");
       handleSubmit(value, meta);
     };
@@ -721,6 +739,34 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     />
   ) : undefined;
 
+  const modalWidth = Math.min(60, Math.floor(terminalWidth * 0.8));
+  const modalHeight = Math.min(20, Math.floor(terminalHeight * 0.7));
+
+  const selectMenuElement = selectMenu ? (
+    <CommandSelectMenu
+      title={selectMenu.title}
+      options={selectMenu.options}
+      modalWidth={modalWidth}
+      modalHeight={modalHeight}
+      shortcutsOpen={shortcutsOpen}
+      onSelect={(value) => {
+        const option = selectMenu.options.find(opt => opt.value === value);
+        selectMenu.onSelect(value);
+        setSelectMenu(null);
+
+        if (option) {
+          const confirmationMessage: Message = {
+            id: createId(),
+            role: "slash",
+            content: `${option.name} selected`,
+          };
+          setMessages(prev => [...prev, confirmationMessage]);
+        }
+      }}
+      onClose={() => setSelectMenu(null)}
+    />
+  ) : undefined;
+
   return (
     <ChatPage
       messages={messages}
@@ -740,6 +786,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       pendingImages={pendingImages}
       reviewPanel={reviewPanelElement}
       reviewMenu={reviewMenuElement}
+      selectMenu={selectMenuElement}
     />
   );
 }
