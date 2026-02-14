@@ -9,9 +9,84 @@ import { compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../../utils/tokenEstimator";
 import { getModelsDevContextLimit } from "../../utils/models";
+import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
+import { debugLog } from "../../utils/debug";
 import { hasPendingChanges, clearPendingChanges, startReview } from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
 import type { UserContent } from "ai";
+
+const MAX_CONTINUATIONS = 3;
+
+function extractPlanFromMessages(messages: Message[]): { steps: Array<{ step: string; status: string }> } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== 'tool' || m.toolName !== 'plan') continue;
+    const result = m.toolResult;
+    if (result && typeof result === 'object' && Array.isArray((result as any).plan)) {
+      const plan = (result as any).plan;
+      const steps = plan
+        .map((s: any) => ({
+          step: typeof s.step === 'string' ? s.step : '',
+          status: typeof s.status === 'string' ? s.status : 'pending',
+        }))
+        .filter((s: any) => s.step.trim());
+      if (steps.length > 0) return { steps };
+    }
+  }
+  return null;
+}
+
+function hasPendingPlanSteps(messages: Message[]): boolean {
+  const plan = extractPlanFromMessages(messages);
+  if (!plan) return false;
+  return plan.steps.some(s => s.status !== 'completed');
+}
+
+function extractPlanFromSteps(steps: ConversationStep[]): { steps: Array<{ step: string; status: string }> } | null {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]!;
+    if (s.type !== 'tool' || s.toolName !== 'plan') continue;
+    const result = s.toolResult;
+    if (result && typeof result === 'object' && Array.isArray((result as any).plan)) {
+      const plan = (result as any).plan;
+      const parsed = plan
+        .map((p: any) => ({ step: typeof p.step === 'string' ? p.step : '', status: typeof p.status === 'string' ? p.status : 'pending' }))
+        .filter((p: any) => p.step.trim());
+      if (parsed.length > 0) return { steps: parsed };
+    }
+  }
+  return null;
+}
+
+function hasPendingStepsInConversation(steps: ConversationStep[]): boolean {
+  const plan = extractPlanFromSteps(steps);
+  if (!plan) return false;
+  return plan.steps.some(s => s.status !== 'completed');
+}
+
+function buildContinuationPromptFromSteps(steps: ConversationStep[]): string {
+  const plan = extractPlanFromSteps(steps);
+  if (!plan) return '';
+  const pending = plan.steps.filter(s => s.status !== 'completed');
+  const completed = plan.steps.filter(s => s.status === 'completed');
+  const lines = pending.map(s => {
+    const marker = s.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
+    return `${marker} ${s.step}`;
+  });
+  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join('\n')}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
+}
+
+function buildContinuationPrompt(messages: Message[]): string {
+  const plan = extractPlanFromMessages(messages);
+  if (!plan) return '';
+  const pending = plan.steps.filter(s => s.status !== 'completed');
+  const completed = plan.steps.filter(s => s.status === 'completed');
+  const lines = pending.map(s => {
+    const marker = s.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
+    return `${marker} ${s.step}`;
+  });
+  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join('\n')}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
+}
 
 export interface AgentStreamCallbacks {
   createId: () => string;
@@ -87,6 +162,10 @@ export async function runAgentStream(
 
   const conversationId = createId();
   const conversationSteps: ConversationStep[] = [];
+  const continuationHistory: Array<{ role: "user" | "assistant"; content: string | UserContent }> = conversationHistory.map((entry) => ({
+    role: entry.role,
+    content: entry.content,
+  }));
   let totalTokens = { prompt: 0, completion: 0, total: 0 };
   let stepCount = 0;
   let totalChars = 0;
@@ -215,6 +294,7 @@ export async function runAgentStream(
     const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
     let assistantMessageId: string | null = null;
     let streamHadError = false;
+    let lastFinishReason = 'stop';
     titleExtractedRef.current = false;
 
     for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal })) {
@@ -294,7 +374,7 @@ export async function runAgentStream(
           assistantMessageId = createId();
         }
 
-        const displayContent = cleanContent;
+        const displayContent = sanitizeAccumulatedText(cleanContent);
         const currentMessageId = assistantMessageId;
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
@@ -399,12 +479,16 @@ export async function runAgentStream(
         updateBreakdown();
 
         if (assistantChunk.trim() || thinkingChunk.trim()) {
+          const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
           conversationSteps.push({
             type: 'assistant',
-            content: assistantChunk,
+            content: cleanedAssistant,
             thinkingContent: thinkingChunk || undefined,
             timestamp: Date.now()
           });
+          if (cleanedAssistant) {
+            continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+          }
         }
 
         conversationSteps.push({
@@ -463,7 +547,7 @@ export async function runAgentStream(
         if (assistantChunk.trim() || thinkingChunk.trim()) {
           conversationSteps.push({
             type: 'assistant',
-            content: assistantChunk,
+            content: sanitizeAccumulatedText(assistantChunk),
             thinkingContent: thinkingChunk || undefined,
             timestamp: Date.now()
           });
@@ -493,6 +577,7 @@ export async function runAgentStream(
         streamHadError = true;
         break;
       } else if (event.type === 'finish') {
+        lastFinishReason = event.finishReason || 'stop';
         if (event.usage && event.usage.totalTokens > 0) {
           const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
           const completionTokens = Math.max(
@@ -530,12 +615,328 @@ export async function runAgentStream(
     }
 
     if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
+      const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
       conversationSteps.push({
         type: 'assistant',
-        content: assistantChunk,
+        content: cleanedAssistant,
         thinkingContent: thinkingChunk || undefined,
         timestamp: Date.now()
       });
+      if (cleanedAssistant) {
+        continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+      }
+    }
+
+    let continuationCount = 0;
+    let lastActionSignature: string | null = null;
+
+    const countPendingSteps = (): number => {
+      const plan = extractPlanFromSteps(conversationSteps);
+      return plan ? plan.steps.filter(s => s.status !== 'completed').length : 0;
+    };
+
+    const needsContinuation = (): boolean => {
+      if (lastFinishReason === 'length') return true;
+      return hasPendingStepsInConversation(conversationSteps);
+    };
+
+    const computeActionSignature = (): string => {
+      const recentSteps = conversationSteps.slice(-5);
+      return recentSteps
+        .filter(s => s.type === 'tool')
+        .map(s => `${s.toolName}:${JSON.stringify(s.toolArgs)}`)
+        .join('|');
+    };
+
+    const planCheck = extractPlanFromSteps(conversationSteps);
+    const pendingSteps = planCheck ? planCheck.steps.filter(s => s.status !== 'completed') : [];
+    debugLog(`[continuation] check: lastFinishReason=${lastFinishReason} streamHadError=${streamHadError} planFound=${!!planCheck} pendingSteps=${pendingSteps.length} conversationSteps=${conversationSteps.length}`);
+    if (planCheck) {
+      debugLog(`[continuation] plan steps: ${planCheck.steps.map(s => `[${s.status}] ${s.step.slice(0, 40)}`).join(' | ')}`);
+    }
+
+    while (
+      !streamHadError &&
+      !abortController.signal.aborted &&
+      !disposedRef.current &&
+      continuationCount < MAX_CONTINUATIONS &&
+      needsContinuation()
+    ) {
+      continuationCount++;
+      const isLengthTruncation = lastFinishReason === 'length';
+      const continuationPrompt = isLengthTruncation
+        ? 'Your previous response was cut off due to length limits. Continue exactly where you left off.'
+        : buildContinuationPromptFromSteps(conversationSteps);
+      if (!continuationPrompt) break;
+
+      const pendingBefore = countPendingSteps();
+      let continuationToolCalls = 0;
+
+      debugLog(`[continuation] auto-continue #${continuationCount} - reason=${isLengthTruncation ? 'length_truncation' : 'pending_plan_steps'} pendingBefore=${pendingBefore}`);
+
+      conversationSteps.push({
+        type: 'user',
+        content: continuationPrompt,
+        timestamp: Date.now(),
+      });
+      continuationHistory.push({ role: 'user', content: continuationPrompt });
+      if (continuationHistory.length === 0) {
+        debugLog('[continuation] skipped auto-continue because history is empty');
+        break;
+      }
+
+      const continuationAgent = new Agent();
+      assistantChunk = '';
+      thinkingChunk = '';
+      assistantMessageId = null;
+      lastFinishReason = 'stop';
+      pendingToolCalls.clear();
+
+      for await (const event of continuationAgent.streamMessages(continuationHistory, { abortSignal: abortController.signal })) {
+        if (event.type === 'reasoning-delta') {
+          thinkingChunk += event.content;
+          totalChars += event.content.length;
+          reasoningChars += event.content.length;
+          setCurrentTokensMonotonic(estimateTokens());
+          updateBreakdown();
+
+          if (assistantMessageId === null) {
+            assistantMessageId = createId();
+          }
+
+          const currentMessageId = assistantMessageId;
+          setMessages((prev: Message[]) => {
+            const newMessages = [...prev];
+            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+            if (messageIndex === -1) {
+              newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
+            } else {
+              newMessages[messageIndex] = { ...newMessages[messageIndex]!, thinkingContent: thinkingChunk };
+            }
+            return newMessages;
+          });
+        } else if (event.type === 'text-delta') {
+          assistantChunk += event.content;
+          totalChars += event.content.length;
+          outputChars += event.content.length;
+          setCurrentTokensMonotonic(estimateTokens());
+          updateBreakdown();
+
+          const { cleanContent, isPending } = extractTitle(assistantChunk, true);
+          if (isPending) continue;
+
+          if (assistantMessageId === null) {
+            assistantMessageId = createId();
+          }
+
+          const displayContent = sanitizeAccumulatedText(cleanContent);
+          const currentMessageId = assistantMessageId;
+          setMessages((prev: Message[]) => {
+            const newMessages = [...prev];
+            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
+            if (messageIndex === -1) {
+              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
+            } else {
+              newMessages[messageIndex] = { ...newMessages[messageIndex]!, content: displayContent, thinkingContent: thinkingChunk };
+            }
+            return newMessages;
+          });
+        } else if (event.type === 'step-start') {
+          stepCount++;
+        } else if (event.type === 'tool-call-end') {
+          const argsLen = JSON.stringify(event.args).length;
+          totalChars += argsLen;
+          toolChars += argsLen;
+          setCurrentTokensMonotonic(estimateTokens());
+          updateBreakdown();
+
+          const normalized = normalizeToolCall(event.toolName, event.args ?? {});
+          const toolName = normalized.toolName;
+          const toolArgs = normalized.args;
+          const isExploreTool = toolName === 'explore';
+          const isMcpTool = toolName.startsWith('mcp__');
+          let runningMessageId: string | undefined;
+
+          if (isExploreTool) {
+            setExploreAbortController(abortController);
+            exploreToolsRef.current = [];
+            explorePurposeRef.current = (toolArgs.purpose as string) || 'exploring...';
+          }
+
+          if (isExploreTool || isMcpTool) {
+            runningMessageId = createId();
+            if (isExploreTool) exploreMessageIdRef.current = runningMessageId;
+            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, toolArgs);
+            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+            setMessages((prev: Message[]) => [...prev, {
+              id: runningMessageId!,
+              role: "tool",
+              content: runningContent,
+              toolName,
+              toolArgs,
+              success: true,
+              isRunning: true,
+              runningStartTime: Date.now()
+            }]);
+          }
+
+          pendingToolCalls.set(event.toolCallId, { toolName, args: toolArgs, messageId: runningMessageId });
+          continuationToolCalls++;
+        } else if (event.type === 'tool-result') {
+          const pending = pendingToolCalls.get(event.toolCallId);
+          const toolName = pending?.toolName ?? event.toolName;
+          const toolArgs = pending?.args ?? {};
+          const runningMessageId = pending?.messageId;
+          pendingToolCalls.delete(event.toolCallId);
+
+          if (toolName === 'explore') {
+            exploreMessageIdRef.current = null;
+            setExploreAbortController(null);
+          }
+
+          const { content: toolContent, success } = formatToolMessage(toolName, toolArgs, event.result, { maxLines: DEFAULT_MAX_TOOL_LINES });
+          const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+          totalChars += toolResultStr.length;
+          toolChars += toolResultStr.length;
+          setCurrentTokensMonotonic(estimateTokens());
+          updateBreakdown();
+
+          if (assistantChunk.trim() || thinkingChunk.trim()) {
+            const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
+            conversationSteps.push({
+              type: 'assistant',
+              content: cleanedAssistant,
+              thinkingContent: thinkingChunk || undefined,
+              timestamp: Date.now()
+            });
+            if (cleanedAssistant) {
+              continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+            }
+          }
+
+          conversationSteps.push({
+            type: 'tool',
+            content: toolContent,
+            toolName,
+            toolArgs,
+            toolResult: event.result,
+            timestamp: Date.now()
+          });
+
+          setMessages((prev: Message[]) => {
+            const newMessages = [...prev];
+            let runningIndex = -1;
+            if (runningMessageId) {
+              runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
+            } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
+              runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+            }
+
+            if (runningIndex !== -1) {
+              newMessages[runningIndex] = {
+                ...newMessages[runningIndex]!,
+                content: toolContent,
+                toolArgs,
+                toolResult: event.result,
+                success,
+                isRunning: false,
+                runningStartTime: undefined
+              };
+              return newMessages;
+            }
+
+            newMessages.push({
+              id: createId(),
+              role: "tool",
+              content: toolContent,
+              toolName,
+              toolArgs,
+              toolResult: event.result,
+              success
+            });
+            return newMessages;
+          });
+
+          assistantChunk = '';
+          thinkingChunk = '';
+          assistantMessageId = null;
+        } else if (event.type === 'error') {
+          if (abortController.signal.aborted) {
+            notifyAbort();
+            streamHadError = true;
+            break;
+          }
+          if (assistantChunk.trim() || thinkingChunk.trim()) {
+            conversationSteps.push({
+              type: 'assistant',
+              content: sanitizeAccumulatedText(assistantChunk),
+              thinkingContent: thinkingChunk || undefined,
+              timestamp: Date.now()
+            });
+          }
+          const errorContent = formatErrorMessage('API', event.error);
+          conversationSteps.push({ type: 'assistant', content: errorContent, timestamp: Date.now() });
+          setMessages((prev: Message[]) => [...prev, { id: createId(), role: 'assistant', content: errorContent, isError: true }]);
+          assistantChunk = '';
+          thinkingChunk = '';
+          assistantMessageId = null;
+          streamHadError = true;
+          break;
+        } else if (event.type === 'finish') {
+          lastFinishReason = event.finishReason || 'stop';
+          if (event.usage && event.usage.totalTokens > 0) {
+            const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
+            const completionTokens = Math.max(0, (event.usage.completionTokens ?? 0) || (event.usage.totalTokens - promptTokens));
+            const allocatedTokens = allocateTokensByWeight(completionTokens, [reasoningChars, outputChars, toolChars]);
+            totalTokens = { prompt: event.usage.promptTokens, completion: event.usage.completionTokens, total: event.usage.totalTokens };
+            lastPromptTokensRef.current = event.usage.promptTokens;
+            setCurrentTokensMonotonic(event.usage.totalTokens);
+            setTokenBreakdown({
+              prompt: promptTokens,
+              reasoning: allocatedTokens[0] ?? 0,
+              output: allocatedTokens[1] ?? 0,
+              tools: allocatedTokens[2] ?? 0
+            });
+          }
+        }
+      }
+
+      if (abortController.signal.aborted) { notifyAbort(); return; }
+
+      if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
+        const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
+        conversationSteps.push({
+          type: 'assistant',
+          content: cleanedAssistant,
+          thinkingContent: thinkingChunk || undefined,
+          timestamp: Date.now()
+        });
+        if (cleanedAssistant) {
+          continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+        }
+      }
+
+      if (streamHadError) break;
+
+      const pendingAfter = countPendingSteps();
+      const currentSignature = computeActionSignature();
+
+      if (continuationToolCalls === 0 && pendingAfter >= pendingBefore) {
+        debugLog(`[continuation] no progress detected (toolCalls=${continuationToolCalls} pendingBefore=${pendingBefore} pendingAfter=${pendingAfter}), stopping`);
+        break;
+      }
+
+      if (lastActionSignature && currentSignature === lastActionSignature) {
+        debugLog(`[continuation] loop detected (same actions repeated), stopping`);
+        break;
+      }
+
+      if (continuationToolCalls === 0) {
+        debugLog(`[continuation] no tool calls in continuation, agent likely finished`);
+        break;
+      }
+
+      lastActionSignature = currentSignature;
     }
 
     responseDuration = Date.now() - localStartTime;
