@@ -94,9 +94,12 @@ export interface BenchmarkReport {
 }
 
 export class RateLimitError extends Error {
-  constructor(message: string) {
+  retryAfterMs?: number;
+
+  constructor(message: string, opts?: { retryAfterMs?: number }) {
     super(message);
     this.name = "RateLimitError";
+    this.retryAfterMs = opts?.retryAfterMs;
   }
 }
 
