@@ -1,4 +1,4 @@
-import type { Command } from './types';
+import type { Command, SelectOption } from './types';
 import {
   readConfig,
   getAllProviders,
@@ -18,15 +18,56 @@ export const providerCommand: Command = {
     const providers = getAllProviders();
 
     if (args.length === 0) {
-      const lines = providers.map(p => {
-        const active = p.id === config.provider ? ' (active)' : '';
-        const hasKey = getApiKeyForProvider(p.id) ? ' [key set]' : (p.requiresApiKey ? ' [no key]' : '');
-        return `  ${p.id} - ${p.name}${active}${hasKey}`;
+      const options: SelectOption[] = providers.map(p => {
+        const hasKey = getApiKeyForProvider(p.id);
+        const isActive = p.id === config.provider;
+        const isDisabled = p.requiresApiKey && !hasKey;
+
+        let description = p.name;
+        if (p.requiresApiKey) {
+          description += hasKey ? ' [key set]' : ' [no key]';
+        }
+
+        const popular = ['openai', 'anthropic', 'google'];
+        const category = popular.includes(p.id) ? 'Popular' : 'Other';
+
+        return {
+          name: p.id,
+          description,
+          value: p.id,
+          active: isActive,
+          disabled: isDisabled,
+          category,
+          badge: isActive ? 'Connected' : undefined,
+        };
+      }).sort((a, b) => {
+        if (a.category === b.category) return 0;
+        return a.category === 'Popular' ? -1 : 1;
       });
 
       return {
         success: true,
-        content: `Available providers:\n\n${lines.join('\n')}`,
+        content: '',
+        showSelectMenu: {
+          title: 'Select AI Provider',
+          options,
+          onSelect: (value: string) => {
+            const provider = getProviderById(value);
+            if (!provider) return;
+
+            if (provider.id === config.provider) return;
+
+            setActiveProvider(provider.id);
+
+            const currentModel = config.model;
+            const modelExists = provider.models.some(m => m.id === currentModel);
+
+            if (!modelExists && provider.models.length > 0) {
+              const firstModel = provider.models[0]!;
+              setActiveModel(firstModel.id);
+            }
+          },
+        },
       };
     }
 
