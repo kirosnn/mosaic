@@ -4,6 +4,7 @@ import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../ty
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { applyMistralReasoning, resolveReasoningEnabled } from './reasoningConfig';
 import { debugLog } from '../../utils/debug';
+import { StreamSanitizer } from './streamSanitizer';
 
 export class MistralProvider implements Provider {
   async *sendMessage(
@@ -32,9 +33,12 @@ export class MistralProvider implements Provider {
           system: systemPrompt,
           tools: config.tools,
           maxSteps: config.maxSteps || 100,
+          maxTokens: config.maxOutputTokens ?? 16384,
           maxRetries: 0,
           abortSignal: options?.abortSignal
         });
+
+        const sanitizer = new StreamSanitizer();
 
         for await (const chunk of result.fullStream as any) {
           const c: any = chunk;
@@ -48,14 +52,16 @@ export class MistralProvider implements Provider {
               }
               break;
 
-            case 'text-delta':
-              yield {
-                type: 'text-delta',
-                content: c.textDelta,
-              };
+            case 'text-delta': {
+              const safe = sanitizer.feed(c.textDelta);
+              if (safe !== null) {
+                yield { type: 'text-delta', content: safe };
+              }
               break;
+            }
 
             case 'step-start':
+              sanitizer.reset();
               yield {
                 type: 'step-start',
                 stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : stepCounter,
@@ -90,13 +96,21 @@ export class MistralProvider implements Provider {
               };
               break;
 
-            case 'finish':
+            case 'finish': {
+              const finishReason = String(c.finishReason ?? 'stop');
+              const effectiveFinishReason = finishReason === 'stop' && sanitizer.wasTruncated()
+                ? 'length'
+                : finishReason;
+              if (effectiveFinishReason !== finishReason) {
+                debugLog('[mistral] finish reason remapped stop->length due to sanitizer truncation');
+              }
               yield {
                 type: 'finish',
-                finishReason: String(c.finishReason ?? 'stop'),
+                finishReason: effectiveFinishReason,
                 usage: c.usage,
               };
               break;
+            }
 
             case 'error': {
               const err = normalizeError(c.error);
