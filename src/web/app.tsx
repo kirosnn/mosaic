@@ -8,6 +8,7 @@ import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolH
 import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation, mergeConversations } from './storage';
 import { QuestionRequest } from '../utils/questionBridge';
 import { ApprovalRequest } from '../utils/approvalBridge';
+import { sanitizeAccumulatedText } from '../agent/provider/streamSanitizer';
 import { parseRoute, navigateTo, replaceTo, Route } from './router';
 import './assets/css/global.css'
 
@@ -343,6 +344,7 @@ function App() {
                                 assistantStartTime = Date.now();
                             }
 
+                            const displayContent = sanitizeAccumulatedText(cleanContent);
                             setMessages((prev) => {
                                 const newMessages = [...prev];
                                 const messageIndex = newMessages.findIndex((m) => m.id === assistantMessageId);
@@ -351,13 +353,13 @@ function App() {
                                     newMessages.push({
                                         id: assistantMessageId!,
                                         role: 'assistant',
-                                        content: cleanContent,
+                                        content: displayContent,
                                         thinkingContent: thinkingChunk,
                                     });
                                 } else {
                                     newMessages[messageIndex] = {
                                         ...newMessages[messageIndex]!,
-                                        content: cleanContent,
+                                        content: displayContent,
                                     };
                                 }
                                 return newMessages;
