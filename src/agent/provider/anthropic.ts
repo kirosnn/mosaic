@@ -4,6 +4,7 @@ import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../ty
 import { getAnthropicReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
+import { StreamSanitizer } from './streamSanitizer';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
@@ -30,10 +31,13 @@ export class AnthropicProvider implements Provider {
           system: config.systemPrompt,
           tools: config.tools,
           maxSteps: config.maxSteps || 100,
+          maxTokens: config.maxOutputTokens ?? 16384,
           maxRetries: 0,
           abortSignal: options?.abortSignal,
           providerOptions: anthropicReasoning ? { anthropic: anthropicReasoning } : undefined,
         });
+
+        const sanitizer = new StreamSanitizer();
 
         for await (const chunk of result.fullStream as any) {
           const c: any = chunk;
@@ -47,14 +51,16 @@ export class AnthropicProvider implements Provider {
               }
               break;
 
-            case 'text-delta':
-              yield {
-                type: 'text-delta',
-                content: c.textDelta,
-              };
+            case 'text-delta': {
+              const safe = sanitizer.feed(c.textDelta);
+              if (safe !== null) {
+                yield { type: 'text-delta', content: safe };
+              }
               break;
+            }
 
             case 'step-start':
+              sanitizer.reset();
               yield {
                 type: 'step-start',
                 stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : stepCounter,
@@ -90,14 +96,22 @@ export class AnthropicProvider implements Provider {
               };
               break;
 
-            case 'finish':
-              debugLog(`[anthropic] finish reason=${c.finishReason ?? 'stop'} promptTokens=${c.usage?.promptTokens ?? '?'} completionTokens=${c.usage?.completionTokens ?? '?'}`);
+            case 'finish': {
+              const finishReason = String(c.finishReason ?? 'stop');
+              const effectiveFinishReason = finishReason === 'stop' && sanitizer.wasTruncated()
+                ? 'length'
+                : finishReason;
+              if (effectiveFinishReason !== finishReason) {
+                debugLog('[anthropic] finish reason remapped stop->length due to sanitizer truncation');
+              }
+              debugLog(`[anthropic] finish reason=${effectiveFinishReason} promptTokens=${c.usage?.promptTokens ?? '?'} completionTokens=${c.usage?.completionTokens ?? '?'}`);
               yield {
                 type: 'finish',
-                finishReason: String(c.finishReason ?? 'stop'),
+                finishReason: effectiveFinishReason,
                 usage: c.usage,
               };
               break;
+            }
 
             case 'error': {
               const err = normalizeError(c.error);
