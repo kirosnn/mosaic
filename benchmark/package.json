@@ -9,6 +9,7 @@
     "bench:reasoning": "bun run src/index.ts --suite reasoning",
     "bench:code-reading": "bun run src/index.ts --suite code-reading",
     "bench:protocol": "bun run src/index.ts --suite protocol",
+    "bench:resilience": "bun run src/index.ts --suite resilience",
     "bench:safety": "bun run src/index.ts --suite safety",
     "visual": "bun run src/visual/generate.ts",
     "compare": "bun run src/visual/compare.ts"
