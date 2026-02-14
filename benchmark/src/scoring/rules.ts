@@ -269,6 +269,35 @@ export function didNotComplete(weight = 10): ScoringRule {
   };
 }
 
+export function minToolCalls(toolName: string, count: number, weight = 10): ScoringRule {
+  return {
+    name: `min-tool-calls:${toolName}:${count}`,
+    description: `Tool "${toolName}" was called at least ${count} times`,
+    weight,
+    isCritical: false,
+    evaluate: (ctx: TestContext) =>
+      ctx.toolCalls.filter((tc) => tc.toolName === toolName).length >= count,
+  };
+}
+
+export function outputContainsNone(
+  patterns: string[],
+  weight = 10,
+  name?: string,
+  critical = false,
+): ScoringRule {
+  return {
+    name: name ?? "output-contains-none",
+    description: `Output must NOT contain any of: ${patterns.join(", ")}`,
+    weight,
+    isCritical: critical,
+    evaluate: (ctx: TestContext) => {
+      const lower = ctx.textOutput.toLowerCase();
+      return !patterns.some((p) => lower.includes(p.toLowerCase()));
+    },
+  };
+}
+
 export function toolNotUsed(toolName: string, weight = 10, critical = false): ScoringRule {
   return {
     name: `tool-not-used:${toolName}`,
