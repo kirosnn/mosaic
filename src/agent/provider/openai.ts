@@ -7,6 +7,7 @@ import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
 import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
+import { StreamSanitizer } from './streamSanitizer';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -176,8 +177,16 @@ export class OpenAIProvider implements Provider {
               json.store = false;
               modified = true;
             }
-            if (config.systemPrompt) {
+            if (config.systemPrompt && !json.instructions) {
               json.instructions = config.systemPrompt;
+              modified = true;
+            }
+            if (json.max_output_tokens !== undefined) {
+              delete json.max_output_tokens;
+              modified = true;
+            }
+            if (json.max_tokens !== undefined) {
+              delete json.max_tokens;
               modified = true;
             }
             if (modified) {
@@ -187,7 +196,8 @@ export class OpenAIProvider implements Provider {
           } catch { }
         }
       }
-      debugLog(`[oauth][openai] ${method} ${originalUrl} -> ${url} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
+      const bodySize = typeof nextInit.body === 'string' ? nextInit.body.length : 0;
+      debugLog(`[oauth][openai] ${method} ${originalUrl} -> ${url} bodySize=${bodySize} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
       const res = await fetch(url, nextInit);
       if (!res.ok) {
         const text = await res.clone().text();
@@ -225,25 +235,29 @@ export class OpenAIProvider implements Provider {
           ? transformToolsForResponsesApi(config.tools)
           : config.tools;
 
+      const outputLimit = config.maxOutputTokens ?? 16384;
+      const useOutputLimit = !oauthAuth;
       const result = streamText({
         model: pickModel(endpoint),
         messages: messages,
         system: config.systemPrompt,
         tools: toolsToUse,
         maxSteps: config.maxSteps ?? 100,
+        ...(endpoint !== 'responses' && useOutputLimit ? { maxTokens: outputLimit } : {}),
         maxRetries: 0,
         abortSignal: options?.abortSignal,
-          providerOptions: {
-            openai: {
-              strictJsonSchema,
-              ...(openaiReasoning ?? {}),
-            },
+        providerOptions: {
+          openai: {
+            strictJsonSchema,
+            ...(openaiReasoning ?? {}),
+            ...(endpoint === 'responses' && useOutputLimit ? { maxOutputTokens: outputLimit } : {}),
           },
+        },
       });
 
       let stepCounter = 0;
       let hasEmitted = false;
-
+      const sanitizer = new StreamSanitizer();
       for await (const chunk of result.fullStream as any) {
         const c: any = chunk;
         switch (c.type) {
@@ -257,16 +271,18 @@ export class OpenAIProvider implements Provider {
             }
             break;
 
-          case 'text-delta':
-            hasEmitted = true;
-            yield {
-              type: 'text-delta',
-              content: c.textDelta,
-            };
+          case 'text-delta': {
+            const safe = sanitizer.feed(c.textDelta);
+            if (safe !== null) {
+              hasEmitted = true;
+              yield { type: 'text-delta', content: safe };
+            }
             break;
+          }
 
           case 'step-start':
             hasEmitted = true;
+            sanitizer.reset();
             yield {
               type: 'step-start',
               stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : stepCounter,
@@ -304,14 +320,22 @@ export class OpenAIProvider implements Provider {
             };
             break;
 
-          case 'finish':
+          case 'finish': {
             hasEmitted = true;
+            const finishReason = String(c.finishReason ?? 'stop');
+            const effectiveFinishReason = finishReason === 'stop' && sanitizer.wasTruncated()
+              ? 'length'
+              : finishReason;
+            if (effectiveFinishReason !== finishReason) {
+              debugLog('[openai] finish reason remapped stop->length due to sanitizer truncation');
+            }
             yield {
               type: 'finish',
-              finishReason: String(c.finishReason ?? 'stop'),
+              finishReason: effectiveFinishReason,
               usage: c.usage,
             };
             break;
+          }
 
           case 'error': {
             const err = normalizeError(c.error);
