@@ -312,6 +312,28 @@ export async function getModelsDevContextLimit(
     return null;
 }
 
+export async function getModelsDevOutputLimit(
+    providerId: string,
+    modelId: string,
+    options: { refresh?: boolean } = {}
+): Promise<number | null> {
+    try {
+        const direct = await getModelsDevModel(providerId, modelId, options);
+        const limit = direct?.limit?.output;
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+    } catch {
+    }
+
+    try {
+        const byId = await findModelsDevModelById(modelId, options);
+        const limit = byId?.model?.limit?.output;
+        if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
+    } catch {
+    }
+
+    return null;
+}
+
 export function modelAcceptsImages(model: ModelsDevModel): boolean {
     if (!model.modalities) return false;
     const { input } = model.modalities;
