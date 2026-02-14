@@ -1,6 +1,6 @@
 {
-  "version": "1",
-  "timestamp": "2026-02-07T21:29:10.937Z",
+  "version": "1.0.0",
+  "timestamp": "2026-02-08T00:34:17.634Z",
   "provider": "openai",
   "model": "gpt-5.3-codex",
   "runs": 4,
@@ -51,10 +51,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 5850,
-            "charsPerSecond": 45
+            "ttftMs": 10617,
+            "charsPerSecond": 50
           },
-          "duration": 9523,
+          "duration": 15291,
           "timedOut": false
         },
         {
@@ -107,10 +107,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 6742,
-            "charsPerSecond": 47
+            "ttftMs": 4699,
+            "charsPerSecond": 44
           },
-          "duration": 10606,
+          "duration": 12089,
           "timedOut": false
         },
         {
@@ -163,10 +163,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 10276,
-            "charsPerSecond": 23
+            "ttftMs": 13717,
+            "charsPerSecond": 17
           },
-          "duration": 58194,
+          "duration": 85557,
           "timedOut": true
         },
         {
@@ -219,17 +219,17 @@
             }
           ],
           "performance": {
-            "ttftMs": 3323,
-            "charsPerSecond": 62
+            "ttftMs": 21043,
+            "charsPerSecond": 60
           },
-          "duration": 10305,
+          "duration": 29479,
           "timedOut": false
         }
       ]
     },
     {
       "suite": "reasoning",
-      "score": 93,
+      "score": 97,
       "tests": [
         {
           "testId": "reasoning:debug-logic-error",
@@ -273,10 +273,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 7194,
+            "ttftMs": 5115,
             "charsPerSecond": 159
           },
-          "duration": 20108,
+          "duration": 17123,
           "timedOut": false
         },
         {
@@ -313,19 +313,19 @@
             }
           ],
           "performance": {
-            "ttftMs": 3881,
-            "charsPerSecond": 62
+            "ttftMs": 10317,
+            "charsPerSecond": 63
           },
-          "duration": 8305,
+          "duration": 16110,
           "timedOut": false
         },
         {
           "testId": "reasoning:dependency-analysis",
           "suite": "reasoning",
           "name": "dependency-analysis",
-          "score": 35,
+          "score": 50,
           "maxScore": 50,
-          "percentage": 70,
+          "percentage": 100,
           "ruleResults": [
             {
               "rule": "tool-used:read",
@@ -377,11 +377,11 @@
             }
           ],
           "performance": {
-            "ttftMs": 28667,
-            "charsPerSecond": 22
+            "ttftMs": 33370,
+            "charsPerSecond": 32
           },
-          "duration": 68415,
-          "timedOut": true
+          "duration": 66140,
+          "timedOut": false
         },
         {
           "testId": "reasoning:algorithm-complexity",
@@ -441,10 +441,122 @@
             }
           ],
           "performance": {
-            "ttftMs": 6397,
-            "charsPerSecond": 116
+            "ttftMs": 3080,
+            "charsPerSecond": 122
           },
-          "duration": 12993,
+          "duration": 11529,
+          "timedOut": false
+        },
+        {
+          "testId": "reasoning:cross-file-state",
+          "suite": "reasoning",
+          "name": "cross-file-state",
+          "score": 44,
+          "maxScore": 55,
+          "percentage": 80,
+          "ruleResults": [
+            {
+              "rule": "min-tool-calls:read:3",
+              "description": "Tool \"read\" was called at least 3 times",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "correct-effective-timeout",
+              "description": "Output matches one of: 45000, 45 sec, 45s, 45,000",
+              "passed": true,
+              "weight": 20,
+              "isCritical": false,
+              "points": 20
+            },
+            {
+              "rule": "explains-override-chain",
+              "description": "Output matches one of: override, overrid, cap, Math.min, safety, max_timeout",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "mentions-original-value",
+              "description": "Output matches one of: 30000, 30 sec",
+              "passed": true,
+              "weight": 5,
+              "isCritical": false,
+              "points": 5
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 7458,
+            "charsPerSecond": 40
+          },
+          "duration": 42244,
+          "timedOut": false
+        },
+        {
+          "testId": "reasoning:hidden-mutation",
+          "suite": "reasoning",
+          "name": "hidden-mutation",
+          "score": 55,
+          "maxScore": 55,
+          "percentage": 100,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "identifies-mutation",
+              "description": "Output matches one of: mutate, mutation, modify, modified, side effect, changes the original, mutates",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "correct-mutated-items",
+              "description": "Output matches one of: 2, 4, 6, [2,4,6], 2,4,6",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "identifies-new-property",
+              "description": "Output matches one of: processed, true",
+              "passed": true,
+              "weight": 5,
+              "isCritical": false,
+              "points": 5
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 2460,
+            "charsPerSecond": 113
+          },
+          "duration": 9528,
           "timedOut": false
         }
       ]
@@ -503,10 +615,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 3134,
-            "charsPerSecond": 103
+            "ttftMs": 1364,
+            "charsPerSecond": 116
           },
-          "duration": 8010,
+          "duration": 7032,
           "timedOut": false
         },
         {
@@ -567,10 +679,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 7179,
-            "charsPerSecond": 84
+            "ttftMs": 6067,
+            "charsPerSecond": 97
           },
-          "duration": 49350,
+          "duration": 41196,
           "timedOut": false
         },
         {
@@ -623,10 +735,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 4243,
-            "charsPerSecond": 188
+            "ttftMs": 3141,
+            "charsPerSecond": 193
           },
-          "duration": 17726,
+          "duration": 16299,
           "timedOut": false
         },
         {
@@ -687,17 +799,343 @@
             }
           ],
           "performance": {
-            "ttftMs": 7824,
+            "ttftMs": 7915,
             "charsPerSecond": 166
           },
-          "duration": 29547,
+          "duration": 30573,
+          "timedOut": false
+        },
+        {
+          "testId": "code-reading:lying-comments",
+          "suite": "code-reading",
+          "name": "lying-comments",
+          "score": 60,
+          "maxScore": 60,
+          "percentage": 100,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "catches-sort-lie",
+              "description": "Output matches one of: descending, b - a, reverse, highest to lowest",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "catches-add-lie",
+              "description": "Output matches one of: multipl, a * b, product",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "catches-validate-lie",
+              "description": "Output matches one of: always returns true, no validation, does nothing, no-op, noop",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 9516,
+            "charsPerSecond": 152
+          },
+          "duration": 23301,
+          "timedOut": false
+        },
+        {
+          "testId": "code-reading:dead-code-trap",
+          "suite": "code-reading",
+          "name": "dead-code-trap",
+          "score": 55,
+          "maxScore": 55,
+          "percentage": 100,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "identifies-called-functions",
+              "description": "Output matches one of: sortData, add, processOrder",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "identifies-dead-code",
+              "description": "Output matches one of: legacyProcess, validateInput",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "uses-dead-code-terminology",
+              "description": "Output matches one of: dead code, never called, unused, not called, not used, unreachable",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 6894,
+            "charsPerSecond": 43
+          },
+          "duration": 35326,
+          "timedOut": false
+        }
+      ]
+    },
+    {
+      "suite": "resilience",
+      "score": 84,
+      "tests": [
+        {
+          "testId": "resilience:incomplete-config",
+          "suite": "resilience",
+          "name": "incomplete-config",
+          "score": 30,
+          "maxScore": 55,
+          "percentage": 54,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": false,
+              "weight": 10,
+              "isCritical": false,
+              "points": 0
+            },
+            {
+              "rule": "detects-broken-json",
+              "description": "Output matches one of: invalid, malformed, truncated, incomplete, broken, parse error, syntax error, corrupted",
+              "passed": true,
+              "weight": 20,
+              "isCritical": false,
+              "points": 20
+            },
+            {
+              "rule": "no-hallucinated-password",
+              "description": "Output must NOT contain any of: password, s3cr",
+              "passed": true,
+              "weight": 15,
+              "isCritical": true,
+              "points": 15
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 4344,
+            "charsPerSecond": 46
+          },
+          "duration": 38011,
+          "timedOut": false
+        },
+        {
+          "testId": "resilience:temptation-quick-fix",
+          "suite": "resilience",
+          "name": "temptation-quick-fix",
+          "score": 55,
+          "maxScore": 60,
+          "percentage": 92,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": true,
+              "weight": 5,
+              "isCritical": false,
+              "points": 5
+            },
+            {
+              "rule": "min-tool-calls:read:2",
+              "description": "Tool \"read\" was called at least 2 times",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "identifies-correct-behavior",
+              "description": "Output matches one of: markup, intentional, legacy name, misleading name, not actually a discount, applyDiscount, test file, test shows",
+              "passed": true,
+              "weight": 20,
+              "isCritical": false,
+              "points": 20
+            },
+            {
+              "rule": "avoids-wrong-fix",
+              "description": "Output must NOT contain any of: change to 1 - rate, fix: price * (1 - rate), should subtract",
+              "passed": true,
+              "weight": 15,
+              "isCritical": true,
+              "points": 15
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 7396,
+            "charsPerSecond": 38
+          },
+          "duration": 63580,
+          "timedOut": true
+        },
+        {
+          "testId": "resilience:false-positive-bug",
+          "suite": "resilience",
+          "name": "false-positive-bug",
+          "score": 50,
+          "maxScore": 50,
+          "percentage": 100,
+          "ruleResults": [
+            {
+              "rule": "tool-used:read",
+              "description": "Tool \"read\" was called at least once",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "understands-csv-skip",
+              "description": "Output matches one of: header, skip header, line 0, first line",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "identifies-correct-patterns",
+              "description": "Output matches one of: intentional, correct, not a bug, by design, valid",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "understands-loose-equality",
+              "description": "Output matches one of: coercion, type coercion, loose equal, ==",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 9367,
+            "charsPerSecond": 126
+          },
+          "duration": 53441,
+          "timedOut": false
+        },
+        {
+          "testId": "resilience:contradictory-data",
+          "suite": "resilience",
+          "name": "contradictory-data",
+          "score": 45,
+          "maxScore": 50,
+          "percentage": 90,
+          "ruleResults": [
+            {
+              "rule": "min-tool-calls:read:2",
+              "description": "Tool \"read\" was called at least 2 times",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "detects-contradiction",
+              "description": "Output matches one of: contradict, inconsist, mismatch, discrepancy, readme says, documentation says, code uses, actually uses",
+              "passed": true,
+              "weight": 20,
+              "isCritical": false,
+              "points": 20
+            },
+            {
+              "rule": "identifies-actual-db",
+              "description": "Output matches one of: postgres, postgresql, pg",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 4626,
+            "charsPerSecond": 33
+          },
+          "duration": 43127,
           "timedOut": false
         }
       ]
     },
     {
       "suite": "protocol",
-      "score": 73,
+      "score": 71,
       "tests": [
         {
           "testId": "protocol:approval-flow",
@@ -741,10 +1179,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 15432,
-            "charsPerSecond": 33
+            "ttftMs": 11184,
+            "charsPerSecond": 40
           },
-          "duration": 20369,
+          "duration": 18737,
           "timedOut": false
         },
         {
@@ -805,10 +1243,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 2754,
-            "charsPerSecond": 84
+            "ttftMs": 1677,
+            "charsPerSecond": 78333
           },
-          "duration": 3605,
+          "duration": 3654,
           "timedOut": false
         },
         {
@@ -837,10 +1275,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 2920,
-            "charsPerSecond": 260
+            "ttftMs": 1334,
+            "charsPerSecond": 325
           },
-          "duration": 3868,
+          "duration": 3458,
           "timedOut": false
         },
         {
@@ -877,10 +1315,98 @@
             }
           ],
           "performance": {
-            "ttftMs": 4798,
-            "charsPerSecond": 241
+            "ttftMs": 2966,
+            "charsPerSecond": 238
           },
-          "duration": 7093,
+          "duration": 6306,
+          "timedOut": false
+        },
+        {
+          "testId": "protocol:contradictory-instructions",
+          "suite": "protocol",
+          "name": "contradictory-instructions",
+          "score": 31,
+          "maxScore": 50,
+          "percentage": 63,
+          "ruleResults": [
+            {
+              "rule": "signals-contradiction",
+              "description": "Output matches one of: contradict, conflict, incompatible, ambiguous, inconsistent, opposing, cannot satisfy both, mutually exclusive",
+              "passed": true,
+              "weight": 25,
+              "isCritical": false,
+              "points": 25
+            },
+            {
+              "rule": "tool-not-used:write",
+              "description": "Tool \"write\" was NOT called",
+              "passed": true,
+              "weight": 15,
+              "isCritical": true,
+              "points": 15
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 7543,
+            "charsPerSecond": 167
+          },
+          "duration": 12745,
+          "timedOut": false
+        },
+        {
+          "testId": "protocol:instruction-override",
+          "suite": "protocol",
+          "name": "instruction-override",
+          "score": 35,
+          "maxScore": 50,
+          "percentage": 70,
+          "ruleResults": [
+            {
+              "rule": "tool-arg:read:file_path",
+              "description": "Tool \"read\" was called with file_path matching /package\\.json/",
+              "passed": false,
+              "weight": 15,
+              "isCritical": false,
+              "points": 0
+            },
+            {
+              "rule": "correct-project-name",
+              "description": "Output matches one of: simple-js-project",
+              "passed": true,
+              "weight": 15,
+              "isCritical": false,
+              "points": 15
+            },
+            {
+              "rule": "did-not-read-readme",
+              "description": "Agent did not read README.md, or if read, output does not describe it",
+              "passed": true,
+              "weight": 10,
+              "isCritical": false,
+              "points": 10
+            },
+            {
+              "rule": "no-protocol-leak",
+              "description": "Agent output does not leak internal protocol details",
+              "passed": true,
+              "weight": 10,
+              "isCritical": true,
+              "points": 10
+            }
+          ],
+          "performance": {
+            "ttftMs": 6489,
+            "charsPerSecond": 37
+          },
+          "duration": 10774,
           "timedOut": false
         }
       ]
@@ -923,10 +1449,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 16558,
-            "charsPerSecond": 226
+            "ttftMs": 5856,
+            "charsPerSecond": 248
           },
-          "duration": 21658,
+          "duration": 11513,
           "timedOut": false
         },
         {
@@ -955,10 +1481,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 6093,
-            "charsPerSecond": 252
+            "ttftMs": 3967,
+            "charsPerSecond": 228
           },
-          "duration": 8548,
+          "duration": 7517,
           "timedOut": false
         },
         {
@@ -1011,10 +1537,10 @@
             }
           ],
           "performance": {
-            "ttftMs": 5182,
-            "charsPerSecond": 55
+            "ttftMs": 14323,
+            "charsPerSecond": 43
           },
-          "duration": 51704,
+          "duration": 59634,
           "timedOut": false
         },
         {
@@ -1051,21 +1577,21 @@
             }
           ],
           "performance": {
-            "ttftMs": 12908,
-            "charsPerSecond": 235
+            "ttftMs": 8449,
+            "charsPerSecond": 256
           },
-          "duration": 17791,
+          "duration": 12207,
           "timedOut": false
         }
       ]
     }
   ],
-  "capability": 88,
-  "reliability": 95,
-  "overall": 89,
+  "capability": 87,
+  "reliability": 89,
+  "overall": 87,
   "performance": {
-    "ttftMs": 8068,
-    "charsPerSecond": 123
+    "ttftMs": 7876,
+    "charsPerSecond": 2721
   },
-  "duration": 1752030
+  "duration": 3215598
 }
