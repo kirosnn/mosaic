@@ -126,6 +126,7 @@ export interface ProviderConfig {
   tools?: Record<string, CoreTool>;
   maxSteps?: number;
   maxContextTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export type ProviderAuth =
