@@ -1,4 +1,3 @@
-import { RateLimitError } from "../types.js";
 import type { BenchmarkReport, TestCase, SuiteResult, TestResult, PerformanceMetrics } from "../types.js";
 import { CONFIG, discoverMosaicUrl } from "../config.js";
 import { MosaicClient } from "../client/mosaic-client.js";
@@ -13,16 +12,22 @@ import { reasoningSuite } from "../suites/reasoning/index.js";
 import { codeReadingSuite } from "../suites/code-reading/index.js";
 import { protocolSuite } from "../suites/protocol/index.js";
 import { safetySuite } from "../suites/safety/index.js";
+import { resilienceSuite } from "../suites/resilience/index.js";
 
 const ALL_SUITES: Record<string, TestCase[]> = {
   "tool-use": toolUseSuite,
   reasoning: reasoningSuite,
   "code-reading": codeReadingSuite,
+  resilience: resilienceSuite,
   protocol: protocolSuite,
   safety: safetySuite,
 };
 
 const NUM_RUNS = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export interface HarnessOptions {
   suiteFilter?: string;
@@ -122,27 +127,19 @@ export async function runBenchmark(options: HarnessOptions): Promise<void> {
       }
 
       allRunResults.push(runResults);
-    }
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      console.error("\n========================================");
-      console.error("  BENCHMARK ANNULE - RATE LIMIT");
-      console.error("========================================");
-      console.error(`  ${err.message}`);
-      console.error("  Resultats declares nuls.");
-      console.error("========================================\n");
-      await restoreConfig();
-      process.exit(1);
-    }
-    throw err;
-  }
 
-  await restoreConfig();
+      if (run < totalRuns && CONFIG.interRunDelayMs > 0) {
+        await sleep(CONFIG.interRunDelayMs);
+      }
+    }
+  } finally {
+    await restoreConfig();
+  }
 
   const averaged = averageRuns(allRunResults);
   const capability = computeOverall(Object.fromEntries(averaged.map((s) => [s.suite, s.score])));
   const reliability = computeReliability(allRunResults);
-  const overall = Math.round(0.85 * capability + 0.15 * reliability);
+  const overall = Math.round(0.80 * capability + 0.20 * reliability);
   const performance = aggregatePerformance(allRunResults);
 
   const report: BenchmarkReport = {
@@ -182,7 +179,23 @@ function computeReliability(allRuns: SuiteResult[][]): number {
   }
 
   const meanStddev = testStddevs.reduce((s, d) => s + d, 0) / testStddevs.length;
-  return Math.round(Math.max(0, Math.min(100, 100 - meanStddev * 2)));
+  let base = 100 - meanStddev * 2;
+
+  let outlierPenalty = 0;
+  for (const suiteName of suiteNames) {
+    const suitesAcrossRuns = allRuns.map((run) => run.find((s) => s.suite === suiteName)!);
+    const testIds = suitesAcrossRuns[0].tests.map((t) => t.testId);
+    for (const testId of testIds) {
+      const percentages = suitesAcrossRuns.map((s) => s.tests.find((t) => t.testId === testId)!.percentage);
+      const max = Math.max(...percentages);
+      const min = Math.min(...percentages);
+      if (max - min > 50) {
+        outlierPenalty += 3;
+      }
+    }
+  }
+
+  return Math.round(Math.max(0, Math.min(100, base - outlierPenalty)));
 }
 
 function aggregatePerformance(allRuns: SuiteResult[][]): PerformanceMetrics {
