@@ -137,6 +137,7 @@ interface ChatPageProps {
   pendingImages: ImageAttachment[];
   reviewPanel?: React.ReactNode;
   reviewMenu?: React.ReactNode;
+  selectMenu?: React.ReactNode;
   onModalOpenChange?: (open: boolean) => void;
 }
 
@@ -157,6 +158,7 @@ export function ChatPage({
   pendingImages,
   reviewPanel,
   reviewMenu,
+  selectMenu,
   onModalOpenChange,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
@@ -549,6 +551,8 @@ export function ChatPage({
         </box>
       )}
 
+      {selectMenu}
+
       <box
         position="absolute"
         bottom={1.4}
@@ -575,9 +579,9 @@ export function ChatPage({
             <CustomInput
               onSubmit={onSubmit}
               placeholder={reviewPanel ? "Review changes above..." : "Type your message..."}
-              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel && !isUserModalOpen}
+              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel && !isUserModalOpen && !selectMenu}
               pasteRequestId={(shortcutsOpen || isUserModalOpen) ? 0 : pasteRequestId}
-              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen}
+              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen || Boolean(selectMenu)}
               maxWidth={Math.max(10, terminalWidth - 6)}
             />
           </box>
