@@ -3,6 +3,17 @@ import { RateLimitError } from "../types.js";
 import type { ApprovalPolicy, CollectorResult } from "../types.js";
 import { EventCollector } from "./event-collector.js";
 
+function parseRetryAfterMs(res: Response): number | undefined {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  const secs = Number(trimmed);
+  if (Number.isFinite(secs)) return Math.max(0, Math.round(secs * 1000));
+  const dateMs = Date.parse(trimmed);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return undefined;
+}
+
 export class MosaicClient {
   private get baseUrl() {
     return CONFIG.mosaicUrl;
@@ -55,7 +66,7 @@ export class MosaicClient {
 
     if (res.status === 429) {
       const body = await res.json().catch(() => ({})) as { error?: string };
-      throw new RateLimitError(body.error ?? "Rate limit: 429");
+      throw new RateLimitError(body.error ?? "Rate limit: 429", { retryAfterMs: parseRetryAfterMs(res) });
     }
     if (!res.ok) throw new Error(`Message failed: ${res.status}`);
     if (!res.body) throw new Error("No response body");
