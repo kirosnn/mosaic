@@ -1,8 +1,8 @@
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import sharp from "sharp";
 import { LIGHT, DARK, type Theme } from "./themes.js";
 import { renderCard, type CardData } from "./card-renderer.js";
+import { writePngFromSvg } from "./image.js";
 import type { BenchmarkReport } from "../types.js";
 
 interface ModelsDevData {
@@ -112,7 +112,7 @@ export function normalizeReport(raw: Record<string, unknown>): BenchmarkReport {
   return report;
 }
 
-async function generateCards(reportPath: string): Promise<void> {
+async function generateCards(reportPath: string, imageScale: number): Promise<void> {
   const raw = readFileSync(reportPath, "utf-8");
   const report = normalizeReport(JSON.parse(raw));
 
@@ -143,7 +143,7 @@ async function generateCards(reportPath: string): Promise<void> {
     const svg = renderCard(cardData, theme);
     const pngPath = join(resultsDir, `benchmark-${ts}-${theme.name}.png`);
 
-    await sharp(Buffer.from(svg)).png().toFile(pngPath);
+    await writePngFromSvg(svg, pngPath, imageScale);
     console.log(`  ${theme.name}: ${pngPath}`);
   }
 
@@ -152,13 +152,32 @@ async function generateCards(reportPath: string): Promise<void> {
 
 const resultsDir = resolve(import.meta.dir, "../../results");
 
-const reportPaths = process.argv[2]
-  ? [resolve(process.argv[2])]
+const args = process.argv.slice(2);
+let imageScale = Number(process.env.MOSAIC_BENCH_IMAGE_SCALE ?? 2);
+const positional: string[] = [];
+for (let i = 0; i < args.length; i++) {
+  const a = args[i] ?? "";
+  if (a === "--scale") {
+    imageScale = Number(args[i + 1]);
+    i++;
+    continue;
+  }
+  if (a.startsWith("--scale=")) {
+    imageScale = Number(a.slice("--scale=".length));
+    continue;
+  }
+  positional.push(a);
+}
+
+const reportPaths = positional[0]
+  ? [resolve(positional[0])]
   : findAllReports(resultsDir);
 
-for (const reportPath of reportPaths) {
-  if (!existsSync(resolve(reportPath, ".."))) {
-    mkdirSync(resolve(reportPath, ".."), { recursive: true });
+if (import.meta.main) {
+  for (const reportPath of reportPaths) {
+    if (!existsSync(resolve(reportPath, ".."))) {
+      mkdirSync(resolve(reportPath, ".."), { recursive: true });
+    }
+    await generateCards(reportPath, imageScale);
   }
-  await generateCards(reportPath);
 }
