@@ -23,7 +23,7 @@ Usage:
   bun run src/index.ts [options]
 
 Options:
-  -s, --suite <name>    Run only a specific suite (tool-use, reasoning, code-reading, protocol, safety)
+  -s, --suite <name>    Run only a specific suite (tool-use, reasoning, code-reading, resilience, protocol, safety)
   -t, --test <id>       Run only tests matching this filter
   -p, --provider <id>   Override provider for this benchmark (restored after)
   -m, --model <id>      Override model for this benchmark (restored after)
