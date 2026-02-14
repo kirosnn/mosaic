@@ -4,7 +4,8 @@ import type { Command } from './types';
 
 const INIT_PROMPT = `Analyze the codebase and create or update the MOSAIC.md file in the root of the current workspace.
 
-IMPORTANT: MOSAIC.md is NOT a README. It's a specialized context file that helps AI agents (like me) understand this project better when working in this workspace in the future.
+IMPORTANT: MOSAIC.md is NOT a README. It's a specialized context file that helps AI agents (like me) understand this project better when working in this workspace in the future. 
+MANDATORY: You have to create or modify MOSAIC.md file before finishing the task, that's the most important user's request.
 
 The MOSAIC.md file should contain:
 
@@ -14,11 +15,18 @@ The MOSAIC.md file should contain:
 4. **Key Files & Directories** - Critical files/folders and their purposes
 5. **Common Tasks** - Frequent development tasks and how to accomplish them
 
-First, analyze the existing codebase:
-- Check package.json, README.md, and main source files
-- Identify the technologies, frameworks, and tools used
-- Understand the project structure and organization
-- Look for existing documentation or comments
+WORKFLOW - Use glob, read, and grep DIRECTLY. Do NOT use the explore tool for this task.
+
+Step 1 - Gather context using parallel tool calls:
+- glob(pattern="*") to list root files
+- glob(pattern="src/**/*", maxDepth=2) to understand source structure
+- read package.json, README.md, tsconfig.json (or equivalent config files), if they don't exist, just continue to gather context across the codebase
+
+Step 2 - Dive deeper based on what you found:
+- Read main entry points and key source files
+- grep for patterns, frameworks, conventions
+
+Step 3 - Create or update MOSAIC.md:
 
 **If MOSAIC.md already exists:**
 - Read the existing MOSAIC.md file first
