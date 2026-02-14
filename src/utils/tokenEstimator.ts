@@ -18,6 +18,7 @@ export function estimateTokensForContent(content: string, thinkingContent?: stri
 const CONTEXT_BUDGETS: Record<string, number> = {
   anthropic: 180000,
   openai: 115000,
+  openrouter: 115000,
   google: 900000,
   mistral: 28000,
   xai: 117000,
