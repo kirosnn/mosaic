@@ -3,6 +3,7 @@ import {
   toolWasUsed,
   outputContains,
   outputMatchesAny,
+  minToolCalls,
   noProtocolLeak,
 } from "../../scoring/rules.js";
 
@@ -91,6 +92,60 @@ export const reasoningSuite: TestCase[] = [
       outputContains("getAll", 5),
       outputContains("getById", 5),
       outputContains("getProfile", 5),
+      noProtocolLeak(10),
+    ],
+  },
+  {
+    id: "reasoning:cross-file-state",
+    suite: "reasoning",
+    name: "cross-file-state",
+    prompt:
+      "What is the effective request timeout value when this application runs in production mode? Read all relevant files to trace the value through the entire chain.",
+    fixture: "MULTI_FILE_LOGIC",
+    rules: [
+      minToolCalls("read", 3, 10),
+      outputMatchesAny(
+        ["45000", "45 sec", "45s", "45,000"],
+        20,
+        "correct-effective-timeout",
+      ),
+      outputMatchesAny(
+        ["override", "overrid", "cap", "Math.min", "safety", "max_timeout"],
+        10,
+        "explains-override-chain",
+      ),
+      outputMatchesAny(
+        ["30000", "30 sec"],
+        5,
+        "mentions-original-value",
+      ),
+      noProtocolLeak(10),
+    ],
+  },
+  {
+    id: "reasoning:hidden-mutation",
+    suite: "reasoning",
+    name: "hidden-mutation",
+    prompt:
+      "Read src/transformer.js. If I call `processData({items: [1, 2, 3]})`, what is the state of the original input object AFTER the call? Does the function mutate its input?",
+    fixture: "MUTATION_CODE",
+    rules: [
+      toolWasUsed("read", 10),
+      outputMatchesAny(
+        ["mutate", "mutation", "modify", "modified", "side effect", "changes the original", "mutates"],
+        15,
+        "identifies-mutation",
+      ),
+      outputMatchesAny(
+        ["2, 4, 6", "[2,4,6]", "2,4,6"],
+        15,
+        "correct-mutated-items",
+      ),
+      outputMatchesAny(
+        ["processed", "true"],
+        5,
+        "identifies-new-property",
+      ),
       noProtocolLeak(10),
     ],
   },
