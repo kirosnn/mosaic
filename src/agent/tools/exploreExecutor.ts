@@ -178,6 +178,7 @@ interface OAuthState {
 }
 
 let currentOAuthState: OAuthState | null = null;
+let exploreSystemPromptForOAuth: string | null = null;
 
 async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
   if (!currentOAuthState?.refreshToken) return currentOAuthState;
@@ -253,6 +254,10 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
           json.store = false;
           modified = true;
         }
+        if (!json.instructions && exploreSystemPromptForOAuth) {
+          json.instructions = exploreSystemPromptForOAuth;
+          modified = true;
+        }
         if (modified) {
           nextInit = { ...nextInit, body: JSON.stringify(json) };
           headers.set('content-type', 'application/json');
@@ -269,7 +274,9 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
   return res;
 };
 
-function createModelProvider(config: { provider: string; model: string; apiKey?: string }) {
+type ExploreEndpoint = 'responses' | 'chat';
+
+function createModelProvider(config: { provider: string; model: string; apiKey?: string }, endpoint?: ExploreEndpoint) {
   const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
   let cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
 
@@ -302,10 +309,24 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
           fetch: fetchWithOAuth as typeof fetch,
           compatibility: 'compatible',
         });
-        return openai.responses(cleanModel);
+        const ep = endpoint ?? 'responses';
+        return ep === 'chat' ? openai.chat(cleanModel) : openai.responses(cleanModel);
       }
       const openai = createOpenAI({ apiKey: cleanApiKey });
       return openai(cleanModel);
+    }
+    case 'openrouter': {
+      const openrouter = createOpenAI({
+        apiKey: cleanApiKey,
+        baseURL: 'https://openrouter.ai/api/v1',
+        compatibility: 'compatible',
+        name: 'openrouter',
+        headers: {
+          'HTTP-Referer': 'http://localhost',
+          'X-Title': 'mosaic',
+        },
+      });
+      return openrouter(cleanModel);
     }
     case 'google': {
       const google = createGoogleGenerativeAI({ apiKey: cleanApiKey });
@@ -538,14 +559,9 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   }, EXPLORE_TIMEOUT);
 
   try {
-    const model = createModelProvider({
-      provider: userConfig.provider,
-      model: userConfig.model,
-      apiKey: userConfig.apiKey,
-    });
-
     const tools = createExploreTools();
-    const toolsToUse = userConfig.provider === 'openai'
+    const isOpenAI = userConfig.provider === 'openai';
+    const toolsToUse = isOpenAI
       ? transformToolsForResponsesApi(tools)
       : tools;
 
@@ -554,81 +570,113 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       ? `${EXPLORE_SYSTEM_PROMPT}\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`
       : EXPLORE_SYSTEM_PROMPT;
 
-    let exploreAttempt = 0;
+    exploreSystemPromptForOAuth = systemPrompt;
+
+    const auth = getAuthForProvider(userConfig.provider);
+    const isOAuth = auth?.type === 'oauth';
+    const endpoints: ExploreEndpoint[] = (isOpenAI && isOAuth) ? ['responses', 'chat'] : ['responses'];
+
     let lastError: string | null = null;
 
-    while (exploreAttempt < MAX_EXPLORE_RETRIES) {
+    for (const endpoint of endpoints) {
       if (abortSignal?.aborted || isExploreAborted()) break;
+      if (exploreDoneResult !== null) break;
 
-      const rateLimitStatus = getRateLimitStatus(EXPLORE_RATE_LIMIT_KEY);
-      if (rateLimitStatus.cooldownRemainingMs > 0) {
-        debugLog(`[explore] rate limit cooldown active, waiting ${rateLimitStatus.cooldownRemainingMs}ms`);
-      }
+      const model = createModelProvider({
+        provider: userConfig.provider,
+        model: userConfig.model,
+        apiKey: userConfig.apiKey,
+      }, endpoint);
 
-      const canProceed = await waitForRateLimit(EXPLORE_RATE_LIMIT_KEY, undefined, abortSignal);
-      if (!canProceed) {
-        debugLog('[explore] rate limit wait aborted');
-        break;
-      }
+      let exploreAttempt = 0;
+      let endpointFailed = false;
 
-      try {
-        const result = streamText({
-          model,
-          messages: [
-            {
-              role: 'user',
-              content: `Explore the codebase to: ${purpose}`,
-            },
-          ],
-          system: systemPrompt,
-          tools: toolsToUse,
-          maxSteps: MAX_STEPS,
-          abortSignal,
-          providerOptions: userConfig.provider === 'openai'
-            ? { openai: { strictJsonSchema: false } }
-            : undefined,
-        });
-
-        for await (const chunk of result.fullStream as any) {
-          if (isExploreAborted()) {
-            break;
-          }
-          const c: any = chunk;
-          if (c.type === 'error') {
-            const errorMessage = c.error instanceof Error ? c.error.message : String(c.error);
-            const decision = getRetryDecision(c.error);
-            if (decision.shouldRetry) {
-              lastError = errorMessage;
-              throw c.error;
-            }
-            lastError = errorMessage;
-          }
-          if (exploreDoneResult !== null) {
-            break;
-          }
-        }
-
-        reportRateLimitSuccess(EXPLORE_RATE_LIMIT_KEY);
-        break;
-      } catch (streamError) {
+      while (exploreAttempt < MAX_EXPLORE_RETRIES) {
         if (abortSignal?.aborted || isExploreAborted()) break;
 
-        const decision = getRetryDecision(streamError);
-        if (!decision.shouldRetry || exploreAttempt >= MAX_EXPLORE_RETRIES - 1) {
-          const errorMsg = streamError instanceof Error ? streamError.message : String(streamError);
-          debugLog(`[explore] stream error not retryable or max retries reached | attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | error=${errorMsg.slice(0, 150)}`);
-          lastError = errorMsg;
-          reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
+        const rateLimitStatus = getRateLimitStatus(EXPLORE_RATE_LIMIT_KEY);
+        if (rateLimitStatus.cooldownRemainingMs > 0) {
+          debugLog(`[explore] rate limit cooldown active, waiting ${rateLimitStatus.cooldownRemainingMs}ms`);
+        }
+
+        const canProceed = await waitForRateLimit(EXPLORE_RATE_LIMIT_KEY, undefined, abortSignal);
+        if (!canProceed) {
+          debugLog('[explore] rate limit wait aborted');
           break;
         }
 
-        reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
-        const delay = Math.min(60000, EXPLORE_RETRY_BASE_DELAY_MS * Math.pow(2, exploreAttempt));
-        debugLog(`[explore] retrying after rate limit error | attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | delay=${delay}ms`);
+        try {
+          const result = streamText({
+            model,
+            messages: [
+              {
+                role: 'user',
+                content: `Explore the codebase to: ${purpose}`,
+              },
+            ],
+            system: systemPrompt,
+            tools: toolsToUse,
+            maxSteps: MAX_STEPS,
+            abortSignal,
+            providerOptions: isOpenAI
+              ? { openai: { strictJsonSchema: false } }
+              : undefined,
+          });
 
-        await new Promise(resolve => setTimeout(resolve, delay));
-        exploreAttempt += 1;
+          for await (const chunk of result.fullStream as any) {
+            if (isExploreAborted()) {
+              break;
+            }
+            const c: any = chunk;
+            if (c.type === 'error') {
+              const errorMessage = c.error instanceof Error ? c.error.message : String(c.error);
+              const decision = getRetryDecision(c.error);
+              if (decision.shouldRetry) {
+                lastError = errorMessage;
+                throw c.error;
+              }
+              lastError = errorMessage;
+            }
+            if (exploreDoneResult !== null) {
+              break;
+            }
+          }
+
+          reportRateLimitSuccess(EXPLORE_RATE_LIMIT_KEY);
+          endpointFailed = false;
+          break;
+        } catch (streamError) {
+          if (abortSignal?.aborted || isExploreAborted()) break;
+
+          const errorMsg = streamError instanceof Error ? streamError.message : String(streamError);
+          const isBadRequest = errorMsg.toLowerCase().includes('bad request') || errorMsg.includes('400');
+
+          if (isBadRequest && endpoints.indexOf(endpoint) < endpoints.length - 1) {
+            debugLog(`[explore] endpoint=${endpoint} returned Bad Request, falling back to next endpoint`);
+            lastError = errorMsg;
+            endpointFailed = true;
+            break;
+          }
+
+          const decision = getRetryDecision(streamError);
+          if (!decision.shouldRetry || exploreAttempt >= MAX_EXPLORE_RETRIES - 1) {
+            debugLog(`[explore] stream error not retryable or max retries reached | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | error=${errorMsg.slice(0, 150)}`);
+            lastError = errorMsg;
+            reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
+            endpointFailed = true;
+            break;
+          }
+
+          reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
+          const delay = Math.min(60000, EXPLORE_RETRY_BASE_DELAY_MS * Math.pow(2, exploreAttempt));
+          debugLog(`[explore] retrying after error | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | delay=${delay}ms`);
+
+          await new Promise(resolve => setTimeout(resolve, delay));
+          exploreAttempt += 1;
+        }
       }
+
+      if (!endpointFailed) break;
     }
 
     clearTimeout(timeoutId);
