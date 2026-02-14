@@ -11,11 +11,12 @@ import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemProm
 import { getTools } from './tools/definitions';
 import { AnthropicProvider } from './provider/anthropic';
 import { OpenAIProvider } from './provider/openai';
+import { OpenRouterProvider } from './provider/openrouter';
 import { GoogleProvider } from './provider/google';
 import { MistralProvider } from './provider/mistral';
 import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
-import { getModelsDevContextLimit } from '../utils/models';
+import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 import { setExploreContext } from '../utils/exploreBridge';
 import { debugLog } from '../utils/debug';
@@ -61,7 +62,7 @@ function truncateText(text: string, maxChars: number): string {
   return text.slice(0, Math.max(0, maxChars - 3)) + '...';
 }
 
-function summarizeMessage(message: CoreMessage, isLastUser: boolean): string {
+function summarizeMessage(message: CoreMessage, isLastUser: boolean, isFirstUser: boolean = false): string {
   if (message.role === 'tool') {
     const content: any = message.content;
     const part = Array.isArray(content) ? content[0] : undefined;
@@ -82,7 +83,8 @@ function summarizeMessage(message: CoreMessage, isLastUser: boolean): string {
     const isError = resultText.toLowerCase().includes('error') || resultText.toLowerCase().includes('failed');
     const status = isError ? 'FAILED' : 'OK';
     const cleaned = normalizeWhitespace(resultText);
-    return `[tool:${toolName} ${status}] ${truncateText(cleaned, 120)}`;
+    const toolLimit = toolName === 'plan' ? 600 : toolName === 'glob' || toolName === 'grep' || toolName === 'read' ? 300 : 120;
+    return `[tool:${toolName} ${status}] ${truncateText(cleaned, toolLimit)}`;
   }
 
   if (message.role === 'assistant') {
@@ -94,24 +96,91 @@ function summarizeMessage(message: CoreMessage, isLastUser: boolean): string {
   }
 
   const cleaned = normalizeWhitespace(contentToText(message.content));
-  const limit = isLastUser ? cleaned.length : 400;
+  const limit = (isLastUser || isFirstUser) ? cleaned.length : 400;
   return `user: ${truncateText(cleaned, limit)}`;
+}
+
+function extractOriginalUserInstruction(messages: CoreMessage[]): string {
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      return contentToText(msg.content);
+    }
+  }
+  return '';
+}
+
+function extractLastPlanState(messages: CoreMessage[]): { steps: Array<{ step: string; status: string }>; explanation?: string } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role !== 'tool') continue;
+    const content: any = msg.content;
+    const part = Array.isArray(content) ? content[0] : undefined;
+    const toolName = part?.toolName ?? part?.tool_name;
+    if (toolName !== 'plan') continue;
+    const result = part?.result;
+    if (result && typeof result === 'object' && Array.isArray(result.plan)) {
+      return {
+        steps: result.plan.map((s: any) => ({
+          step: typeof s.step === 'string' ? s.step : '',
+          status: typeof s.status === 'string' ? s.status : 'pending',
+        })).filter((s: any) => s.step.trim()),
+        explanation: typeof result.explanation === 'string' ? result.explanation : undefined,
+      };
+    }
+  }
+  return null;
+}
+
+function buildTaskReminder(messages: CoreMessage[]): string {
+  const parts: string[] = [];
+
+  const originalInstruction = extractOriginalUserInstruction(messages);
+  if (originalInstruction) {
+    parts.push(`ORIGINAL USER REQUEST:\n${truncateText(normalizeWhitespace(originalInstruction), 1000)}`);
+  }
+
+  const planState = extractLastPlanState(messages);
+  if (planState) {
+    const planLines: string[] = [];
+    for (const s of planState.steps) {
+      const marker = s.status === 'completed' ? '[DONE]' : s.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
+      planLines.push(`${marker} ${s.step}`);
+    }
+    const pending = planState.steps.filter(s => s.status !== 'completed').length;
+    parts.push(`CURRENT PLAN (${pending} remaining):\n${planLines.join('\n')}`);
+  }
+
+  return parts.join('\n\n');
 }
 
 function buildSummary(messages: CoreMessage[], maxTokens: number): string {
   const maxChars = Math.max(0, maxTokens * 3);
-  const header = 'CONVERSATION SUMMARY (auto):';
+
+  const taskReminder = buildTaskReminder(messages);
+  const header = taskReminder
+    ? `${taskReminder}\n\nCONVERSATION SUMMARY (auto):`
+    : 'CONVERSATION SUMMARY (auto):';
   let charCount = header.length + 1;
   const lines: string[] = [];
 
   let lastUserIndex = -1;
+  let firstUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'user') { lastUserIndex = i; break; }
+    if (messages[i]!.role === 'user') {
+      lastUserIndex = i;
+      break;
+    }
+  }
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]!.role === 'user') {
+      firstUserIndex = i;
+      break;
+    }
   }
 
   for (let i = 0; i < messages.length; i++) {
     if (charCount >= maxChars) break;
-    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex)}`;
+    const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex, i === firstUserIndex)}`;
     charCount += line.length + 1;
     lines.push(line);
   }
@@ -200,6 +269,7 @@ export class Agent {
   private config: ProviderConfig;
   private static ollamaChecked = false;
   private resolvedMaxContextTokens?: number;
+  private resolvedMaxOutputTokens?: number;
 
   static async ensureProviderReady(): Promise<{ ready: boolean; started?: boolean; error?: string }> {
     const userConfig = readConfig();
@@ -264,6 +334,8 @@ export class Agent {
     switch (providerName) {
       case 'openai':
         return new OpenAIProvider();
+      case 'openrouter':
+        return new OpenRouterProvider();
       case 'anthropic':
         return new AnthropicProvider();
       case 'google':
@@ -290,12 +362,19 @@ export class Agent {
 
     try {
       if (this.resolvedMaxContextTokens === undefined) {
-        const resolved = await getModelsDevContextLimit(this.config.provider, this.config.model);
-        if (typeof resolved === 'number') {
-          this.resolvedMaxContextTokens = resolved;
+        const [ctxLimit, outLimit] = await Promise.all([
+          getModelsDevContextLimit(this.config.provider, this.config.model),
+          getModelsDevOutputLimit(this.config.provider, this.config.model),
+        ]);
+        if (typeof ctxLimit === 'number') {
+          this.resolvedMaxContextTokens = ctxLimit;
           if (!this.config.maxContextTokens) {
-            this.config = { ...this.config, maxContextTokens: resolved };
+            this.config = { ...this.config, maxContextTokens: ctxLimit };
           }
+        }
+        if (typeof outLimit === 'number') {
+          this.resolvedMaxOutputTokens = outLimit;
+          this.config = { ...this.config, maxOutputTokens: outLimit };
         }
       }
       const compacted = compactMessages(
@@ -304,7 +383,7 @@ export class Agent {
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
         this.config.provider
       );
-      debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} contextLimit=${this.config.maxContextTokens ?? 'default'}`);
+      debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} contextLimit=${this.config.maxContextTokens ?? 'default'} outputLimit=${this.config.maxOutputTokens ?? 'default'}`);
       setExploreContext(buildExploreContext(this.messageHistory));
       yield* this.provider.sendMessage(compacted, this.config, options);
       debugLog(`[agent] sendMessage complete`);
@@ -326,12 +405,19 @@ export class Agent {
 
     try {
       if (this.resolvedMaxContextTokens === undefined) {
-        const resolved = await getModelsDevContextLimit(this.config.provider, this.config.model);
-        if (typeof resolved === 'number') {
-          this.resolvedMaxContextTokens = resolved;
+        const [ctxLimit, outLimit] = await Promise.all([
+          getModelsDevContextLimit(this.config.provider, this.config.model),
+          getModelsDevOutputLimit(this.config.provider, this.config.model),
+        ]);
+        if (typeof ctxLimit === 'number') {
+          this.resolvedMaxContextTokens = ctxLimit;
           if (!this.config.maxContextTokens) {
-            this.config = { ...this.config, maxContextTokens: resolved };
+            this.config = { ...this.config, maxContextTokens: ctxLimit };
           }
+        }
+        if (typeof outLimit === 'number') {
+          this.resolvedMaxOutputTokens = outLimit;
+          this.config = { ...this.config, maxOutputTokens: outLimit };
         }
       }
       const compacted = compactMessages(
