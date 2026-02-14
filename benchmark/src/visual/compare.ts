@@ -1,9 +1,9 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, resolve } from "path";
-import sharp from "sharp";
-import { LIGHT, DARK, type Theme } from "./themes.js";
+import { LIGHT, DARK } from "./themes.js";
 import { fetchLogo, fetchDisplayNames, normalizeReport } from "./generate.js";
 import { renderComparison, assignColors, type ModelEntry } from "./comparison-renderer.js";
+import { writePngFromSvg } from "./image.js";
 import type { BenchmarkReport } from "../types.js";
 
 const resultsDir = resolve(import.meta.dir, "../../results");
@@ -48,6 +48,21 @@ function prompt(question: string): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  let imageScale = Number(process.env.MOSAIC_BENCH_IMAGE_SCALE ?? 2);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--scale") {
+      imageScale = Number(args[i + 1]);
+      i++;
+      continue;
+    }
+    if (a.startsWith("--scale=")) {
+      imageScale = Number(a.slice("--scale=".length));
+      continue;
+    }
+  }
+
   const reports = listReports();
 
   console.log("\n  MOSAIC BENCHMARK COMPARISON\n");
@@ -107,7 +122,7 @@ async function main(): Promise<void> {
     const svg = renderComparison(entries, theme);
     const pngPath = join(resultsDir, `comparison-${ts}-${theme.name}.png`);
 
-    await sharp(Buffer.from(svg)).png().toFile(pngPath);
+    await writePngFromSvg(svg, pngPath, imageScale);
     console.log(`  ${theme.name}: ${pngPath}`);
   }
 
