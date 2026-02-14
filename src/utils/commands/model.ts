@@ -1,4 +1,4 @@
-import type { Command } from './types';
+import type { Command, SelectOption } from './types';
 import { readConfig, getProviderById, setActiveModel } from '../config';
 
 export const modelCommand: Command = {
@@ -33,19 +33,39 @@ export const modelCommand: Command = {
         };
       }
 
-      const lines = provider.models.map(m => {
-        const active = m.id === config.model ? ' (active)' : '';
-        return `  ${m.id} - ${m.name}${active}`;
+      const options: SelectOption[] = provider.models.map(m => {
+        const isActive = m.id === config.model;
+        return {
+          name: m.id,
+          description: m.name,
+          value: m.id,
+          active: isActive,
+          disabled: false,
+          badge: isActive ? '' : undefined,
+        };
       });
 
       const currentInList = provider.models.some(m => m.id === config.model);
-      const extra = !currentInList && config.model
-        ? `\n\n  Current model: ${config.model} (custom)`
-        : '';
+      if (!currentInList && config.model) {
+        options.unshift({
+          name: config.model,
+          description: '(custom model)',
+          value: config.model,
+          active: true,
+          disabled: false,
+        });
+      }
 
       return {
         success: true,
-        content: `Models for ${provider.name}:\n\n${lines.join('\n')}${extra}`,
+        content: '',
+        showSelectMenu: {
+          title: `Select Model for ${provider.name}`,
+          options,
+          onSelect: (value: string) => {
+            setActiveModel(value);
+          },
+        },
       };
     }
 
