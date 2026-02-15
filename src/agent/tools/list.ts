@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const list: CoreTool = tool({
   description: 'List files and directories in a directory with optional recursive listing and filtering',
@@ -13,8 +14,13 @@ export const list: CoreTool = tool({
     include_hidden: z.boolean().nullable().optional().describe('If true, include hidden files (starting with .) (use null for false)'),
   }),
   execute: async (args) => {
+    const cached = checkDuplicate('list', args);
+    if (cached) return cached.result;
     const result = await executeTool('list', args);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
+    let count = 0;
+    try { count = JSON.parse(result.result!).length; } catch {}
+    recordCall('list', args, result.result!, `${count} items`);
     return result.result;
   },
 });
