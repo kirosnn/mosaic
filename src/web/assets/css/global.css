@@ -133,6 +133,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    font-size: 1.03rem;
     background: var(--bg-app);
     color: var(--text-primary);
     height: 100vh;
