@@ -1,0 +1,7 @@
+{
+  "bash": {
+    "autoRun": [
+      "mosaic mcp *"
+    ]
+  }
+}
