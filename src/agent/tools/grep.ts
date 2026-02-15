@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 const FILE_TYPE_EXTENSIONS: Record<string, string[]> = {
   ts: ['.ts', '.tsx', '.mts', '.cts'],
@@ -67,8 +68,13 @@ Examples:
     if (args.output_mode && (args.output_mode as string) !== 'null') cleanArgs.output_mode = args.output_mode;
     if (args.exclude_pattern && args.exclude_pattern !== 'null') cleanArgs.exclude_pattern = args.exclude_pattern;
 
+    const cached = checkDuplicate('grep', cleanArgs);
+    if (cached) return cached.result;
     const result = await executeTool('grep', cleanArgs);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
+    let count = 0;
+    try { count = JSON.parse(result.result!).length; } catch {}
+    recordCall('grep', cleanArgs, result.result!, `${count} matches`);
     return result.result;
   },
 });
