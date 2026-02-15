@@ -399,8 +399,56 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     return parts;
   };
 
+  const buildToolMemory = (base: Message[]): string | null => {
+    const skipTools = new Set(["title", "plan", "question", "abort"]);
+    const seen = new Set<string>();
+    const lines: string[] = [];
+
+    const toOneLine = (value: string) => value.replace(/\s+/g, " ").trim();
+    const safeJson = (value: unknown) => {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return "";
+      }
+    };
+    const truncate = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 3)}...` : value);
+
+    for (let i = base.length - 1; i >= 0 && lines.length < 10; i--) {
+      const m = base[i];
+      if (!m || m.role !== "tool") continue;
+      const toolName = m.toolName || "tool";
+      if (skipTools.has(toolName)) continue;
+
+      const argsJson = safeJson(m.toolArgs ?? {});
+      const signature = `${toolName}|${argsJson}`;
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+
+      const argsPreview = truncate(toOneLine(argsJson || "{}"), 100);
+      let resultRaw = "";
+      if (typeof m.toolResult === "string") {
+        resultRaw = m.toolResult;
+      } else if (m.toolResult !== undefined) {
+        resultRaw = safeJson(m.toolResult);
+      } else {
+        resultRaw = m.content || "";
+      }
+      const status = m.success === false ? "error" : "ok";
+      const resultPreview = truncate(toOneLine(resultRaw || status), 180);
+      lines.push(`- ${toolName}(${argsPreview}) => ${resultPreview}`);
+    }
+
+    if (lines.length === 0) return null;
+    return `Recent tool memory (reuse this and avoid repeating identical calls unless inputs changed):\n${lines.join("\n")}`;
+  };
+
   const buildConversationHistory = (base: Message[], includeImages: boolean) => {
     const result: Array<{ role: "user" | "assistant"; content: UserContent }> = [];
+    const toolMemory = buildToolMemory(base);
+    if (toolMemory) {
+      result.push({ role: "assistant" as const, content: toolMemory });
+    }
     for (const m of base) {
       if (m.role === "tool" && m.toolName === "abort") {
         const last = result[result.length - 1];
