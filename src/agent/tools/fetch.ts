@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const fetch: CoreTool = tool({
   description: `Fetches a URL from the internet and extracts its contents as markdown.
@@ -51,8 +52,12 @@ Use cases:
       .describe('Request timeout in milliseconds (default: 30000, max: 60000)'),
   }),
   execute: async (args) => {
+    const cached = checkDuplicate('fetch', args);
+    if (cached) return cached.result;
     const result = await executeTool('fetch', args);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
+    const len = (result.result || '').length;
+    recordCall('fetch', args, result.result!, `${len} chars`);
     return result.result;
   },
 });
