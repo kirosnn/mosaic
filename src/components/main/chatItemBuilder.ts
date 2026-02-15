@@ -51,10 +51,10 @@ export interface RenderItem {
 
 export function isCompactTool(toolName?: string): boolean {
   if (!toolName) return false;
-  if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title' || toolName === 'abort' || toolName === 'review') return true;
+  if (toolName === 'read' || toolName === 'list' || toolName === 'grep' || toolName === 'glob' || toolName === 'fetch' || toolName === 'title' || toolName === 'question' || toolName === 'abort' || toolName === 'review') return true;
   if (toolName.startsWith('mcp__')) {
     const nativeName = getNativeMcpToolName(toolName);
-    return nativeName === 'navigation_search';
+    return nativeName === 'nativesearch_search';
   }
   return false;
 }
@@ -99,6 +99,16 @@ export function getCompactResult(message: Message): string {
       }
     } catch {
     }
+  }
+  if (toolName === 'question' && message.toolResult && typeof message.toolResult === 'object') {
+    const obj = message.toolResult as Record<string, unknown>;
+    const customText = typeof obj.customText === 'string' ? obj.customText.trim() : '';
+    const label = typeof obj.label === 'string' ? obj.label.trim() : '';
+    const value = typeof obj.value === 'string' ? obj.value.trim() : '';
+    if (customText) return customText;
+    if (label) return label;
+    if (value) return value;
+    return 'Selected';
   }
 
   const body = getFirstBodyLine(message.displayContent ?? message.content);
