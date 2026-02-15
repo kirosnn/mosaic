@@ -69,3 +69,16 @@ export function resetTracker(): void {
 export function getTrackerStats(): { size: number } {
   return { size: callCache.size };
 }
+
+export function importFromExplore(readFiles: Map<string, string>): number {
+  let imported = 0;
+  for (const [path, preview] of readFiles) {
+    const sig = makeSignature('read', { path });
+    if (!callCache.has(sig)) {
+      callCache.set(sig, { result: `[from explore] ${preview}`, preview, timestamp: Date.now() });
+      imported++;
+    }
+  }
+  evictStale();
+  return imported;
+}
