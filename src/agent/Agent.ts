@@ -18,9 +18,10 @@ import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
-import { setExploreContext } from '../utils/exploreBridge';
+import { setExploreContext, getExploreSummaries, resetExploreSummaries } from '../utils/exploreBridge';
 import { debugLog } from '../utils/debug';
-import { resetTracker } from './tools/toolCallTracker';
+import { resetTracker, importFromExplore } from './tools/toolCallTracker';
+import { resetExploreKnowledge, getExploreKnowledgeReadFiles } from './tools/exploreExecutor';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -84,7 +85,7 @@ function summarizeMessage(message: CoreMessage, isLastUser: boolean, isFirstUser
     const isError = resultText.toLowerCase().includes('error') || resultText.toLowerCase().includes('failed');
     const status = isError ? 'FAILED' : 'OK';
     const cleaned = normalizeWhitespace(resultText);
-    const toolLimit = toolName === 'plan' ? 600 : toolName === 'glob' || toolName === 'grep' || toolName === 'read' ? 300 : 120;
+    const toolLimit = toolName === 'explore' ? 1000 : toolName === 'plan' ? 600 : toolName === 'glob' || toolName === 'grep' || toolName === 'read' ? 300 : 120;
     return `[tool:${toolName} ${status}] ${truncateText(cleaned, toolLimit)}`;
   }
 
@@ -241,7 +242,7 @@ function buildExploreContext(messages: CoreMessage[]): string {
       if (text) userMessages.unshift(truncateText(text, 300));
     }
 
-    if (msg.role === 'tool' && recentFiles.size < 15) {
+    if (msg.role === 'tool' && recentFiles.size < 30) {
       const content: any = msg.content;
       const part = Array.isArray(content) ? content[0] : undefined;
       const toolName = part?.toolName ?? part?.tool_name;
@@ -255,6 +256,23 @@ function buildExploreContext(messages: CoreMessage[]): string {
 
   if (userMessages.length > 0) {
     parts.push(`User intent:\n${userMessages.map(m => `- ${m}`).join('\n')}`);
+  }
+
+  const summaries = getExploreSummaries();
+  if (summaries.length > 0) {
+    let summariesText = '';
+    let charBudget = 2000;
+    for (let i = summaries.length - 1; i >= 0 && charBudget > 0; i--) {
+      const entry = `[Explore #${i + 1}] ${summaries[i]!}`;
+      if (entry.length <= charBudget) {
+        summariesText = entry + '\n' + summariesText;
+        charBudget -= entry.length;
+      } else {
+        summariesText = entry.slice(0, charBudget) + '...\n' + summariesText;
+        break;
+      }
+    }
+    parts.push(`Previous explore findings:\n${summariesText.trim()}`);
   }
 
   if (recentFiles.size > 0) {
@@ -299,6 +317,9 @@ export class Agent {
     if (!userConfig.provider || !userConfig.model) {
       throw new Error('No provider or model configured. Please run setup first.');
     }
+
+    resetExploreKnowledge();
+    resetExploreSummaries();
 
     const rawSystemPrompt = userConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
@@ -357,6 +378,10 @@ export class Agent {
     debugLog(`[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`);
 
     resetTracker();
+    const exploreFiles = getExploreKnowledgeReadFiles();
+    if (exploreFiles.size > 0) {
+      importFromExplore(exploreFiles);
+    }
 
     this.messageHistory.push({
       role: 'user',
