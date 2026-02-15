@@ -1,7 +1,8 @@
 .chat-page {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     position: relative;
     width: 100%;
     overflow: hidden;
@@ -10,7 +11,7 @@
 .chat-title-bar {
     display: flex;
     align-items: center;
-    padding: 0.75rem 1.5rem;
+    padding: 0.75rem 1.5rem 0.75rem 0;
     flex-shrink: 0;
     width: 100%;
     left: 0;
@@ -18,14 +19,6 @@
     top: 0;
     z-index: 10;
     gap: 0.75rem;
-}
-
-.chat-title {
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    letter-spacing: 0.02em;
-    cursor: default;
 }
 
 .chat-workspace {
@@ -68,22 +61,111 @@
 .chat-container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
     max-width: 900px;
     margin: 0 auto;
     width: 100%;
     position: relative;
-    overflow: hidden;
+    min-height: 0;
 }
 
 .messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 1rem;
-    padding-bottom: 180px;
+    padding: 1rem 1rem 180px 0;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0;
+}
+
+.messages > .message.user,
+.messages > .message.tool,
+.messages > .tool-compact-line {
+    margin-bottom: 1rem;
+}
+
+.messages > .message.user {
+    padding-left: 1rem;
+}
+
+.tool-group {
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--overlay-light);
+    padding: 0.35rem 0.55rem 0.35rem 0;
+}
+
+.tool-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    padding: 0 0 0 1rem;
+    margin: 0;
+    text-align: left;
+    cursor: pointer;
+    font-family: 'Geist Medium Monospace', monospace;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.tool-group-toggle:hover {
+    color: var(--text-primary);
+}
+
+.tool-group-caret {
+    width: 0.9rem;
+    height: 0.9rem;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+}
+
+.tool-group-caret svg {
+    width: 0.9rem;
+    height: 0.9rem;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 0.16s ease;
+}
+
+.tool-group-caret.collapsed svg {
+    transform: rotate(0deg);
+}
+
+.tool-group-caret.expanded svg {
+    transform: rotate(90deg);
+}
+
+.tool-group-summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: inherit;
+}
+
+.tool-group > .message.tool,
+.tool-group > .tool-compact-line {
+    margin-top: 0.3rem;
+    padding-left: 1.45rem;
+}
+
+.tool-group > .message.tool:first-of-type,
+.tool-group > .tool-compact-line:first-of-type {
+    margin-top: 0.2rem;
 }
 
 .input-area {
