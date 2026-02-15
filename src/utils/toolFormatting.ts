@@ -758,7 +758,7 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
     default: {
       if (toolName.startsWith('mcp__')) {
         const nativeName = getNativeMcpToolName(toolName);
-        if (nativeName === 'navigation_search') {
+        if (nativeName === 'nativesearch_search') {
           const searchLines = formatSearchResultBody(result);
           if (searchLines.length > 0) return searchLines;
         }
