@@ -107,7 +107,7 @@ If you detect a loop, STOP immediately and summarize what you've accomplished.
 When you need multiple pieces of information, call multiple tools in a SINGLE response instead of waiting for each result.
 
 <tools_that_can_be_batched>
-fetch, glob, grep, list, read, and MCP navigation tools (search)
+fetch, glob, grep, list, read, and MCP NativeSearch tools (search)
 </tools_that_can_be_batched>
 
 <rules>
