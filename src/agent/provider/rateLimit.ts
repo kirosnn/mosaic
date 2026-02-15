@@ -565,6 +565,7 @@ export async function* runWithRetry<T>(
   const key = config.key || 'global';
   let attempt = 0;
   const startTime = Date.now();
+  let hasYielded = false;
 
   while (true) {
     if (config.abortSignal?.aborted) return;
@@ -577,7 +578,11 @@ export async function* runWithRetry<T>(
 
     try {
       try {
-        yield* run();
+        const gen = run();
+        for await (const value of gen) {
+          hasYielded = true;
+          yield value;
+        }
       } finally {
         release();
       }
@@ -590,6 +595,13 @@ export async function* runWithRetry<T>(
       return;
     } catch (error) {
       if (config.abortSignal?.aborted) return;
+
+      if (hasYielded) {
+        const elapsed = Date.now() - startTime;
+        debugLog(`[rate-limit] not retrying | events already emitted to consumer | elapsed=${elapsed}ms | error=${toErrorMessage(error).slice(0, 200)}`);
+        throw error;
+      }
+
       const decision = getRetryDecision(error);
       if (!decision.shouldRetry || attempt >= config.maxRetries) {
         const elapsed = Date.now() - startTime;
