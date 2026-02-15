@@ -1,7 +1,7 @@
 import { NATIVE_SERVER_IDS } from '../../mcp/types';
 
 const NATIVE_SERVER_LABELS: Record<string, string> = {
-  navigation: 'Browser Navigation',
+  nativesearch: 'NativeSearch',
 };
 
 export const TOOLS_PROMPT = `
@@ -267,7 +267,7 @@ If a tool call would produce information you already have, SKIP IT.
 When you need to perform multiple independent operations, you CAN call multiple tools in a SINGLE response.
 
 PARALLEL EXECUTION RULES:
-1. Tools that can be called in parallel: fetch, glob, grep, list, read, and MCP navigation tools (like search)
+1. Tools that can be called in parallel: fetch, glob, grep, list, read, and MCP NativeSearch tools (like search)
 2. Call multiple tools simultaneously when operations are independent (e.g., reading different files, searching different patterns)
 3. Batch related operations together - if you need to read 3 files, call read 3 times in the SAME response
 4. Only wait for results when the next operation depends on a previous result
