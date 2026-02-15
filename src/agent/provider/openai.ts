@@ -8,6 +8,7 @@ import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
 import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -258,6 +259,7 @@ export class OpenAIProvider implements Provider {
       let stepCounter = 0;
       let hasEmitted = false;
       const sanitizer = new StreamSanitizer();
+      const contextGuard = new ContextGuard(config.maxContextTokens);
       for await (const chunk of result.fullStream as any) {
         const c: any = chunk;
         switch (c.type) {
@@ -312,12 +314,17 @@ export class OpenAIProvider implements Provider {
 
           case 'tool-result':
             hasEmitted = true;
+            contextGuard.trackToolResult(c.result);
             yield {
               type: 'tool-result',
               toolCallId: String(c.toolCallId ?? ''),
               toolName: String(c.toolName ?? ''),
               result: c.result,
             };
+            if (contextGuard.shouldBreak()) {
+              yield { type: 'finish', finishReason: 'length' };
+              return;
+            }
             break;
 
           case 'finish': {
