@@ -5,6 +5,7 @@ import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { applyMistralReasoning, resolveReasoningEnabled } from './reasoningConfig';
 import { debugLog } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 export class MistralProvider implements Provider {
   async *sendMessage(
