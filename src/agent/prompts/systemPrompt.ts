@@ -136,6 +136,17 @@ NEVER make redundant tool calls:
 2. Do NOT re-fetch information you already have from previous tool results
 3. After using EXPLORE, reference its summary - do NOT manually re-explore the same areas with glob/grep/read
 
+<post_explore_rules>
+After an explore call completes, its findings are CACHED. You MUST:
+- Reference the explore summary directly instead of re-reading files it already analyzed
+- Do NOT call read on files that explore already read - the information is in the summary
+- If you need to MODIFY a file explore found, read only the specific section you need (use start_line/end_line)
+- If you need additional context, call explore with a DIFFERENT and SPECIFIC purpose - never duplicate
+
+GOOD: explore found src/auth.ts has login() at line 45 -> read(src/auth.ts, start_line=40, end_line=60) -> edit
+BAD: explore found src/auth.ts -> read(src/auth.ts) from the top -> grep for the same patterns explore already found
+</post_explore_rules>
+
 <context_strategy>
 - Use EXPLORE ONCE at the start to understand the codebase
 - Then use targeted glob/grep/read only for specific files you identified
