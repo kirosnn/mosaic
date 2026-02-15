@@ -78,6 +78,8 @@ const DANGEROUS_BASH_PATTERNS = [
   /\bwget\b.*\s(-O|--output-document|--directory-prefix)\b/i,
 ];
 
+const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
+
 function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
@@ -104,6 +106,94 @@ function isSafeBashCommand(command: string): boolean {
   if (firstWord === 'wget') {
     const allowed = /^wget(\s+(-q|--quiet|-S|--server-response|--spider|--max-redirect\s+\d+|--timeout\s+\d+|--tries\s+\d+|--wait\s+\d+|--user-agent\s+\S+))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
     if (!allowed.test(normalized)) return false;
+  }
+
+  return true;
+}
+
+function splitTopLevelBashSegments(command: string): { segments: string[]; hasUnsupportedSyntax: boolean } {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | '\'' | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i] ?? '';
+    const next = command[i + 1] ?? '';
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && quote !== '\'') {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === '\'') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '`' || (ch === '$' && next === '(')) {
+      return { segments: [], hasUnsupportedSyntax: true };
+    }
+
+    if (ch === '&' && next !== '&') {
+      return { segments: [], hasUnsupportedSyntax: true };
+    }
+
+    if (ch === ';' || ch === '|' || ch === '&') {
+      const currentSegment = current.trim();
+      if (!currentSegment) {
+        return { segments: [], hasUnsupportedSyntax: true };
+      }
+      segments.push(currentSegment);
+      current = '';
+
+      if ((ch === '|' && next === '|') || (ch === '&' && next === '&')) {
+        i++;
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (escaped || quote) {
+    return { segments: [], hasUnsupportedSyntax: true };
+  }
+
+  const tail = current.trim();
+  if (tail) {
+    segments.push(tail);
+  }
+
+  return { segments, hasUnsupportedSyntax: false };
+}
+
+function isReadOnlyBashCommandChain(command: string): boolean {
+  const parsed = splitTopLevelBashSegments(command);
+  if (parsed.hasUnsupportedSyntax || parsed.segments.length <= 1) {
+    return false;
+  }
+
+  for (const segment of parsed.segments) {
+    if (!isSafeBashCommand(segment)) {
+      return false;
+    }
   }
 
   return true;
@@ -360,7 +450,8 @@ function shouldTrackBashFileChanges(command: string): boolean {
   if (mutationPattern.test(trimmed)) return true;
   if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
   if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
-  if (/[>;]|>>/.test(trimmed)) return true;
+  if (BASH_REDIRECTION_PATTERN.test(trimmed)) return true;
+  if (isReadOnlyBashCommandChain(trimmed)) return false;
 
   return !isSafeBashCommand(trimmed);
 }
@@ -894,23 +985,24 @@ export async function executeTool(toolName: string, args: Record<string, unknown
   try {
     const isBashTool = toolName === 'bash';
     const bashCommand = isBashTool ? (args.command as string) : '';
+    const approvalsEnabled = shouldRequireApprovals();
+    const localBashDecision = isBashTool ? getLocalBashDecision(bashCommand) : null;
 
     if (isBashTool) {
-      const localDecision = getLocalBashDecision(bashCommand);
-      if (localDecision === 'disallow') {
+      if (localBashDecision === 'disallow') {
         return {
           success: false,
           error: `Command disallowed by local rules (.mosaic/rules.json): ${bashCommand}`,
         };
       }
-      if (localDecision === 'auto-run') {
+      if (localBashDecision === 'auto-run') {
         debugLog(`[tool] bash auto-run by local rules: ${bashCommand}`);
       }
     }
 
-    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && shouldRequireApprovals()
-      && getLocalBashDecision(bashCommand) !== 'auto-run';
-    const shouldTrackBashChanges = isBashTool && shouldRequireApprovals() && shouldTrackBashFileChanges(bashCommand);
+    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && approvalsEnabled
+      && localBashDecision !== 'auto-run';
+    const shouldTrackBashChanges = isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
     let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
 
     if (bashNeedsApproval) {
