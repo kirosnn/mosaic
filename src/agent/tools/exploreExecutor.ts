@@ -7,7 +7,7 @@ import { createXai } from '@ai-sdk/xai';
 import { z } from 'zod';
 import { readConfig, getAuthForProvider, setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { executeTool } from './executor';
-import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext } from '../../utils/exploreBridge';
+import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext, addExploreSummary, getExploreSummaries } from '../../utils/exploreBridge';
 import { refreshOpenAIOAuthToken, refreshGoogleOAuthToken, decodeJwt } from '../../auth/oauth';
 import { debugLog, maskToken } from '../../utils/debug';
 import {
@@ -109,6 +109,24 @@ const EXPLORE_TOOL_BUDGET = 40;
 let exploreToolBudget = EXPLORE_TOOL_BUDGET;
 let exploreCallCache: Map<string, string> = new Map();
 
+interface ExploreKnowledge {
+  readFiles: Map<string, string>;
+  grepResults: Map<string, string>;
+}
+
+let exploreKnowledge: ExploreKnowledge = {
+  readFiles: new Map(),
+  grepResults: new Map(),
+};
+
+export function resetExploreKnowledge(): void {
+  exploreKnowledge = { readFiles: new Map(), grepResults: new Map() };
+}
+
+export function getExploreKnowledgeReadFiles(): Map<string, string> {
+  return exploreKnowledge.readFiles;
+}
+
 function makeCallSignature(tool: string, args: Record<string, unknown>): string {
   const sorted = Object.keys(args).sort().reduce((acc, k) => {
     acc[k] = args[k];
@@ -152,12 +170,14 @@ configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase and the web.
 
 Your goal is to explore the codebase and external documentation to fulfill the given purpose. You have access to these tools:
-- read: Read file contents
-- glob: Find files by pattern
-- grep: Search for text in files
-- list: List directory contents
-- fetch: Fetch a URL and return its content as markdown (for reading documentation pages, API docs, etc.)
-- search: Search the web for documentation, tutorials, API references, error solutions
+- read: Read file contents (params: path)
+- glob: Find files by name pattern (params: pattern = glob like "**/*.ts", path = directory)
+- grep: Search for text INSIDE files (params: query = regex to search for, pattern = glob to filter files like "*.ts", path = directory, case_sensitive, max_results)
+- list: List directory contents (params: path, recursive, filter, include_hidden)
+- fetch: Fetch a URL and return its content as markdown
+- search: Search the web for documentation, tutorials, API references
+
+IMPORTANT grep clarification: "pattern" filters WHICH FILES to search in (e.g. "*.ts"), "query" is the REGEX to find inside those files. Do NOT put file globs in "query".
 
 # PARALLEL TOOL EXECUTION - CRITICAL
 
@@ -198,6 +218,12 @@ EFFICIENCY PRIORITY:
 # NO DUPLICATE CALLS - ENFORCED
 NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
 If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
+
+# SEARCH STRATEGY
+- To find files by name: use glob first
+- To find content inside files: use grep with a broad query term
+- If grep returns "no matches", do NOT retry with slight variations of the same query. Instead: try a completely different search term, OR read the file directly, OR use glob to find relevant files first
+- Prefer reading a file directly over doing 5 grep variations
 
 # TOOL BUDGET - ENFORCED
 You have a STRICT budget of ${EXPLORE_TOOL_BUDGET} tool calls per exploration. Each tool call (except "done") decrements the budget.
@@ -1163,7 +1189,16 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreThoughtSignatures = [];
   exploreToolBudget = EXPLORE_TOOL_BUDGET;
   exploreCallCache = new Map();
-  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model}`);
+
+  for (const [path, preview] of exploreKnowledge.readFiles) {
+    const sig = makeCallSignature('read', { path });
+    exploreCallCache.set(sig, preview);
+  }
+  for (const [sig, preview] of exploreKnowledge.grepResults) {
+    exploreCallCache.set(sig, preview);
+  }
+
+  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} knownGreps=${exploreKnowledge.grepResults.size}`);
 
   const abortSignal = getExploreAbortSignal();
   const timeoutId = setTimeout(() => {
@@ -1180,9 +1215,39 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       : tools;
 
     const parentContext = getExploreContext();
-    const systemPrompt = parentContext
-      ? `${EXPLORE_SYSTEM_PROMPT}\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`
-      : EXPLORE_SYSTEM_PROMPT;
+    const previousSummaries = getExploreSummaries();
+
+    let dynamicSections = '';
+
+    if (previousSummaries.length > 0) {
+      let summariesText = '';
+      let charBudget = 2000;
+      for (let i = previousSummaries.length - 1; i >= 0 && charBudget > 0; i--) {
+        const entry = `[Explore #${i + 1}] ${previousSummaries[i]!}`;
+        if (entry.length <= charBudget) {
+          summariesText = entry + '\n' + summariesText;
+          charBudget -= entry.length;
+        } else {
+          summariesText = entry.slice(0, charBudget) + '...\n' + summariesText;
+          break;
+        }
+      }
+      dynamicSections += `\n\n# PREVIOUS EXPLORATIONS\nThese explorations were already completed. Do NOT repeat their work. Build on their findings.\n${summariesText.trim()}`;
+    }
+
+    if (exploreKnowledge.readFiles.size > 0) {
+      const fileList = [...exploreKnowledge.readFiles.entries()]
+        .slice(0, 30)
+        .map(([p, info]) => `  - ${p} (${info})`)
+        .join('\n');
+      dynamicSections += `\n\n# FILES ALREADY READ\nThese files were read in previous explorations. Do NOT re-read them unless you need a specific section.\n${fileList}`;
+    }
+
+    if (parentContext) {
+      dynamicSections += `\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`;
+    }
+
+    const systemPrompt = EXPLORE_SYSTEM_PROMPT + dynamicSections;
 
     exploreSystemPromptForOAuth = systemPrompt;
 
@@ -1325,7 +1390,19 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     debugLog(`[explore] logs:\n${logsStr}`);
 
     if (exploreDoneResult !== null) {
-      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration}`);
+      for (const log of exploreLogs) {
+        if (log.tool === 'read' && log.success && log.args.path) {
+          exploreKnowledge.readFiles.set(log.args.path as string, log.resultPreview || 'read');
+        }
+        if (log.tool === 'grep' && log.success) {
+          const sig = makeCallSignature('grep', log.args);
+          exploreKnowledge.grepResults.set(sig, log.resultPreview || 'ok');
+        }
+      }
+
+      addExploreSummary(exploreDoneResult);
+
+      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size}`);
       return {
         success: true,
         result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${exploreDoneResult}`,
