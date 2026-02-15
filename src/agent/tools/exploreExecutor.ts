@@ -203,11 +203,20 @@ async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
   return currentOAuthState;
 }
 
-async function refreshGoogleOAuthIfNeeded(): Promise<OAuthState | null> {
+async function refreshGoogleOAuthIfNeeded(force = false): Promise<OAuthState | null> {
   if (!currentGoogleOAuthState?.refreshToken) return currentGoogleOAuthState;
-  if (currentGoogleOAuthState.expiresAt && Date.now() < currentGoogleOAuthState.expiresAt - 60000) return currentGoogleOAuthState;
-  const refreshed = await refreshGoogleOAuthToken(currentGoogleOAuthState.refreshToken);
-  if (!refreshed) return currentGoogleOAuthState;
+  if (!force && currentGoogleOAuthState.expiresAt && Date.now() < currentGoogleOAuthState.expiresAt - 60000) return currentGoogleOAuthState;
+  if (force) {
+    debugLog(`[oauth][explore][google] force refresh requested, invalidating current token`);
+    if (currentGoogleOAuthState.expiresAt) {
+      currentGoogleOAuthState = { ...currentGoogleOAuthState, expiresAt: 0 };
+    }
+  }
+  const refreshed = await refreshGoogleOAuthToken(currentGoogleOAuthState.refreshToken!);
+  if (!refreshed) {
+    debugLog(`[oauth][explore][google] refresh returned null, token may be permanently invalid`);
+    return currentGoogleOAuthState;
+  }
   currentGoogleOAuthState = {
     accessToken: refreshed.accessToken,
     refreshToken: refreshed.refreshToken,
@@ -675,6 +684,9 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
 
     debugLog(`[oauth][explore][google] ${init?.method ?? 'POST'} ${url} -> ${targetUrl} model=${model} project=${projectId} token=${maskToken(accessToken)}`);
 
+    let auth401Retries = 0;
+    const MAX_AUTH_RETRIES = 2;
+
     for (let fetchAttempt = 0; ; fetchAttempt++) {
       const res = await fetch(targetUrl, { ...init, headers, body: wrappedBody });
 
@@ -689,6 +701,36 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
         const refreshed = await refreshGoogleOAuthIfNeeded();
         if (refreshed?.accessToken) {
           headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+        }
+        continue;
+      }
+
+      if ((res.status === 401 || res.status === 403) && auth401Retries < MAX_AUTH_RETRIES) {
+        const text = await res.text();
+        auth401Retries++;
+        debugLog(`[oauth][explore][google] auth error ${res.status} (attempt ${auth401Retries}/${MAX_AUTH_RETRIES}) | body=${text.slice(0, 300)}`);
+        cachedGoogleProjectId = null;
+
+        await sleepWithSignal(1000 * auth401Retries, init?.signal);
+        if (init?.signal?.aborted) return res;
+
+        const refreshed = await refreshGoogleOAuthIfNeeded(true);
+        if (!refreshed?.accessToken) {
+          debugLog(`[oauth][explore][google] force refresh failed after ${res.status}, cannot recover`);
+          return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+        }
+
+        headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+        try {
+          const newProjectId = await discoverGoogleProjectId(refreshed.accessToken);
+          if (bodyText) {
+            try {
+              const originalBody = JSON.parse(bodyText);
+              wrappedBody = JSON.stringify({ model, project: newProjectId, request: originalBody });
+            } catch {}
+          }
+        } catch (projErr) {
+          debugLog(`[oauth][explore][google] project re-discovery failed after auth retry: ${projErr instanceof Error ? projErr.message : projErr}`);
         }
         continue;
       }
