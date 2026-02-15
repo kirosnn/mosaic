@@ -5,6 +5,7 @@ import { getXaiReasoningOptions, resolveReasoningEnabled } from './reasoningConf
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 export class XaiProvider implements Provider {
   async *sendMessage(
