@@ -64,7 +64,6 @@ export function ThinkingIndicator({ startTime, tokens, nextStep }: ThinkingIndic
     return (
         <div className="thinking-block">
             <div className="thinking-indicator">
-                <span className="thinking-icon">&#x2058;</span>
                 <span className="thinking-text">
                     {text.split("").map((char, index) => {
                         const inShimmer = index === shimmerPos || index === shimmerPos - 1;
@@ -78,28 +77,7 @@ export function ThinkingIndicator({ startTime, tokens, nextStep }: ThinkingIndic
                         );
                     })}
                 </span>
-                {elapsedStr && (
-                    <>
-                        <span className="thinking-sep"> — </span>
-                        <span className="thinking-elapsed">{elapsedStr}</span>
-                    </>
-                )}
-                <span className="thinking-sep"> — </span>
-                <span className="thinking-hint">esc cancel</span>
-                {tokens !== undefined && tokens > 0 && (
-                    <>
-                        <span className="thinking-sep"> — </span>
-                        <span className="thinking-tokens">{tokens.toLocaleString()} tokens</span>
-                    </>
-                )}
             </div>
-            {nextStep && (
-                <div className="thinking-next-line">
-                    <span className="thinking-next-icon">⎿ </span>
-                    <span className="thinking-next-label">Next:</span>
-                    <span className="thinking-next-step">{nextStep}</span>
-                </div>
-            )}
         </div>
     );
 }
