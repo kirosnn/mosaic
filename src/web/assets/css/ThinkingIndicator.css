@@ -9,15 +9,8 @@
     align-items: center;
     gap: 0;
     padding: 0.65rem 1.15rem 0.35rem 1.15rem;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-    font-size: 0.95rem;
-}
-
-.thinking-icon {
-    color: #ffca38;
-    font-weight: bold;
-    margin-right: 0.5rem;
-    font-size: 1.25rem;
+    font-family: 'Geist Medium Monospace', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.9rem;
 }
 
 .thinking-text {
@@ -32,54 +25,4 @@
 .thinking-text .shimmer-dim {
     color: var(--text-secondary);
     opacity: 0.6;
-}
-
-.thinking-elapsed {
-    color: var(--text-secondary);
-    opacity: 0.7;
-}
-
-.thinking-hint {
-    color: var(--text-secondary);
-    opacity: 0.55;
-}
-
-.thinking-tokens {
-    color: var(--text-secondary);
-    opacity: 0.7;
-}
-
-.thinking-plan {
-    color: var(--text-secondary);
-    opacity: 0.7;
-}
-
-.thinking-sep {
-    color: var(--text-secondary);
-    opacity: 0.6;
-}
-
-.thinking-next-line {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0 1.15rem 0.6rem 1.15rem;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-}
-
-.thinking-next-icon {
-    color: #ffca38;
-    font-weight: 700;
-}
-
-.thinking-next-label {
-    font-weight: 700;
-    color: #ffca38;
-}
-
-.thinking-next-step {
-    color: var(--text-secondary);
-    opacity: 0.75;
 }
