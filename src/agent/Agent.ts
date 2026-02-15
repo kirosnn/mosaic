@@ -20,6 +20,7 @@ import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/mode
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 import { setExploreContext } from '../utils/exploreBridge';
 import { debugLog } from '../utils/debug';
+import { resetTracker } from './tools/toolCallTracker';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -354,6 +355,8 @@ export class Agent {
   async *sendMessage(userMessage: string, options?: ProviderSendOptions): AsyncGenerator<AgentEvent> {
     const messagePreview = userMessage.slice(0, 100).replace(/[\r\n]+/g, ' ');
     debugLog(`[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`);
+
+    resetTracker();
 
     this.messageHistory.push({
       role: 'user',
