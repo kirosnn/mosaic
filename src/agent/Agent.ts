@@ -18,10 +18,9 @@ import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
-import { setExploreContext, getExploreSummaries, resetExploreSummaries } from '../utils/exploreBridge';
+import { setExploreContext, getExploreSummaries } from '../utils/exploreBridge';
 import { debugLog } from '../utils/debug';
-import { resetTracker, importFromExplore } from './tools/toolCallTracker';
-import { resetExploreKnowledge, getExploreKnowledgeReadFiles } from './tools/exploreExecutor';
+import { resetTracker } from './tools/toolCallTracker';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -318,9 +317,6 @@ export class Agent {
       throw new Error('No provider or model configured. Please run setup first.');
     }
 
-    resetExploreKnowledge();
-    resetExploreSummaries();
-
     const rawSystemPrompt = userConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
     let mcpToolInfos: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }> | undefined;
@@ -378,10 +374,6 @@ export class Agent {
     debugLog(`[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`);
 
     resetTracker();
-    const exploreFiles = getExploreKnowledgeReadFiles();
-    if (exploreFiles.size > 0) {
-      importFromExplore(exploreFiles);
-    }
 
     this.messageHistory.push({
       role: 'user',
