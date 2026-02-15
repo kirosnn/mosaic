@@ -447,11 +447,20 @@ export class GoogleProvider implements Provider {
 
     const googleReasoning = getGoogleReasoningOptions(reasoningEnabled);
 
-    const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
+    const refreshOauthIfNeeded = async (force = false): Promise<typeof oauthAuth> => {
       if (!oauthAuth?.refreshToken) return oauthAuth;
-      if (oauthAuth.expiresAt && Date.now() < oauthAuth.expiresAt - 60000) return oauthAuth;
-      const refreshed = await refreshGoogleOAuthToken(oauthAuth.refreshToken);
-      if (!refreshed) return oauthAuth;
+      if (!force && oauthAuth.expiresAt && Date.now() < oauthAuth.expiresAt - 60000) return oauthAuth;
+      if (force) {
+        debugLog(`[oauth][google] force refresh requested, invalidating current token`);
+        if (oauthAuth.expiresAt) {
+          oauthAuth = { ...oauthAuth, expiresAt: 0 };
+        }
+      }
+      const refreshed = await refreshGoogleOAuthToken(oauthAuth.refreshToken!);
+      if (!refreshed) {
+        debugLog(`[oauth][google] refresh returned null, token may be permanently invalid`);
+        return oauthAuth;
+      }
       const updated = {
         type: 'oauth' as const,
         accessToken: refreshed.accessToken,
@@ -532,6 +541,9 @@ export class GoogleProvider implements Provider {
 
         debugLog(`[oauth][google] ${init?.method ?? 'POST'} ${url} -> ${targetUrl} model=${model} project=${projectId} token=${maskToken(accessToken)}`);
 
+        let auth401Retries = 0;
+        const MAX_AUTH_RETRIES = 2;
+
         for (let fetchAttempt = 0; ; fetchAttempt++) {
           const res = await fetch(targetUrl, {
             ...init,
@@ -550,6 +562,36 @@ export class GoogleProvider implements Provider {
             const refreshed = await refreshOauthIfNeeded();
             if (refreshed?.accessToken) {
               headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+            }
+            continue;
+          }
+
+          if ((res.status === 401 || res.status === 403) && auth401Retries < MAX_AUTH_RETRIES) {
+            const text = await res.text();
+            auth401Retries++;
+            debugLog(`[oauth][google] auth error ${res.status} (attempt ${auth401Retries}/${MAX_AUTH_RETRIES}) | body=${text.slice(0, 300)}`);
+            cachedProjectId = null;
+
+            await sleepWithSignal(1000 * auth401Retries, init?.signal);
+            if (init?.signal?.aborted) return res;
+
+            const refreshed = await refreshOauthIfNeeded(true);
+            if (!refreshed?.accessToken) {
+              debugLog(`[oauth][google] force refresh failed after ${res.status}, cannot recover`);
+              return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+            }
+
+            headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+            try {
+              const newProjectId = await discoverProjectId(refreshed.accessToken);
+              if (bodyText) {
+                try {
+                  const originalBody = JSON.parse(bodyText);
+                  wrappedBody = JSON.stringify({ model, project: newProjectId, request: originalBody });
+                } catch {}
+              }
+            } catch (projErr) {
+              debugLog(`[oauth][google] project re-discovery failed after auth retry: ${projErr instanceof Error ? projErr.message : projErr}`);
             }
             continue;
           }
