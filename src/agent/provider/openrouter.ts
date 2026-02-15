@@ -6,6 +6,7 @@ import { getOpenAIReasoningOptions, resolveReasoningEnabled } from './reasoningC
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
