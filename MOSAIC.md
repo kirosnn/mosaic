@@ -10,7 +10,7 @@ This file provides contextual information about the Mosaic project to help AI ag
 - A **React-based TUI** (Terminal User Interface) using OpenTUI.
 - A **tool-driven agent architecture** for interacting with codebases, files, and shell commands.
 - A **web UI** served by Bun for browser-based workflows.
-- **MCP server integration** for external tools (including the native navigation server).
+- **MCP server integration** for external tools (including the native NativeSearch server).
 - **Multi-provider AI support** (OpenAI, Anthropic, Google, Mistral, xAI, Ollama, OpenRouter).
 
 ### Key Features
@@ -146,7 +146,7 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 | `agent/provider/`            | AI provider integrations (OpenAI, Anthropic, etc.).                                         |
 | `mcp/`                       | Model Context Protocol implementation and server registry.                                  |
 | `mcp/cli/`                   | MCP CLI commands (list/add/doctor/tools).                                                   |
-| `mcp/servers/navigation/`    | Native navigation MCP server.                                                               |
+| `mcp/servers/nativesearch/`    | Native NativeSearch MCP server.                                                             |
 | `mcp/processManager.ts`      | Manages tool processes and lifecycle.                                                       |
 | `mcp/toolCatalog.ts`         | Dynamic tool registration and discovery.                                                    |
 | `mcp/approvalPolicy.ts`      | Defines tool risk levels and approval requirements.                                         |
