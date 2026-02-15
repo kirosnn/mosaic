@@ -24,12 +24,12 @@ export function getXaiReasoningOptions(enabled: boolean): { reasoningEffort: 'hi
   return { reasoningEffort: 'high' };
 }
 
-export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: { style: 'THINKING_STYLE_DETAILED' } } | undefined {
+export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: { includeThoughts: false } } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][google] thinkingConfig.style=THINKING_STYLE_DETAILED');
+  debugLog('[reasoning][google] thinkingConfig.includeThoughts=false');
   return {
     thinkingConfig: {
-      style: 'THINKING_STYLE_DETAILED',
+      includeThoughts: false,
     },
   };
 }
