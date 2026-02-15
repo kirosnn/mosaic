@@ -16,6 +16,7 @@ interface ExploreBridgeGlobal {
   totalExploreTokens: number;
   subscribers: Set<ExploreToolSubscriber>;
   parentContext: string;
+  previousExploreSummaries: string[];
 }
 
 const globalKey = '__mosaic_explore_bridge__';
@@ -28,6 +29,7 @@ if (!g[globalKey]) {
     totalExploreTokens: 0,
     subscribers: new Set<ExploreToolSubscriber>(),
     parentContext: '',
+    previousExploreSummaries: [],
   };
 }
 
@@ -94,4 +96,16 @@ export function setExploreContext(context: string): void {
 
 export function getExploreContext(): string {
   return state.parentContext;
+}
+
+export function addExploreSummary(summary: string): void {
+  state.previousExploreSummaries.push(summary);
+}
+
+export function getExploreSummaries(): string[] {
+  return state.previousExploreSummaries;
+}
+
+export function resetExploreSummaries(): void {
+  state.previousExploreSummaries = [];
 }
