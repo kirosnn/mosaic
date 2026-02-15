@@ -791,7 +791,7 @@ export function formatToolContent(
   }
   for (const line of bodyLines) lines.push(line);
 
-  const skipTruncate = toolName === 'write' || toolName === 'edit' || toolName === 'plan';
+  const skipTruncate = toolName === 'write' || toolName === 'edit' || toolName === 'plan' || toolName === 'explore';
   if (skipTruncate) {
     return lines.join('\n');
   }

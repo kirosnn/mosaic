@@ -117,17 +117,27 @@ function makeCallSignature(tool: string, args: Record<string, unknown>): string 
   return `${tool}::${JSON.stringify(sorted)}`;
 }
 
+function describeToolCall(log: ExploreLog): string {
+  const t = log.tool;
+  const a = log.args;
+  if (t === 'read') return a.path as string || '?';
+  if (t === 'glob') return `${a.pattern}${a.path && a.path !== '.' ? ' in ' + a.path : ''}`;
+  if (t === 'grep') return `"${a.query}"${a.pattern ? ' in ' + a.pattern : ''}`;
+  if (t === 'list') return a.path as string || '.';
+  if (t === 'fetch') return a.url as string || '?';
+  if (t === 'search') return `"${a.query}"`;
+  return Object.values(a).filter(Boolean).join(', ');
+}
+
 function getExploreMemorySummary(): string {
   if (exploreLogs.length === 0) return '';
-  const lines = ['PREVIOUS CALLS IN THIS EXPLORATION (do NOT repeat these):'];
+  const lines = [`CALLS ALREADY DONE (${exploreLogs.length} calls, budget: ${exploreToolBudget}/${EXPLORE_TOOL_BUDGET}):`];
   for (const log of exploreLogs) {
-    const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
-    const status = log.success ? 'OK' : 'FAIL';
-    lines.push(`  [${status}] ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
+    const desc = describeToolCall(log);
+    lines.push(`  ${log.tool}(${desc}): ${log.resultPreview || 'ok'}`);
   }
-  lines.push(`\nBudget remaining: ${exploreToolBudget}/${EXPLORE_TOOL_BUDGET} calls`);
   if (exploreToolBudget <= 5) {
-    lines.push('WARNING: Budget almost exhausted. Call "done" NOW with your findings.');
+    lines.push('Budget almost exhausted. Call "done" NOW with your findings.');
   }
   return lines.join('\n');
 }
@@ -948,7 +958,9 @@ function createExploreTools() {
         if (result.success && result.result) {
           try {
             const files = JSON.parse(result.result);
-            preview = `${Array.isArray(files) ? files.length : 0} files`;
+            const count = Array.isArray(files) ? files.length : 0;
+            const sample = Array.isArray(files) ? files.slice(0, 3).join(', ') : '';
+            preview = count === 0 ? 'no files' : `${count} files (${sample}${count > 3 ? '...' : ''})`;
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
@@ -984,7 +996,11 @@ function createExploreTools() {
         if (result.success && result.result) {
           try {
             const matches = JSON.parse(result.result);
-            preview = `${Array.isArray(matches) ? matches.length : 0} matches`;
+            const count = Array.isArray(matches) ? matches.length : 0;
+            const fileSet = new Set<string>();
+            if (Array.isArray(matches)) { for (const m of matches) { const f = (m as any)?.file || (m as any)?.path || ''; if (f) fileSet.add(f); } }
+            const files = Array.from(fileSet).slice(0, 3);
+            preview = count === 0 ? 'no matches' : `${count} matches in ${files.join(', ')}${files.length > 3 ? '...' : ''}`;
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
@@ -1019,7 +1035,9 @@ function createExploreTools() {
         if (result.success && result.result) {
           try {
             const items = JSON.parse(result.result);
-            preview = `${Array.isArray(items) ? items.length : 0} items`;
+            const count = Array.isArray(items) ? items.length : 0;
+            const sample = Array.isArray(items) ? items.slice(0, 5).map((i: any) => typeof i === 'string' ? i : i.name || '').join(', ') : '';
+            preview = count === 0 ? 'empty' : `${count} items (${sample}${count > 5 ? '...' : ''})`;
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'list', args, success: result.success, resultPreview: preview });
@@ -1112,11 +1130,11 @@ function createExploreTools() {
 function formatExploreLogs(): string {
   if (exploreLogs.length === 0) return '';
 
-  const lines = ['Tools used:'];
+  const lines: string[] = [];
   for (const log of exploreLogs) {
-    const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
-    const status = log.success ? '➔' : '-';
-    lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
+    const desc = describeToolCall(log);
+    const status = log.success ? '➔' : 'X';
+    lines.push(`  ${status} ${log.tool}(${desc}): ${log.resultPreview || 'ok'}`);
   }
   return lines.join('\n');
 }
@@ -1242,9 +1260,8 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
               break;
             }
             if (exploreToolBudget <= 0 && exploreDoneResult === null) {
-              const memorySummary = getExploreMemorySummary();
-              exploreDoneResult = `[Budget exhausted after ${EXPLORE_TOOL_BUDGET} tool calls]\n\n${memorySummary}`;
-              debugLog(`[explore] budget exhausted, forcing completion`);
+              debugLog(`[explore] budget exhausted, forcing completion\n${getExploreMemorySummary()}`);
+              exploreDoneResult = '[Budget exhausted - exploration stopped]';
               break;
             }
           }
@@ -1311,7 +1328,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration}`);
       return {
         success: true,
-        result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\nSummary:\n${exploreDoneResult}`,
+        result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${exploreDoneResult}`,
       };
     }
 
