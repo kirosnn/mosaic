@@ -48,7 +48,7 @@
 
 .markdown-content ul,
 .markdown-content ol {
-    padding-left: 1.25rem;
+    padding: 0;
     color: var(--text-primary);
     margin: 0.75rem 0;
 }
@@ -105,7 +105,7 @@
 
 .markdown-content blockquote {
     border-left: 3px solid var(--accent-color);
-    padding: 0.4rem 0 0.4rem 0.75rem;
+    padding: 0.4rem 0;
     color: var(--text-secondary);
     background: var(--bg-code);
     border-radius: 0 4px 4px 0;
