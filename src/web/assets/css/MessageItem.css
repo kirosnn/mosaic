@@ -1,21 +1,8 @@
 .message {
     display: flex;
     gap: 0.5rem;
-    padding: 0.35rem 1rem;
+    padding: 0.35rem 1rem 0.35rem 0;
     border-radius: 4px;
-    animation: slideIn 0.2s ease-out;
-}
-
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
 }
 
 .message.user {
@@ -89,7 +76,7 @@
     margin-bottom: 0.35rem;
     border: 1px solid var(--border-code);
     border-radius: 6px;
-    padding: 0.4rem 0.6rem;
+    padding: 0.4rem 0.6rem 0.4rem 0;
     background: var(--bg-code);
 }
 
@@ -107,7 +94,7 @@
 
 .thinking-content {
     margin: 0.35rem 0 0 0;
-    padding: 0.4rem;
+    padding: 0.4rem 0.4rem 0.4rem 0;
     background: transparent;
     border-radius: 4px;
     font-family: 'Geist Medium Monospace', monospace;
