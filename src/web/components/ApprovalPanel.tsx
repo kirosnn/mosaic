@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import React, { useState, useEffect, useRef } from 'react';
 import { ApprovalRequest } from '../../utils/approvalBridge';
+import { parseDiffLine, getDiffLineColors } from '../utils';
 
 export type RuleAction = 'auto-run';
 
@@ -66,17 +67,22 @@ export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
     };
 
     const renderDiffLine = (line: string, index: number) => {
-        const match = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
-        if (match) {
-            const [, prefix, lineNum, content] = match;
-            const isAdded = prefix === '+';
-            const isRemoved = prefix === '-';
-            const bgClass = isAdded ? 'diff-added' : isRemoved ? 'diff-removed' : '';
-
+        const parsed = parseDiffLine(line);
+        if (parsed.isDiffLine) {
+            const colors = getDiffLineColors(parsed);
             return (
-                <div key={index} className={`diff-line ${bgClass}`}>
-                    <span className="diff-linenum">{prefix}{lineNum}</span>
-                    <span className="diff-content">{content}</span>
+                <div
+                    key={index}
+                    className={`diff-line ${parsed.isAdded ? 'diff-added' : ''} ${parsed.isRemoved ? 'diff-removed' : ''}`}
+                    style={{ backgroundColor: colors.contentBackground }}
+                >
+                    <span
+                        className="diff-linenum"
+                        style={{ backgroundColor: colors.labelBackground }}
+                    >
+                        {parsed.prefix}{parsed.lineNumber}
+                    </span>
+                    <span className="diff-content">{parsed.content}</span>
                 </div>
             );
         }
