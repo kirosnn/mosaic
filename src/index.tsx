@@ -37,6 +37,7 @@ interface ParsedArgs {
   uninstall?: boolean;
   forceUninstall?: boolean;
   webServer?: boolean;
+  webDev?: boolean;
   mcpCommand?: boolean;
   mcpArgs?: string[];
   authCommand?: boolean;
@@ -90,7 +91,12 @@ class CLI {
         i = args.length;
       } else if (arg === 'web') {
         parsed.webServer = true;
-        i++;
+        if (args[i + 1] === '--dev') {
+          parsed.webDev = true;
+          i += 2;
+        } else {
+          i++;
+        }
       } else if (!arg.startsWith('-')) {
         parsed.directory = arg;
         i++;
@@ -121,7 +127,7 @@ ${gold('Options')}
 ${gold('Commands')}
   run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
   resume [id]               ${gray('Open a menu to resume a previous conversation session (or resume directly by id)')}
-  web                       ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
+  web [--dev]               ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
   auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
   uninstall [--force]       ${gray('Uninstall Mosaic from your system')}
@@ -146,6 +152,7 @@ ${gold('Examples')}
   ${gray('mosaic resume')}                       # Resume a previous session
   ${gray('mosaic resume <id>')}                  # Resume a specific session by id
   ${gray('mosaic web')}                          # Start the web UI
+  ${gray('mosaic web --dev')}                    # Start web UI with live reload
   ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
   ${gray('mosaic uninstall --force')}            # Completely remove Mosaic
@@ -204,7 +211,8 @@ if (parsed.webServer) {
     stdio: 'inherit',
     env: {
       ...process.env,
-      MOSAIC_PROJECT_PATH: process.cwd()
+      MOSAIC_PROJECT_PATH: process.cwd(),
+      MOSAIC_WEB_DEV: parsed.webDev ? '1' : '0'
     }
   });
 
