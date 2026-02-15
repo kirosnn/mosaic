@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Message } from '../types';
 import { MessageItem } from './MessageItem';
 import { Sidebar, SidebarProps } from './Sidebar';
@@ -8,6 +8,7 @@ import { ApprovalRequest } from '../../utils/approvalBridge';
 import { QuestionPanel } from './QuestionPanel';
 import { ApprovalPanel } from './ApprovalPanel';
 import { ThinkingIndicator } from './ThinkingIndicator';
+import { getNativeMcpToolName } from '../../mcp/types';
 import { findModelsDevModelById, modelAcceptsImages } from '../../utils/models';
 import type { ImageAttachment } from '../../utils/images';
 import { guessImageMimeType, toDataUrl } from '../../utils/images';
@@ -27,6 +28,211 @@ interface ChatPageProps {
     approvalRequest?: ApprovalRequest | null;
     requireApprovals: boolean;
     onToggleApprovals: () => void;
+}
+
+type ChatBlock =
+    | { type: 'message'; key: string; message: Message }
+    | { type: 'tool-group'; key: string; messages: Message[]; defaultCollapsed: boolean; summary: string };
+
+const DISCOVERY_TOOLS = new Set([
+    'explore',
+    'read',
+    'list',
+    'glob',
+    'grep',
+    'fetch',
+    'search',
+    'search_query',
+    'web_search',
+]);
+
+const EDIT_TOOLS = new Set([
+    'write',
+    'edit',
+    'create_directory',
+]);
+
+function mapToolIdentity(identity: string): string {
+    if (identity === 'nativesearch_search') return 'native_search';
+    return identity;
+}
+
+function normalizeToolIdentity(toolName: string): string {
+    const normalized = toolName.trim().toLowerCase();
+    if (!normalized.startsWith('mcp__')) return mapToolIdentity(normalized);
+
+    const native = getNativeMcpToolName(normalized);
+    if (native) return mapToolIdentity(native.toLowerCase());
+
+    const parts = normalized.replace(/^mcp__/, '').split('__');
+    return mapToolIdentity((parts[parts.length - 1] || normalized).toLowerCase());
+}
+
+function getToolGroupToken(toolName: string): string {
+    const identity = normalizeToolIdentity(toolName);
+
+    if (DISCOVERY_TOOLS.has(identity)) return 'family:discovery';
+    if (EDIT_TOOLS.has(identity)) return 'family:edit';
+
+    if (identity.includes('search') || identity.includes('fetch') || identity.includes('find') || identity.includes('explore')) {
+        return 'family:discovery';
+    }
+
+    if (identity.includes('write') || identity.includes('edit')) {
+        return 'family:edit';
+    }
+
+    return `tool:${identity}`;
+}
+
+function toTitleCaseToolName(toolName: string): string {
+    if (!toolName) return 'Tool';
+
+    const raw = normalizeToolIdentity(toolName);
+    if (raw === 'native_search') return 'NativeSearch';
+
+    const words = raw
+        .replace(/[_-]+/g, ' ')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+    if (words.length === 0) return 'Tool';
+
+    return words
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function pluralize(count: number, singular: string, plural?: string): string {
+    if (count === 1) return singular;
+    return plural || `${singular}s`;
+}
+
+function buildToolPhrase(toolName: string, count: number): string {
+    const identity = normalizeToolIdentity(toolName);
+
+    switch (identity) {
+        case 'read':
+            return `Read ${count} ${pluralize(count, 'file')}`;
+        case 'write':
+            return `Wrote ${count} ${pluralize(count, 'file')}`;
+        case 'edit':
+            return `Edited ${count} ${pluralize(count, 'file')}`;
+        case 'list':
+            return `Listed ${count} ${pluralize(count, 'path')}`;
+        case 'glob':
+            return `Matched ${count} ${pluralize(count, 'pattern')}`;
+        case 'grep':
+            return `Searched ${count} ${pluralize(count, 'pattern')}`;
+        case 'fetch':
+            return `Fetched ${count} ${pluralize(count, 'resource')}`;
+        case 'explore':
+            return `Explored ${count} ${pluralize(count, 'step')}`;
+        case 'title':
+            return `Set ${count} ${pluralize(count, 'title')}`;
+        case 'plan':
+            return `Updated ${count} ${pluralize(count, 'plan step')}`;
+        case 'search':
+        case 'search_query':
+        case 'web_search':
+            return `Ran ${count} ${pluralize(count, 'search')}`;
+        case 'native_search':
+            return `NativeSearch ${count} ${pluralize(count, 'call')}`;
+        default:
+            return `${toTitleCaseToolName(identity)} ${count} ${pluralize(count, 'call')}`;
+    }
+}
+
+function getOrderedToolCounts(messages: Message[]): Array<{ tool: string; count: number }> {
+    const counts = new Map<string, number>();
+    const order: string[] = [];
+
+    for (const msg of messages) {
+        const tool = msg.toolName || 'tool';
+        const identity = normalizeToolIdentity(tool);
+        if (!counts.has(identity)) {
+            order.push(identity);
+            counts.set(identity, 1);
+        } else {
+            counts.set(identity, (counts.get(identity) || 0) + 1);
+        }
+    }
+
+    return order.map((identity) => ({ tool: identity, count: counts.get(identity) || 0 }));
+}
+
+function summarizeToolGroup(messages: Message[]): string {
+    if (messages.length === 0) return 'Tool group';
+
+    const entries = getOrderedToolCounts(messages);
+    if (entries.length === 1) {
+        const only = entries[0]!;
+        return buildToolPhrase(only.tool, only.count);
+    }
+
+    const parts = entries.map((entry) => buildToolPhrase(entry.tool, entry.count));
+    const visibleParts = parts.slice(0, 2);
+    const remaining = parts.length - visibleParts.length;
+    if (remaining > 0) {
+        visibleParts.push(`+${remaining} more`);
+    }
+    return visibleParts.join(' • ');
+}
+
+function buildChatBlocks(messages: Message[]): ChatBlock[] {
+    const blocks: ChatBlock[] = [];
+
+    for (let i = 0; i < messages.length; i += 1) {
+        const current = messages[i];
+        if (!current) continue;
+
+        if (current.role !== 'tool') {
+            blocks.push({
+                type: 'message',
+                key: current.id,
+                message: current
+            });
+            continue;
+        }
+
+        const currentTool = current.toolName || '';
+        const currentToken = getToolGroupToken(currentTool);
+
+        const groupMessages: Message[] = [current];
+        let j = i + 1;
+
+        while (j < messages.length) {
+            const candidate = messages[j];
+            if (!candidate || candidate.role !== 'tool') break;
+            const candidateToken = getToolGroupToken(candidate.toolName || '');
+            if (candidateToken !== currentToken) break;
+            groupMessages.push(candidate);
+            j += 1;
+        }
+
+        if (groupMessages.length < 2) {
+            blocks.push({
+                type: 'message',
+                key: current.id,
+                message: current
+            });
+            continue;
+        }
+
+        blocks.push({
+            type: 'tool-group',
+            key: `${groupMessages[0]?.id || i}:${groupMessages[groupMessages.length - 1]?.id || j}`,
+            messages: groupMessages,
+            defaultCollapsed: true,
+            summary: summarizeToolGroup(groupMessages)
+        });
+
+        i = j - 1;
+    }
+
+    return blocks;
 }
 
 function formatWorkspace(path: string | null | undefined): string {
@@ -103,10 +309,12 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
     const [inputValue, setInputValue] = useState('');
     const [showAttachButton, setShowAttachButton] = useState(false);
     const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+    const [collapsedToolGroups, setCollapsedToolGroups] = useState<Record<string, boolean>>({});
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const planProgress = getPlanProgress(messages);
+    const chatBlocks = useMemo(() => buildChatBlocks(messages), [messages]);
 
     useEffect(() => {
         if (messagesEndRef.current) {
@@ -254,14 +462,20 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
 
     const formattedWorkspace = formatWorkspace(workspace);
 
+    const toggleToolGroup = (key: string, fallback: boolean) => {
+        setCollapsedToolGroups((prev) => ({
+            ...prev,
+            [key]: !(prev[key] ?? fallback)
+        }));
+    };
+
     return (
         <div className="home-page">
             <Sidebar {...sidebarProps} />
 
-            <div className="main-content" style={{ padding: 0 }}>
+            <div className="main-content" style={{ padding: 0, justifyContent: 'flex-start', alignItems: 'stretch' }}>
                 <div className="chat-page">
                     <div className="chat-title-bar">
-                        <span className="chat-title">{currentTitle || ''}</span>
                         <div className="chat-title-actions">
                             {formattedWorkspace && (
                                 <span className="chat-workspace" title={workspace || ''}>
@@ -280,9 +494,34 @@ export function ChatPage({ messages, isProcessing, processingStartTime, currentT
                     </div>
                     <div className="chat-container">
                         <div className="messages">
-                            {messages.map((msg) => (
-                                <MessageItem key={msg.id} message={msg} />
-                            ))}
+                            {chatBlocks.map((block) => {
+                                if (block.type === 'message') {
+                                    return <MessageItem key={block.key} message={block.message} />;
+                                }
+
+                                const isCollapsed = collapsedToolGroups[block.key] ?? block.defaultCollapsed;
+
+                                return (
+                                    <div key={block.key} className="tool-group">
+                                        <button
+                                            type="button"
+                                            className="tool-group-toggle"
+                                            onClick={() => toggleToolGroup(block.key, block.defaultCollapsed)}
+                                            title={isCollapsed ? 'Expand tools' : 'Collapse tools'}
+                                        >
+                                            <span className="tool-group-summary">{block.summary}</span>
+                                            <span className={`tool-group-caret ${isCollapsed ? 'collapsed' : 'expanded'}`} aria-hidden="true">
+                                                <svg viewBox="0 0 24 24" focusable="false">
+                                                    <path d="M8 5l8 7-8 7" />
+                                                </svg>
+                                            </span>
+                                        </button>
+                                        {!isCollapsed && block.messages.map((msg) => (
+                                            <MessageItem key={msg.id} message={msg} />
+                                        ))}
+                                    </div>
+                                );
+                            })}
                             {isProcessing && !questionRequest && !approvalRequest && (
                                 <div className="message assistant">
                                     <div className="message-content">
