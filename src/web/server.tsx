@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { join } from "path";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, watch, type FSWatcher } from "fs";
 import { build } from "bun";
 import { createCliRenderer, TextAttributes, ScrollBoxRenderable, TextRenderable } from "@opentui/core";
 import { createRoot } from "@opentui/react";
@@ -11,13 +11,27 @@ import type { ImageAttachment } from "../utils/images";
 
 const PORT = 8192;
 const HOST = "127.0.0.1";
+const WEB_DEV = process.env.MOSAIC_WEB_DEV === "1";
 
 import { subscribeQuestion, answerQuestion } from "../utils/questionBridge";
 import { subscribeApproval, respondApproval, getCurrentApproval } from "../utils/approvalBridge";
 
 let currentAbortController: AbortController | null = null;
 
-const HTML_TEMPLATE = `<!DOCTYPE html>
+let appBuildVersion = 0;
+
+function getHtmlTemplate(): string {
+    const suffix = WEB_DEV ? `?v=${appBuildVersion}` : "";
+    const devScript = WEB_DEV
+        ? `<script>
+const source = new EventSource('/__dev/events');
+source.addEventListener('reload', () => {
+  window.location.reload();
+});
+</script>`
+        : "";
+
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -25,13 +39,15 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     <title>Mosaic</title>
     <link rel="icon" type="image/svg+xml" href="/logo_black.svg" media="(prefers-color-scheme: light)">
     <link rel="icon" type="image/svg+xml" href="/logo_white.svg" media="(prefers-color-scheme: dark)">
-    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/app.css${suffix}">
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js${suffix}"></script>
+    ${devScript}
 </body>
 </html>`;
+}
 
 type LogEntry = { message: string; timestamp: string };
 
@@ -175,6 +191,66 @@ installExternalLogCapture();
 
 let appJsContent: string | null = null;
 let appCssContent: string | null = null;
+const devEventListeners = new Set<(event: string, data: string) => void>();
+const devWatchers: FSWatcher[] = [];
+const watchedExtensions = new Set([
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".css",
+    ".svg",
+    ".json",
+]);
+let pendingRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+let rebuildInProgress = false;
+let rebuildQueued = false;
+
+function broadcastDevEvent(event: string, data: string): void {
+    for (const send of Array.from(devEventListeners)) {
+        try {
+            send(event, data);
+        } catch {
+            devEventListeners.delete(send);
+        }
+    }
+}
+
+function createDevEventsResponse(): Response {
+    const encoder = new TextEncoder();
+    let sendRef: ((event: string, data: string) => void) | null = null;
+    let keepAlive: ReturnType<typeof setInterval> | null = null;
+
+    const stream = new ReadableStream({
+        start(controller) {
+            const send = (event: string, data: string) => {
+                try {
+                    controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data}\n\n`));
+                } catch {
+                    if (sendRef) devEventListeners.delete(sendRef);
+                }
+            };
+            sendRef = send;
+            devEventListeners.add(send);
+            send("ready", String(appBuildVersion));
+            keepAlive = setInterval(() => {
+                send("ping", String(Date.now()));
+            }, 15000);
+        },
+        cancel() {
+            if (keepAlive) clearInterval(keepAlive);
+            if (sendRef) devEventListeners.delete(sendRef);
+        }
+    });
+
+    return new Response(stream, {
+        headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+        },
+    });
+}
 
 function buildUserContent(text: string, images?: ImageAttachment[]): UserContent {
     if (!images || images.length === 0) return text;
@@ -227,18 +303,138 @@ async function buildApp() {
         throw new Error("No build output generated");
     }
 
+    let nextJs: string | null = null;
+    let nextCss: string | null = null;
+
     for (const output of outputs) {
         if (output.path.endsWith('.js') || output.kind === 'entry-point') {
-            appJsContent = await output.text();
+            nextJs = await output.text();
         } else if (output.path.endsWith('.css') || output.type === 'text/css') {
-            appCssContent = await output.text();
+            nextCss = await output.text();
+        }
+    }
+
+    if (!nextJs) {
+        throw new Error("Build produced no JavaScript output");
+    }
+
+    appJsContent = nextJs;
+    appCssContent = nextCss;
+    appBuildVersion += 1;
+}
+
+function shouldIgnoreWatchedPath(filePath: string): boolean {
+    const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+    if (normalized.includes("/.git/")) return true;
+    if (normalized.includes("/node_modules/")) return true;
+    if (normalized.includes("/dist/")) return true;
+    if (normalized.endsWith("/dist")) return true;
+    return false;
+}
+
+function shouldRebuildForFile(filePath: string): boolean {
+    if (shouldIgnoreWatchedPath(filePath)) return false;
+    const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+    const lastDot = normalized.lastIndexOf(".");
+    if (lastDot < 0) return false;
+    const ext = normalized.slice(lastDot);
+    return watchedExtensions.has(ext);
+}
+
+function collectWatchDirectories(root: string): string[] {
+    if (!existsSync(root)) return [];
+    const result: string[] = [];
+    const stack: string[] = [root];
+    const seen = new Set<string>();
+
+    while (stack.length > 0) {
+        const dir = stack.pop()!;
+        if (seen.has(dir)) continue;
+        seen.add(dir);
+        if (shouldIgnoreWatchedPath(dir)) continue;
+        result.push(dir);
+
+        let entries: { isDirectory: () => boolean; name: string | Buffer }[];
+        try {
+            entries = readdirSync(dir, { withFileTypes: true }) as unknown as { isDirectory: () => boolean; name: string | Buffer }[];
+        } catch {
+            continue;
+        }
+
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            stack.push(join(dir, String(entry.name)));
+        }
+    }
+
+    return result;
+}
+
+async function rebuildAppAndNotify(reason: string): Promise<void> {
+    if (!WEB_DEV) return;
+    if (rebuildInProgress) {
+        rebuildQueued = true;
+        return;
+    }
+
+    rebuildInProgress = true;
+    try {
+        await buildApp();
+        addLog(`[dev] rebuilt (${reason})`);
+        broadcastDevEvent("reload", String(appBuildVersion));
+    } catch (error) {
+        addLog(`[dev] rebuild failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+        rebuildInProgress = false;
+        if (rebuildQueued) {
+            rebuildQueued = false;
+            void rebuildAppAndNotify("queued change");
         }
     }
 }
 
+function scheduleRebuild(reason: string): void {
+    if (!WEB_DEV) return;
+    if (pendingRebuildTimer) clearTimeout(pendingRebuildTimer);
+    pendingRebuildTimer = setTimeout(() => {
+        pendingRebuildTimer = null;
+        void rebuildAppAndNotify(reason);
+    }, 120);
+}
+
+function startDevWatchers(): void {
+    if (!WEB_DEV) return;
+    const roots = [join(__dirname), join(__dirname, "..")];
+    const dirs = new Set<string>();
+    for (const root of roots) {
+        for (const dir of collectWatchDirectories(root)) {
+            dirs.add(dir);
+        }
+    }
+
+    for (const dir of dirs) {
+        try {
+            const watcher = watch(dir, (eventType, filename) => {
+                const name = filename ? filename.toString() : "";
+                if (!name) {
+                    scheduleRebuild(`watch:${eventType}`);
+                    return;
+                }
+                const target = join(dir, name);
+                if (!shouldRebuildForFile(target)) return;
+                scheduleRebuild(name);
+            });
+            devWatchers.push(watcher);
+        } catch {
+        }
+    }
+
+    addLog(`[dev] watching ${devWatchers.length} directories`);
+}
+
 try {
     await buildApp();
-    addLog("App built");
+    addLog(WEB_DEV ? "App built (dev mode)" : "App built");
 
     const projectPath = process.env.MOSAIC_PROJECT_PATH;
     if (projectPath) {
@@ -246,6 +442,8 @@ try {
         addRecentProject(projectPath);
         addLog(`Project added to recents: ${projectPath}`);
     }
+
+    startDevWatchers();
 } catch (error) {
     console.error("Failed to build app:", error);
     throw error;
@@ -266,9 +464,13 @@ async function startServer(port: number, maxRetries = 10) {
                 try {
                     if (url.pathname === "/" || url.pathname === "/home" || url.pathname.startsWith("/chat")) {
                         addLog(`${request.method} ${url.pathname}`);
-                        return new Response(HTML_TEMPLATE, {
+                        return new Response(getHtmlTemplate(), {
                             headers: { "Content-Type": "text/html" },
                         });
+                    }
+
+                    if (WEB_DEV && url.pathname === "/__dev/events") {
+                        return createDevEventsResponse();
                     }
 
                     if (url.pathname === "/app.js") {
@@ -829,7 +1031,25 @@ async function startServer(port: number, maxRetries = 10) {
     }
 }
 
+function stopDevWatchers(): void {
+    for (const watcher of devWatchers) {
+        try {
+            watcher.close();
+        } catch {
+        }
+    }
+    devWatchers.length = 0;
+    if (pendingRebuildTimer) {
+        clearTimeout(pendingRebuildTimer);
+        pendingRebuildTimer = null;
+    }
+}
+
 await startServer(PORT);
+
+process.on("SIGINT", stopDevWatchers);
+process.on("SIGTERM", stopDevWatchers);
+process.on("exit", stopDevWatchers);
 
 async function startTui() {
     const { createCliRenderer, ScrollBoxRenderable, TextRenderable, BoxRenderable, TextAttributes, ASCIIFontRenderable } = await import("@opentui/core");
