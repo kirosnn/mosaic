@@ -24,3 +24,5 @@ test.ts
 .mosaic/*.db
 .mosaic/*.db-wal
 .mosaic/*.db-shm
+OPENTUI.md
+TODO.md
