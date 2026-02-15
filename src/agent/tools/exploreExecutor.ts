@@ -105,6 +105,33 @@ const EXPLORE_RATE_LIMIT_KEY = 'explore';
 const MAX_EXPLORE_RETRIES = 5;
 const EXPLORE_RETRY_BASE_DELAY_MS = 2000;
 
+const EXPLORE_TOOL_BUDGET = 40;
+let exploreToolBudget = EXPLORE_TOOL_BUDGET;
+let exploreCallCache: Map<string, string> = new Map();
+
+function makeCallSignature(tool: string, args: Record<string, unknown>): string {
+  const sorted = Object.keys(args).sort().reduce((acc, k) => {
+    acc[k] = args[k];
+    return acc;
+  }, {} as Record<string, unknown>);
+  return `${tool}::${JSON.stringify(sorted)}`;
+}
+
+function getExploreMemorySummary(): string {
+  if (exploreLogs.length === 0) return '';
+  const lines = ['PREVIOUS CALLS IN THIS EXPLORATION (do NOT repeat these):'];
+  for (const log of exploreLogs) {
+    const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
+    const status = log.success ? 'OK' : 'FAIL';
+    lines.push(`  [${status}] ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
+  }
+  lines.push(`\nBudget remaining: ${exploreToolBudget}/${EXPLORE_TOOL_BUDGET} calls`);
+  if (exploreToolBudget <= 5) {
+    lines.push('WARNING: Budget almost exhausted. Call "done" NOW with your findings.');
+  }
+  return lines.join('\n');
+}
+
 configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
   requestsPerMinute: 30,
   requestsPerSecond: 2,
@@ -158,10 +185,16 @@ EFFICIENCY PRIORITY:
 8. Prefer official documentation over blog posts or Stack Overflow when possible
 9. If search is unavailable, you can still use fetch with known documentation URLs
 
-# NO DUPLICATE CALLS
-NEVER call the same tool with identical parameters twice. Track what you've already searched/read and skip duplicates.`;
+# NO DUPLICATE CALLS - ENFORCED
+NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
+If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
 
-const MAX_STEPS = 100;
+# TOOL BUDGET - ENFORCED
+You have a STRICT budget of ${EXPLORE_TOOL_BUDGET} tool calls per exploration. Each tool call (except "done") decrements the budget.
+When the budget reaches 0, you MUST call "done" immediately with whatever findings you have.
+Plan your exploration efficiently: prefer grep over read when searching, batch parallel calls, and call "done" as soon as you have enough information.`;
+
+const MAX_STEPS = 50;
 
 interface ExploreResult {
   success: boolean;
@@ -727,7 +760,7 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
             try {
               const originalBody = JSON.parse(bodyText);
               wrappedBody = JSON.stringify({ model, project: newProjectId, request: originalBody });
-            } catch {}
+            } catch { }
           }
         } catch (projErr) {
           debugLog(`[oauth][explore][google] project re-discovery failed after auth retry: ${projErr instanceof Error ? projErr.message : projErr}`);
@@ -873,10 +906,20 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('read', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already called read(${args.path}). Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         const result = await executeTool('read', args);
         const resultLen = result.result?.length || 0;
         const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
         exploreLogs.push({ tool: 'read', args, success: result.success, resultPreview: preview });
+        exploreCallCache.set(sig, preview);
         notifyExploreTool('read', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
@@ -890,6 +933,15 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('glob', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already called glob(${args.pattern}). Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         const result = await executeTool('glob', args);
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
@@ -900,6 +952,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
+        exploreCallCache.set(sig, preview);
         notifyExploreTool('glob', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
@@ -916,6 +969,15 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('grep', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already called grep(${args.query}). Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         const result = await executeTool('grep', { ...args, regex: true });
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
@@ -926,6 +988,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
+        exploreCallCache.set(sig, preview);
         notifyExploreTool('grep', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
@@ -941,6 +1004,15 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('list', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already called list(${args.path}). Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         const result = await executeTool('list', args);
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
@@ -951,6 +1023,7 @@ function createExploreTools() {
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'list', args, success: result.success, resultPreview: preview });
+        exploreCallCache.set(sig, preview);
         notifyExploreTool('list', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
@@ -964,10 +1037,20 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('fetch', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already fetched ${args.url}. Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         const result = await executeTool('fetch', { ...args, max_length: args.max_length ?? 10000 });
         const resultLen = result.result?.length || 0;
         const preview = result.success ? `${resultLen} chars` : (result.error || 'error');
         exploreLogs.push({ tool: 'fetch', args, success: result.success, resultPreview: preview });
+        exploreCallCache.set(sig, preview);
         notifyExploreTool('fetch', args, { success: result.success, preview }, resultLen);
         if (!result.success) return { error: result.error };
         return result.result;
@@ -981,6 +1064,15 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const sig = makeCallSignature('search', args);
+        const cached = exploreCallCache.get(sig);
+        if (cached) {
+          return `[DUPLICATE BLOCKED] Already searched "${args.query}". Cached result: ${cached}`;
+        }
+        if (exploreToolBudget <= 0) {
+          return { error: 'Tool budget exhausted. Call "done" now.' };
+        }
+        exploreToolBudget--;
         try {
           const { getMcpManager, isMcpInitialized } = require('../../mcp/index');
           if (!isMcpInitialized()) {
@@ -988,10 +1080,11 @@ function createExploreTools() {
           }
           const pm = getMcpManager();
           const callArgs = { query: args.query, engine: args.engine || 'google' };
-          const result = await pm.callTool('navigation', 'navigation_search', callArgs);
+          const result = await pm.callTool('nativesearch', 'nativesearch_search', callArgs);
           const resultLen = result.content?.length || 0;
           const preview = result.isError ? (result.content || 'error') : `${resultLen} chars`;
           exploreLogs.push({ tool: 'search', args: callArgs, success: !result.isError, resultPreview: preview });
+          exploreCallCache.set(sig, preview);
           notifyExploreTool('search', callArgs, { success: !result.isError, preview }, resultLen);
           if (result.isError) return { error: result.content || 'Search failed' };
           return result.content;
@@ -1004,7 +1097,7 @@ function createExploreTools() {
       },
     }),
     done: createTool({
-      description: 'Call this when you have gathered enough information. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
+      description: 'Call this when you have gathered enough information OR when the budget is exhausted. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
       parameters: z.object({
         summary: z.string().describe('Comprehensive summary of what was found during exploration'),
       }),
@@ -1022,7 +1115,7 @@ function formatExploreLogs(): string {
   const lines = ['Tools used:'];
   for (const log of exploreLogs) {
     const argStr = log.args.path || log.args.pattern || log.args.query || log.args.url || '';
-    const status = log.success ? '➔ ' : '-';
+    const status = log.success ? '➔' : '-';
     lines.push(`  ${status} ${log.tool}(${argStr}) -> ${log.resultPreview || 'ok'}`);
   }
   return lines.join('\n');
@@ -1050,6 +1143,8 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreDoneResult = null;
   exploreLogs = [];
   exploreThoughtSignatures = [];
+  exploreToolBudget = EXPLORE_TOOL_BUDGET;
+  exploreCallCache = new Map();
   debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model}`);
 
   const abortSignal = getExploreAbortSignal();
@@ -1074,9 +1169,9 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     exploreSystemPromptForOAuth = systemPrompt;
 
     const auth = getAuthForProvider(userConfig.provider);
-  const isOAuth = auth?.type === 'oauth';
-  const isGoogleOAuth = isOAuth && userConfig.provider === 'google';
-  const endpoints: ExploreEndpoint[] = (isOpenAI && isOAuth) ? ['responses', 'chat'] : ['responses'];
+    const isOAuth = auth?.type === 'oauth';
+    const isGoogleOAuth = isOAuth && userConfig.provider === 'google';
+    const endpoints: ExploreEndpoint[] = (isOpenAI && isOAuth) ? ['responses', 'chat'] : ['responses'];
 
     let lastError: string | null = null;
 
@@ -1146,6 +1241,12 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
             if (exploreDoneResult !== null) {
               break;
             }
+            if (exploreToolBudget <= 0 && exploreDoneResult === null) {
+              const memorySummary = getExploreMemorySummary();
+              exploreDoneResult = `[Budget exhausted after ${EXPLORE_TOOL_BUDGET} tool calls]\n\n${memorySummary}`;
+              debugLog(`[explore] budget exhausted, forcing completion`);
+              break;
+            }
           }
 
           reportRateLimitSuccess(EXPLORE_RATE_LIMIT_KEY);
@@ -1189,10 +1290,10 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     const duration = formatDuration(Date.now() - startTime);
 
     if (isExploreAborted()) {
-      const logsStr = formatExploreLogs();
+      debugLog(`[explore] logs:\n${formatExploreLogs()}`);
       return {
         success: false,
-        error: `Exploration interrupted (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
+        error: `Exploration interrupted (${duration})`,
       };
     }
 
@@ -1204,28 +1305,29 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     }
 
     const logsStr = formatExploreLogs();
+    debugLog(`[explore] logs:\n${logsStr}`);
 
     if (exploreDoneResult !== null) {
       debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration}`);
       return {
         success: true,
-        result: `Completed in ${duration}\n${logsStr}\n\nSummary:\n${exploreDoneResult}`,
+        result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\nSummary:\n${exploreDoneResult}`,
       };
     }
 
     return {
       success: true,
-      result: `Completed in ${duration}\n${logsStr}\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
+      result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
     };
   } catch (error) {
     clearTimeout(timeoutId);
     const duration = formatDuration(Date.now() - startTime);
-    const logsStr = formatExploreLogs();
+    debugLog(`[explore] logs:\n${formatExploreLogs()}`);
 
     if (isExploreAborted()) {
       return {
         success: false,
-        error: `Exploration interrupted (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
+        error: `Exploration interrupted (${duration})`,
       };
     }
 
@@ -1233,7 +1335,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     debugLog(`[explore] ERROR ${errorMsg.slice(0, 150)} duration=${duration} toolsUsed=${exploreLogs.length}`);
     return {
       success: false,
-      error: `${errorMsg} (${duration})${logsStr ? '\n\n' + logsStr : ''}`,
+      error: `${errorMsg} (${duration})`,
     };
   }
 }
