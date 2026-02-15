@@ -372,7 +372,7 @@ Le premier argument est un objet de propriétés, suivi des enfants.
 * `Text` : affichage de texte stylé et sélectable.
 * `Input` : champ de saisie mono‑ligne.
 * `Textarea` : champ de saisie multi‑ligne.
-* `Select` : liste verticale avec navigation clavier.
+* `Select` : liste verticale avec nativesearch clavier.
 * `TabSelect` : sélection horizontale d’onglets.
 * `ScrollBox` : conteneur scrollable.
 * `ScrollBar` : barre de défilement indépendante.
@@ -433,7 +433,7 @@ Chaque renderable possède une liste d’enfants. On peut naviguer et manipuler 
 
 Les renderables supportent les mêmes propriétés de layout que les constructs (`width`, `height`, `flexDirection`, etc.). On peut aussi spécifier une taille absolue en pixels.
 
-#### Focus et navigation
+#### Focus et nativesearch
 
 `requestFocus()` et `releaseFocus()` gèrent le focus clavier. Les renderables émettent des événements `focus` et `blur`.
 
