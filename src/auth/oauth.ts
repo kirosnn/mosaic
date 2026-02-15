@@ -46,8 +46,8 @@ const OPENAI_CODEX_FALLBACK_MODELS = [
   'gpt-5-2025-08-07',
 ];
 
-const GOOGLE_CLIENT_ID = '1047708431942-541790841144.apps.googleusercontent.com';
-const GOOGLE_CLIENT_SECRET = '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';
+const GOOGLE_CLIENT_ID = '';
+const GOOGLE_CLIENT_SECRET = '';
 const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
@@ -183,12 +183,151 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
     const state = url.searchParams.get('state') ?? undefined;
     if (!code || !state || state !== expectedState) {
       res.writeHead(400, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h1>Authorization failed</h1></body></html>');
+      res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mosaic Authorization Failed</title>
+    <style>
+        :root {
+            --bg-app: #171717;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --error-color: #ff4444;
+            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-app: #ffffff;
+                --text-primary: #1a1a1a;
+                --text-secondary: #555555;
+                --error-color: #dc2626;
+            }
+        }
+        body {
+            background-color: var(--bg-app);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .container {
+            padding: 2rem;
+            animation: fadeIn 0.5s ease-out;
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
+            opacity: 0.8;
+        }
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--error-color);
+        }
+        p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+             <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
+            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
+        </svg>
+        <h1>Authorization Failed</h1>
+        <p>Please return to the terminal and try again.</p>
+    </div>
+</body>
+</html>`);
       return;
     }
     lastCode = code;
     res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<html><body><h1>Authorization complete</h1>You can close this tab.</body></html>');
+    res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mosaic Authorization</title>
+    <style>
+        :root {
+            --bg-app: #171717;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --accent-color: #ffca38;
+            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-app: #ffffff;
+                --text-primary: #1a1a1a;
+                --text-secondary: #555555;
+                --accent-color: #d9a510;
+            }
+        }
+        body {
+            background-color: var(--bg-app);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .container {
+            padding: 2rem;
+            animation: fadeIn 0.5s ease-out;
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+        p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
+            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
+        </svg>
+        <h1>Authorization Complete</h1>
+        <p>You can close this tab and return to the terminal.</p>
+    </div>
+</body>
+</html>`);
   });
 
   server.on('error', () => {
@@ -263,31 +402,59 @@ async function exchangeAuthorizationCode(
   };
 }
 
+const PERMANENT_OAUTH_ERRORS = ['invalid_client', 'invalid_grant', 'unauthorized_client', 'invalid_scope'];
+const REFRESH_MAX_ATTEMPTS = 3;
+
 async function refreshOAuthTokenGeneric(
   providerId: string,
   tokenUrl: string,
   params: Record<string, string>,
   fallbackRefreshToken: string
 ): Promise<OAuthTokenState | null> {
-  debugLog(`[oauth][${providerId}] refresh token=${maskToken(fallbackRefreshToken)}`);
-  const res = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString(),
-  });
-  const data = await res.json() as OAuthTokenResponse;
-  if (!res.ok || data.error) {
-    debugLog(`[oauth][${providerId}] refresh failed status=${res.status} error=${data.error ?? ''} desc=${data.error_description ?? ''}`);
-    return null;
+  const body = new URLSearchParams(params).toString();
+
+  for (let attempt = 0; attempt < REFRESH_MAX_ATTEMPTS; attempt++) {
+    debugLog(`[oauth][${providerId}] refresh token=${maskToken(fallbackRefreshToken)}${attempt > 0 ? ` (retry ${attempt}/${REFRESH_MAX_ATTEMPTS - 1})` : ''}`);
+
+    let res: Response;
+    try {
+      res = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+    } catch (err) {
+      debugLog(`[oauth][${providerId}] refresh network error: ${err instanceof Error ? err.message : err}`);
+      if (attempt < REFRESH_MAX_ATTEMPTS - 1) {
+        await sleep((attempt + 1) * 1500);
+        continue;
+      }
+      return null;
+    }
+
+    const data = await res.json() as OAuthTokenResponse;
+    if (!res.ok || data.error) {
+      debugLog(`[oauth][${providerId}] refresh failed status=${res.status} error=${data.error ?? ''} desc=${data.error_description ?? ''}`);
+      if (PERMANENT_OAUTH_ERRORS.includes(data.error ?? '') || (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429)) {
+        return null;
+      }
+      if (attempt < REFRESH_MAX_ATTEMPTS - 1) {
+        await sleep((attempt + 1) * 1500);
+        continue;
+      }
+      return null;
+    }
+
+    debugLog(`[oauth][${providerId}] refresh ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? fallbackRefreshToken,
+      expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+      tokenType: data.token_type,
+      scope: data.scope,
+    };
   }
-  debugLog(`[oauth][${providerId}] refresh ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? fallbackRefreshToken,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    tokenType: data.token_type,
-    scope: data.scope,
-  };
+  return null;
 }
 
 async function fetchOpenAICodexModels(): Promise<string[]> {
