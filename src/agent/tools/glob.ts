@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const glob: CoreTool = tool({
   description: `Find files matching a glob pattern. Fast pattern-based file discovery.
@@ -25,8 +26,13 @@ Examples:
       pattern: args.pattern,
       path: args.path && args.path !== 'null' ? args.path : undefined,
     };
+    const cached = checkDuplicate('glob', cleanArgs);
+    if (cached) return cached.result;
     const result = await executeTool('glob', cleanArgs);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
+    let count = 0;
+    try { count = JSON.parse(result.result!).length; } catch {}
+    recordCall('glob', cleanArgs, result.result!, `${count} files`);
     return result.result;
   },
 });
