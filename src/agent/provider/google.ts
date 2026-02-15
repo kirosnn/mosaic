@@ -7,6 +7,7 @@ import { refreshGoogleOAuthToken } from '../../auth/oauth';
 import { setOAuthTokenForProvider } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 const CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 const CODE_ASSIST_API_VERSION = 'v1internal';
