@@ -36,11 +36,11 @@ export function getDefaultServerConfig(): Partial<McpServerConfig> {
   };
 }
 
-function getNavigationServerConfig(): Partial<McpServerConfig> {
-  const serverPath = fileURLToPath(new URL('./servers/navigation/index.ts', import.meta.url));
+function getNativeSearchServerConfig(): Partial<McpServerConfig> {
+  const serverPath = fileURLToPath(new URL('./servers/nativesearch/index.ts', import.meta.url));
   return {
-    id: 'navigation',
-    name: 'Navigation',
+    id: 'nativesearch',
+    name: 'NativeSearch',
     native: true,
     command: 'npx',
     args: ['tsx', serverPath],
@@ -48,8 +48,8 @@ function getNavigationServerConfig(): Partial<McpServerConfig> {
     autostart: 'startup',
     approval: 'never',
     toolApproval: {
-      navigation_cookies: 'always',
-      navigation_headers: 'always',
+      nativesearch_cookies: 'always',
+      nativesearch_headers: 'always',
     },
     timeouts: {
       initialize: 30000,
@@ -90,11 +90,21 @@ export function validateServerConfig(config: Partial<McpServerConfig>): string[]
   return errors;
 }
 
+function resolveServerName(partial: Partial<McpServerConfig>): string {
+  const rawName = typeof partial.name === 'string' ? partial.name.trim() : '';
+  if (partial.id === 'nativesearch') {
+    if (!rawName || /^nativesearch$/i.test(rawName) || /^browser nativesearch$/i.test(rawName)) {
+      return 'NativeSearch';
+    }
+  }
+  return rawName || partial.id!;
+}
+
 function mergeWithDefaults(partial: Partial<McpServerConfig>): McpServerConfig {
   const defaults = getDefaultServerConfig();
   return {
     id: partial.id!,
-    name: partial.name || partial.id!,
+    name: resolveServerName(partial),
     enabled: partial.enabled ?? defaults.enabled!,
     native: partial.native,
     transport: partial.transport || defaults.transport!,
@@ -170,8 +180,8 @@ export function loadMcpConfig(): McpServerConfig[] {
     }
   }
 
-  if (!configMap.has('navigation')) {
-    configMap.set('navigation', getNavigationServerConfig());
+  if (!configMap.has('nativesearch')) {
+    configMap.set('nativesearch', getNativeSearchServerConfig());
   }
 
   const results: McpServerConfig[] = [];
