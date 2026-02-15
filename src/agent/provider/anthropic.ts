@@ -5,6 +5,7 @@ import { getAnthropicReasoningOptions, resolveReasoningEnabled } from './reasoni
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
+import { ContextGuard } from './contextGuard';
 
 export class AnthropicProvider implements Provider {
   async *sendMessage(
