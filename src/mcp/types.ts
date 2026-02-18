@@ -96,7 +96,7 @@ export function parseCanonicalId(canonicalId: string): { serverId: string; toolN
   return { serverId, toolName };
 }
 
-export const NATIVE_SERVER_IDS = new Set(['nativesearch']);
+export const NATIVE_SERVER_IDS = new Set(['nativesearch', 'nativereact']);
 
 export function isNativeMcpServer(serverId: string): boolean {
   return NATIVE_SERVER_IDS.has(serverId);
