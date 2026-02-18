@@ -40,6 +40,7 @@ export class XaiProvider implements Provider {
         });
 
         const sanitizer = new StreamSanitizer();
+        const contextGuard = new ContextGuard(config.maxContextTokens);
 
         for await (const chunk of result.fullStream as any) {
           const c: any = chunk;
@@ -89,12 +90,17 @@ export class XaiProvider implements Provider {
               break;
 
             case 'tool-result':
+              contextGuard.trackToolResult(c.result);
               yield {
                 type: 'tool-result',
                 toolCallId: String(c.toolCallId ?? ''),
                 toolName: String(c.toolName ?? ''),
                 result: c.result,
               };
+              if (contextGuard.shouldBreak()) {
+                yield { type: 'finish', finishReason: 'length' };
+                return;
+              }
               break;
 
             case 'finish': {
