@@ -7,7 +7,7 @@ import { createXai } from '@ai-sdk/xai';
 import { z } from 'zod';
 import { readConfig, getAuthForProvider, setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { executeTool } from './executor';
-import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext, addExploreSummary, getExploreSummaries } from '../../utils/exploreBridge';
+import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext, addExploreSummary, getExploreSummaries, getConversationMemory } from '../../utils/exploreBridge';
 import { refreshOpenAIOAuthToken, refreshGoogleOAuthToken, decodeJwt } from '../../auth/oauth';
 import { debugLog, maskToken } from '../../utils/debug';
 import {
@@ -105,9 +105,53 @@ const EXPLORE_RATE_LIMIT_KEY = 'explore';
 const MAX_EXPLORE_RETRIES = 5;
 const EXPLORE_RETRY_BASE_DELAY_MS = 2000;
 
-const EXPLORE_TOOL_BUDGET = 40;
-let exploreToolBudget = EXPLORE_TOOL_BUDGET;
-let exploreCallCache: Map<string, string> = new Map();
+const PERSISTENT_CACHE_KEY = '__mosaic_explore_persistent_cache__';
+const gbl = globalThis as any;
+if (!gbl[PERSISTENT_CACHE_KEY]) {
+  gbl[PERSISTENT_CACHE_KEY] = {
+    callCache: new Map<string, string>(),
+    failedDomains: new Map<string, number>(),
+  };
+}
+
+const persistentExploreState: {
+  callCache: Map<string, string>;
+  failedDomains: Map<string, number>;
+} = gbl[PERSISTENT_CACHE_KEY];
+
+let exploreCallCache: Map<string, string> = persistentExploreState.callCache;
+
+const DOMAIN_FAIL_THRESHOLD = 3;
+
+function extractDomain(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function isDomainBlocked(url: string): boolean {
+  const domain = extractDomain(url);
+  if (!domain) return false;
+  return (persistentExploreState.failedDomains.get(domain) ?? 0) >= DOMAIN_FAIL_THRESHOLD;
+}
+
+function recordDomainFailure(url: string): void {
+  const domain = extractDomain(url);
+  if (!domain) return;
+  const count = persistentExploreState.failedDomains.get(domain) ?? 0;
+  persistentExploreState.failedDomains.set(domain, count + 1);
+}
+
+function recordDomainSuccess(url: string): void {
+  const domain = extractDomain(url);
+  if (!domain) return;
+  const count = persistentExploreState.failedDomains.get(domain) ?? 0;
+  if (count > 0) {
+    persistentExploreState.failedDomains.set(domain, Math.max(0, count - 1));
+  }
+}
 
 interface ExploreKnowledge {
   readFiles: Map<string, string>;
@@ -121,6 +165,8 @@ let exploreKnowledge: ExploreKnowledge = {
 
 export function resetExploreKnowledge(): void {
   exploreKnowledge = { readFiles: new Map(), grepResults: new Map() };
+  persistentExploreState.callCache.clear();
+  persistentExploreState.failedDomains.clear();
 }
 
 export function getExploreKnowledgeReadFiles(): Map<string, string> {
@@ -145,19 +191,6 @@ function describeToolCall(log: ExploreLog): string {
   if (t === 'fetch') return a.url as string || '?';
   if (t === 'search') return `"${a.query}"`;
   return Object.values(a).filter(Boolean).join(', ');
-}
-
-function getExploreMemorySummary(): string {
-  if (exploreLogs.length === 0) return '';
-  const lines = [`CALLS ALREADY DONE (${exploreLogs.length} calls, budget: ${exploreToolBudget}/${EXPLORE_TOOL_BUDGET}):`];
-  for (const log of exploreLogs) {
-    const desc = describeToolCall(log);
-    lines.push(`  ${log.tool}(${desc}): ${log.resultPreview || 'ok'}`);
-  }
-  if (exploreToolBudget <= 5) {
-    lines.push('Budget almost exhausted. Call "done" NOW with your findings.');
-  }
-  return lines.join('\n');
 }
 
 configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
@@ -218,6 +251,7 @@ EFFICIENCY PRIORITY:
 # NO DUPLICATE CALLS - ENFORCED
 NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
 If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
+If you receive a "[DOMAIN BLOCKED]" response, the domain has too many failures. Do NOT try other URLs on the same domain - use a different source entirely.
 
 # SEARCH STRATEGY
 - To find files by name: use glob first
@@ -225,10 +259,22 @@ If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the n
 - If grep returns "no matches", do NOT retry with slight variations of the same query. Instead: try a completely different search term, OR read the file directly, OR use glob to find relevant files first
 - Prefer reading a file directly over doing 5 grep variations
 
-# TOOL BUDGET - ENFORCED
-You have a STRICT budget of ${EXPLORE_TOOL_BUDGET} tool calls per exploration. Each tool call (except "done") decrements the budget.
-When the budget reaches 0, you MUST call "done" immediately with whatever findings you have.
-Plan your exploration efficiently: prefer grep over read when searching, batch parallel calls, and call "done" as soon as you have enough information.`;
+# FETCH STRATEGY - CRITICAL
+- If a URL returns 404, do NOT try variations of that URL (adding /create, /stream, ?start_index, etc). The page does not exist.
+- After 2-3 failed fetches on a domain, STOP trying that domain and move on to other sources
+- For documentation: find the correct URL structure FIRST (via search or by reading the docs index page), then fetch specific pages
+- NEVER brute-force URL patterns - this wastes time and provides no value
+- For GitHub source code: use a SINGLE fetch with a large max_length instead of many small offset fetches
+
+# FINAL SUMMARY REQUIREMENTS - MANDATORY
+Your final "done.summary" must be substantial and tightly grounded in what you actually explored.
+Include these sections in plain text:
+1. Goal and scope you explored
+2. Key findings tied to concrete evidence
+3. Files/patterns/URLs you used as evidence
+4. Decisions or conclusions and why
+5. Gaps, uncertainty, or what was not verified
+Do not return a short generic summary.`;
 
 const MAX_STEPS = 50;
 
@@ -947,16 +993,17 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called read(${args.path}). Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
-        }
-        exploreToolBudget--;
         const result = await executeTool('read', args);
         const resultLen = result.result?.length || 0;
         const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
         exploreLogs.push({ tool: 'read', args, success: result.success, resultPreview: preview });
         exploreCallCache.set(sig, preview);
         notifyExploreTool('read', args, { success: result.success, preview }, resultLen);
+        const mem = getConversationMemory();
+        if (mem && result.success && result.result) {
+          mem.recordFileRead(args.path, result.result);
+          mem.recordToolCall('read', args, preview, true);
+        }
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -974,10 +1021,6 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called glob(${args.pattern}). Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
-        }
-        exploreToolBudget--;
         const result = await executeTool('glob', args);
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
@@ -992,6 +1035,13 @@ function createExploreTools() {
         exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
         exploreCallCache.set(sig, preview);
         notifyExploreTool('glob', args, { success: result.success, preview }, resultLen);
+        const globMem = getConversationMemory();
+        if (globMem && result.success) {
+          let fileCount = 0;
+          try { const f = JSON.parse(result.result!); fileCount = Array.isArray(f) ? f.length : 0; } catch { }
+          globMem.recordSearch(args.pattern, args.pattern, args.path, fileCount, fileCount);
+          globMem.recordToolCall('glob', args, preview, true);
+        }
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -1012,26 +1062,31 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called grep(${args.query}). Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
-        }
-        exploreToolBudget--;
         const result = await executeTool('grep', { ...args, regex: true });
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
+        let grepFileCount = 0;
+        let grepMatchCount = 0;
         if (result.success && result.result) {
           try {
-            const matches = JSON.parse(result.result);
-            const count = Array.isArray(matches) ? matches.length : 0;
-            const fileSet = new Set<string>();
-            if (Array.isArray(matches)) { for (const m of matches) { const f = (m as any)?.file || (m as any)?.path || ''; if (f) fileSet.add(f); } }
-            const files = Array.from(fileSet).slice(0, 3);
-            preview = count === 0 ? 'no matches' : `${count} matches in ${files.join(', ')}${files.length > 3 ? '...' : ''}`;
+            const parsed = JSON.parse(result.result);
+            const totalMatches = typeof parsed.total_matches === 'number' ? parsed.total_matches : 0;
+            const filesWithMatches = typeof parsed.files_with_matches === 'number' ? parsed.files_with_matches : 0;
+            const resultsArr = Array.isArray(parsed.results) ? parsed.results : [];
+            grepMatchCount = totalMatches;
+            grepFileCount = filesWithMatches;
+            const fileNames = resultsArr.slice(0, 3).map((r: any) => r.file || '').filter(Boolean);
+            preview = totalMatches === 0 ? 'no matches' : `${totalMatches} matches in ${filesWithMatches} files (${fileNames.join(', ')}${filesWithMatches > 3 ? '...' : ''})`;
           } catch { preview = 'ok'; }
         }
         exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
         exploreCallCache.set(sig, preview);
         notifyExploreTool('grep', args, { success: result.success, preview }, resultLen);
+        const grepMem = getConversationMemory();
+        if (grepMem && result.success) {
+          grepMem.recordSearch(args.query, args.pattern, args.path, grepFileCount, grepMatchCount);
+          grepMem.recordToolCall('grep', args, preview, true);
+        }
         if (!result.success) return { error: result.error };
         return result.result;
       },
@@ -1051,10 +1106,6 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called list(${args.path}). Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
-        }
-        exploreToolBudget--;
         const result = await executeTool('list', args);
         const resultLen = result.result?.length || 0;
         let preview = result.error || 'error';
@@ -1086,17 +1137,23 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already fetched ${args.url}. Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
+        if (isDomainBlocked(args.url)) {
+          const msg = `[DOMAIN BLOCKED] Too many failures on ${extractDomain(args.url)}. Try a different domain or resource.`;
+          exploreLogs.push({ tool: 'fetch', args, success: false, resultPreview: msg });
+          exploreCallCache.set(sig, msg);
+          return { error: msg };
         }
-        exploreToolBudget--;
         const result = await executeTool('fetch', { ...args, max_length: args.max_length ?? 10000 });
         const resultLen = result.result?.length || 0;
         const preview = result.success ? `${resultLen} chars` : (result.error || 'error');
         exploreLogs.push({ tool: 'fetch', args, success: result.success, resultPreview: preview });
         exploreCallCache.set(sig, preview);
         notifyExploreTool('fetch', args, { success: result.success, preview }, resultLen);
-        if (!result.success) return { error: result.error };
+        if (!result.success) {
+          recordDomainFailure(args.url);
+          return { error: result.error };
+        }
+        recordDomainSuccess(args.url);
         return result.result;
       },
     }),
@@ -1113,10 +1170,6 @@ function createExploreTools() {
         if (cached) {
           return `[DUPLICATE BLOCKED] Already searched "${args.query}". Cached result: ${cached}`;
         }
-        if (exploreToolBudget <= 0) {
-          return { error: 'Tool budget exhausted. Call "done" now.' };
-        }
-        exploreToolBudget--;
         try {
           const { getMcpManager, isMcpInitialized } = require('../../mcp/index');
           if (!isMcpInitialized()) {
@@ -1141,7 +1194,7 @@ function createExploreTools() {
       },
     }),
     done: createTool({
-      description: 'Call this when you have gathered enough information OR when the budget is exhausted. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
+      description: 'Call this when you have gathered enough information. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
       parameters: z.object({
         summary: z.string().describe('Comprehensive summary of what was found during exploration'),
       }),
@@ -1173,6 +1226,132 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
+function normalizeExploreLine(text: string, maxLen = 180): string {
+  const clean = text.replace(/[\r\n]+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  return `${clean.slice(0, maxLen)}...`;
+}
+
+function appendCoverageLine(lines: string[], label: string, values: string[], limit = 8): void {
+  if (values.length === 0) return;
+  const shown = values.slice(0, limit);
+  const suffix = values.length > limit ? ` (+${values.length - limit} more)` : '';
+  lines.push(`- ${label}: ${shown.join(', ')}${suffix}`);
+}
+
+function toUnique(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const clean = value.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+function buildContextualExploreSummary(purpose: string, modelSummary: string | null): string {
+  const successfulLogs = exploreLogs.filter((log) => log.success);
+  const failedLogs = exploreLogs.filter((log) => !log.success);
+
+  const readFiles = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'read')
+      .map((log) => (typeof log.args.path === 'string' ? log.args.path : ''))
+  );
+
+  const globScopes = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'glob')
+      .map((log) => {
+        const pattern = typeof log.args.pattern === 'string' ? log.args.pattern : '';
+        const path = typeof log.args.path === 'string' ? log.args.path : '';
+        if (pattern && path && path !== '.') return `${pattern} in ${path}`;
+        return pattern || path;
+      })
+  );
+
+  const grepScopes = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'grep')
+      .map((log) => {
+        const query = typeof log.args.query === 'string' ? log.args.query : '';
+        const pattern = typeof log.args.pattern === 'string' ? log.args.pattern : '';
+        const path = typeof log.args.path === 'string' ? log.args.path : '';
+        const scopeParts = [pattern, path && path !== '.' ? path : ''].filter(Boolean);
+        const scope = scopeParts.length > 0 ? ` in ${scopeParts.join(' ')}` : '';
+        if (query) return `"${query}"${scope}`;
+        return scopeParts.join(' ');
+      })
+  );
+
+  const listedPaths = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'list')
+      .map((log) => (typeof log.args.path === 'string' ? log.args.path : ''))
+  );
+
+  const fetchedUrls = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'fetch')
+      .map((log) => (typeof log.args.url === 'string' ? log.args.url : ''))
+  );
+
+  const searchQueries = toUnique(
+    successfulLogs
+      .filter((log) => log.tool === 'search')
+      .map((log) => (typeof log.args.query === 'string' ? log.args.query : ''))
+  );
+
+  const evidence = successfulLogs
+    .slice(0, 15)
+    .map((log) => `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || 'ok', 140)}`);
+
+  const failures = failedLogs
+    .slice(0, 10)
+    .map((log) => `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || 'error', 140)}`);
+
+  const lines: string[] = [];
+  lines.push('Goal');
+  lines.push(purpose.trim() || '(no explicit goal)');
+  lines.push('');
+  lines.push('Coverage');
+  lines.push(`- Total tool calls: ${exploreLogs.length}`);
+  lines.push(`- Successful calls: ${successfulLogs.length}`);
+  lines.push(`- Failed calls: ${failedLogs.length}`);
+  appendCoverageLine(lines, 'Read files', readFiles);
+  appendCoverageLine(lines, 'Glob scopes', globScopes);
+  appendCoverageLine(lines, 'Grep scopes', grepScopes);
+  appendCoverageLine(lines, 'Listed paths', listedPaths);
+  appendCoverageLine(lines, 'Fetched URLs', fetchedUrls);
+  appendCoverageLine(lines, 'Search queries', searchQueries);
+  lines.push('');
+  lines.push('Findings');
+  const normalizedSummary = typeof modelSummary === 'string' ? modelSummary.trim() : '';
+  if (normalizedSummary) {
+    lines.push(normalizedSummary);
+  } else {
+    lines.push('No explicit done summary was provided. Findings are inferred from the observed tool outputs below.');
+  }
+  lines.push('');
+  lines.push('Evidence');
+  if (evidence.length > 0) {
+    lines.push(...evidence);
+  } else {
+    lines.push('- No successful tool evidence was captured.');
+  }
+  lines.push('');
+  lines.push('Gaps');
+  if (failures.length > 0) {
+    lines.push(...failures);
+  } else {
+    lines.push('- No explicit tool failures were recorded.');
+  }
+
+  return lines.join('\n');
+}
+
 export async function executeExploreTool(purpose: string): Promise<ExploreResult> {
   const startTime = Date.now();
   const userConfig = readConfig();
@@ -1187,18 +1366,29 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreDoneResult = null;
   exploreLogs = [];
   exploreThoughtSignatures = [];
-  exploreToolBudget = EXPLORE_TOOL_BUDGET;
-  exploreCallCache = new Map();
+
+  exploreCallCache = persistentExploreState.callCache;
 
   for (const [path, preview] of exploreKnowledge.readFiles) {
     const sig = makeCallSignature('read', { path });
-    exploreCallCache.set(sig, preview);
+    if (!exploreCallCache.has(sig)) exploreCallCache.set(sig, preview);
   }
   for (const [sig, preview] of exploreKnowledge.grepResults) {
-    exploreCallCache.set(sig, preview);
+    if (!exploreCallCache.has(sig)) exploreCallCache.set(sig, preview);
   }
 
-  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} knownGreps=${exploreKnowledge.grepResults.size}`);
+  const mem = getConversationMemory();
+  if (mem) {
+    for (const filePath of mem.getKnownFilePaths()) {
+      const sig = makeCallSignature('read', { path: filePath });
+      if (!exploreCallCache.has(sig)) {
+        const entry = mem.getFileEntry(filePath);
+        if (entry) exploreCallCache.set(sig, entry.summary);
+      }
+    }
+  }
+
+  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`);
 
   const abortSignal = getExploreAbortSignal();
   const timeoutId = setTimeout(() => {
@@ -1324,11 +1514,6 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
             if (exploreDoneResult !== null) {
               break;
             }
-            if (exploreToolBudget <= 0 && exploreDoneResult === null) {
-              debugLog(`[explore] budget exhausted, forcing completion\n${getExploreMemorySummary()}`);
-              exploreDoneResult = '[Budget exhausted - exploration stopped]';
-              break;
-            }
           }
 
           reportRateLimitSuccess(EXPLORE_RATE_LIMIT_KEY);
@@ -1388,30 +1573,33 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     const logsStr = formatExploreLogs();
     debugLog(`[explore] logs:\n${logsStr}`);
+    const contextualSummary = buildContextualExploreSummary(purpose, exploreDoneResult);
+
+    for (const log of exploreLogs) {
+      if (log.tool === 'read' && log.success && log.args.path) {
+        exploreKnowledge.readFiles.set(log.args.path as string, log.resultPreview || 'read');
+      }
+      if (log.tool === 'grep' && log.success) {
+        const sig = makeCallSignature('grep', log.args);
+        exploreKnowledge.grepResults.set(sig, log.resultPreview || 'ok');
+      }
+    }
 
     if (exploreDoneResult !== null) {
-      for (const log of exploreLogs) {
-        if (log.tool === 'read' && log.success && log.args.path) {
-          exploreKnowledge.readFiles.set(log.args.path as string, log.resultPreview || 'read');
-        }
-        if (log.tool === 'grep' && log.success) {
-          const sig = makeCallSignature('grep', log.args);
-          exploreKnowledge.grepResults.set(sig, log.resultPreview || 'ok');
-        }
-      }
+      addExploreSummary(contextualSummary);
 
-      addExploreSummary(exploreDoneResult);
-
-      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size}`);
+      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`);
       return {
         success: true,
-        result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${exploreDoneResult}`,
+        result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${contextualSummary}`,
       };
     }
 
+    addExploreSummary(contextualSummary);
+
     return {
       success: true,
-      result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\nExploration completed after ${MAX_STEPS} steps without explicit summary.`,
+      result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${contextualSummary}`,
     };
   } catch (error) {
     clearTimeout(timeoutId);
