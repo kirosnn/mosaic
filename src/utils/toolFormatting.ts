@@ -35,9 +35,16 @@ function getMcpToolDisplayName(tool: string): string {
   return words.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
+const NATIVE_TOOL_DISPLAY_NAMES: Record<string, string> = {
+  nativereact_doctor: 'ReactDoctor',
+  nativereact_analyze_file: 'Analyze File',
+  nativereact_list_rules: 'List Rules',
+};
+
 function getNativeToolDisplayName(safeId: string): string | null {
   const toolName = getNativeMcpToolName(safeId);
   if (!toolName) return null;
+  if (toolName in NATIVE_TOOL_DISPLAY_NAMES) return NATIVE_TOOL_DISPLAY_NAMES[toolName]!;
   const mcp = parseMcpSafeId(safeId);
   if (!mcp) return null;
   const serverPrefix = mcp.serverId + '_';
@@ -108,9 +115,10 @@ function getMcpHeaderInfo(_tool: string, args: Record<string, unknown>): string 
     return `${urls.length} URLs`;
   }
 
-  const path = args.path ?? args.file ?? args.filename ?? args.filepath ?? args.name;
+  const path = args.path ?? args.file ?? args.filename ?? args.filepath ?? args.filePath ?? args.directory ?? args.name;
   if (typeof path === 'string' && path.trim()) {
-    return path.length > 50 ? path.slice(0, 50) + '...' : path;
+    const short = path.replace(/\\/g, '/').split('/').slice(-3).join('/');
+    return short.length > 50 ? short.slice(0, 50) + '...' : short;
   }
 
   const command = args.command ?? args.cmd;
@@ -326,6 +334,76 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
   }
 }
 
+function normalizeExploreInfoValue(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+export function getExploreToolInfo(toolName: string, args: Record<string, unknown>): string {
+  const name = toolName.toLowerCase();
+  const path = normalizeExploreInfoValue(args.path);
+  const pattern = normalizeExploreInfoValue(args.pattern);
+  const query = normalizeExploreInfoValue(args.query);
+
+  if (name === 'grep') {
+    const scopeParts: string[] = [];
+    if (pattern) scopeParts.push(pattern);
+    if (path && path !== '.') scopeParts.push(path);
+    const scope = scopeParts.length > 0 ? ` in ${scopeParts.join(' ')}` : '';
+    if (query) return `"${query}"${scope}`;
+    if (scopeParts.length > 0) return scopeParts.join(' ');
+    return '';
+  }
+
+  if (name === 'glob') {
+    if (pattern) {
+      if (path && path !== '.') return `${pattern} in ${path}`;
+      return pattern;
+    }
+    return path;
+  }
+
+  if (name === 'read' || name === 'list' || name === 'create_directory') {
+    return path;
+  }
+
+  if (name === 'fetch') {
+    const url = normalizeExploreInfoValue(args.url);
+    if (!url) return '';
+    try {
+      const u = new URL(url);
+      return u.hostname + (u.pathname !== '/' ? u.pathname : '');
+    } catch {
+      return url;
+    }
+  }
+
+  if (name === 'search' || name === 'search_query' || name === 'web_search') {
+    if (query) return query;
+    if (typeof args.search_query === 'string') {
+      return normalizeExploreInfoValue(args.search_query);
+    }
+  }
+
+  const fallbackValues = [
+    args.path,
+    args.pattern,
+    args.query,
+    args.url,
+    args.command,
+    args.purpose,
+    args.file,
+    args.name,
+  ];
+
+  for (const value of fallbackValues) {
+    const normalized = normalizeExploreInfoValue(value);
+    if (normalized) return normalized;
+  }
+
+  return '';
+}
+
 export function normalizeToolCall(toolName: string, args: Record<string, unknown>): { toolName: string; args: Record<string, unknown> } {
   const trimmed = toolName.trim();
   const matchA = trimmed.match(/^(\{[\s\S]*\})\s*\[\s*\]\s*([a-zA-Z][a-zA-Z0-9_\-]*)$/);
@@ -459,6 +537,76 @@ function formatSearchResultBody(result: unknown): string[] {
     return [`${count} results`];
   } catch {
     return [];
+  }
+}
+
+function formatReactDoctorBody(result: unknown): string[] {
+  if (typeof result !== 'string') return ['Completed'];
+  try {
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    if (typeof parsed.error === 'string') return [`Error: ${parsed.error}`];
+
+    const score = typeof parsed.score === 'number' ? parsed.score : 0;
+    const status = typeof parsed.status === 'string' ? parsed.status : '';
+    const errorCount = typeof parsed.errorCount === 'number' ? parsed.errorCount : 0;
+    const warningCount = typeof parsed.warningCount === 'number' ? parsed.warningCount : 0;
+    const fileCount = typeof parsed.fileCount === 'number' ? parsed.fileCount : 0;
+    const scannedFileCount = typeof parsed.scannedFileCount === 'number' ? parsed.scannedFileCount : fileCount;
+    const skippedFileCount = typeof parsed.skippedFileCount === 'number' ? parsed.skippedFileCount : Math.max(0, scannedFileCount - fileCount);
+    const analysisMode = typeof parsed.analysisMode === 'string' ? parsed.analysisMode : '';
+
+    const statusLabel = status === 'good' ? 'good' : status === 'ok' ? 'ok' : status === 'poor' ? 'poor' : '';
+    const scoreLine = statusLabel ? `Score: ${score}/100 (${statusLabel})` : `Score: ${score}/100`;
+    const scopeLine = analysisMode
+      ? `Analyzed ${fileCount}/${scannedFileCount} files (${analysisMode}${skippedFileCount > 0 ? `, skipped ${skippedFileCount}` : ''})`
+      : '';
+
+    if (errorCount === 0 && warningCount === 0) {
+      return scopeLine ? [scoreLine, scopeLine, `No issues found in ${fileCount} files`] : [scoreLine, `No issues found in ${fileCount} files`];
+    }
+
+    const parts: string[] = [];
+    if (errorCount > 0) parts.push(`${errorCount} error${errorCount > 1 ? 's' : ''}`);
+    if (warningCount > 0) parts.push(`${warningCount} warning${warningCount > 1 ? 's' : ''}`);
+    return scopeLine
+      ? [scoreLine, scopeLine, `${parts.join(', ')} across ${fileCount} files`]
+      : [scoreLine, `${parts.join(', ')} across ${fileCount} files`];
+  } catch {
+    return ['Scan completed'];
+  }
+}
+
+function formatReactAnalyzeFileBody(result: unknown): string[] {
+  if (typeof result !== 'string') return ['Completed'];
+  try {
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    if (typeof parsed.error === 'string') return [`Error: ${parsed.error}`];
+
+    const total = typeof parsed.diagnosticCount === 'number' ? parsed.diagnosticCount : 0;
+    const errors = typeof parsed.errorCount === 'number' ? parsed.errorCount : 0;
+    const warnings = typeof parsed.warningCount === 'number' ? parsed.warningCount : 0;
+
+    if (total === 0) return ['No issues found'];
+    const parts: string[] = [];
+    if (errors > 0) parts.push(`${errors} error${errors > 1 ? 's' : ''}`);
+    if (warnings > 0) parts.push(`${warnings} warning${warnings > 1 ? 's' : ''}`);
+    return [`${total} issue${total > 1 ? 's' : ''} (${parts.join(', ')})`];
+  } catch {
+    return ['Analysis completed'];
+  }
+}
+
+function formatReactListRulesBody(result: unknown): string[] {
+  if (typeof result !== 'string') return ['Completed'];
+  try {
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    if (typeof parsed.error === 'string') return [`Error: ${parsed.error}`];
+
+    const total = typeof parsed.totalRules === 'number' ? parsed.totalRules : 0;
+    const cats = Array.isArray(parsed.categories) ? parsed.categories.length : 0;
+    return [`${total} rules · ${cats} categories`];
+  } catch {
+    return ['Completed'];
   }
 }
 
@@ -762,6 +910,9 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
           const searchLines = formatSearchResultBody(result);
           if (searchLines.length > 0) return searchLines;
         }
+        if (nativeName === 'nativereact_doctor') return formatReactDoctorBody(result);
+        if (nativeName === 'nativereact_analyze_file') return formatReactAnalyzeFileBody(result);
+        if (nativeName === 'nativereact_list_rules') return formatReactListRulesBody(result);
         return formatMcpResultBody(result);
       }
       const toolResultText = formatToolResult(result);
