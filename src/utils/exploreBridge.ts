@@ -1,5 +1,6 @@
 import type { ConversationMemory } from '../agent/memory';
 import { getGlobalMemory } from '../agent/memory';
+import { debugLog } from './debug';
 
 type ExploreToolCallback = (toolName: string, args: Record<string, unknown>, result: { success: boolean; preview: string }, tokenEstimate: number) => void;
 
@@ -75,19 +76,19 @@ export function notifyExploreTool(toolName: string, args: Record<string, unknown
     preview: result.preview,
     tokenEstimate: state.totalExploreTokens,
   };
-  console.log(`[EXPLORE BRIDGE] notify: ${toolName}, subs=${state.subscribers.size}`);
+  debugLog(`[explore-bridge] notify tool=${toolName} subscribers=${state.subscribers.size}`);
   state.subscribers.forEach(sub => {
-    console.log(`[EXPLORE BRIDGE] calling subscriber`);
+    debugLog('[explore-bridge] calling subscriber');
     sub(event);
   });
 }
 
 export function subscribeExploreTool(callback: ExploreToolSubscriber): () => void {
   state.subscribers.add(callback);
-  console.log(`[EXPLORE BRIDGE] subscribe: now ${state.subscribers.size} subscribers`);
+  debugLog(`[explore-bridge] subscribe count=${state.subscribers.size}`);
   return () => {
     state.subscribers.delete(callback);
-    console.log(`[EXPLORE BRIDGE] unsubscribe: now ${state.subscribers.size} subscribers`);
+    debugLog(`[explore-bridge] unsubscribe count=${state.subscribers.size}`);
   };
 }
 
