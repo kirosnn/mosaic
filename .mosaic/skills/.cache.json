@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "generatedAt": "2026-02-18T17:35:56.694Z",
+  "workspace": "C:\\Users\\Nassim\\Projects\\mosaic",
+  "entries": [
+    {
+      "id": "commitpush",
+      "title": "commitpush",
+      "path": ".mosaic/skills/local/commitpush.md",
+      "fileSlug": "commitpush",
+      "priority": 50,
+      "tags": [
+        "git",
+        "automation",
+        "quality"
+      ],
+      "requires": [],
+      "summary": "Commit each changed file with a professional English message and push after validations.",
+      "onActivateRun": false,
+      "description": "Commit each changed file with a professional English message and push after validations.",
+      "updatedAt": 1771436141756,
+      "sizeBytes": 6743,
+      "contentHash": "6743:1771436141756:128:# commitpush\n\n## When to use (trigger conditions)\nUse this skill when:\n- You have a working tree with changes and you want **one"
+    }
+  ],
+  "byId": {
+    "commitpush": [
+      ".mosaic/skills/local/commitpush.md"
+    ]
+  }
+}
