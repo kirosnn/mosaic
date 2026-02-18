@@ -186,6 +186,14 @@ function wrapToolDiffLine(line: string, maxWidth: number): string[] {
     : `${sign} | ${chunk || ''}`);
 }
 
+function trimTrailingEmptyLines(lines: string[]): string[] {
+  let end = lines.length;
+  while (end > 1 && !(lines[end - 1] ?? '').trim()) {
+    end -= 1;
+  }
+  return lines.slice(0, end);
+}
+
 export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
   const { messages, maxWidth, viewportHeight, questionRequest, approvalRequest } = params;
   const allItems: RenderItem[] = [];
@@ -201,7 +209,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
       : null;
     const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
-    const shouldPadMessage = (messageRole === 'user' || messageRole === 'tool' || messageRole === 'slash')
+    const shouldPadMessage = (messageRole === 'user' || messageRole === 'slash')
       && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
       && !compactTool;
 
@@ -227,7 +235,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         toolName: message.toolName,
         isFirst: false,
         isSpacer: false,
-        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+        success: messageRole === 'slash' ? message.success : undefined,
         isRunning: message.isRunning,
         runningStartTime: message.runningStartTime,
         visualLines: 1,
@@ -418,7 +426,10 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
           : undefined;
 
         const messageText = message.displayContent ?? message.content;
-        const paragraphs = messageText.split('\n');
+        const rawParagraphs = messageText.split('\n');
+        const paragraphs = (messageRole === 'tool' || messageRole === 'slash')
+          ? trimTrailingEmptyLines(rawParagraphs)
+          : rawParagraphs;
         let isFirstContent = true;
         const planStatuses: Array<'pending' | 'in_progress' | 'completed'> = (messageRole === 'tool' && message.toolName === 'plan' && message.toolResult && typeof message.toolResult === 'object')
           ? (Array.isArray((message.toolResult as Record<string, unknown>).plan)
@@ -509,7 +520,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         toolName: message.toolName,
         isFirst: false,
         isSpacer: false,
-        success: (messageRole === 'tool' || messageRole === 'slash') ? message.success : undefined,
+        success: messageRole === 'slash' ? message.success : undefined,
         isRunning: message.isRunning,
         runningStartTime: message.runningStartTime,
         visualLines: 1,
