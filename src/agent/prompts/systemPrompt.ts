@@ -2,6 +2,7 @@ import { homedir, platform, arch } from 'os';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getToolsPrompt } from './toolsPrompt';
+import { buildActiveSkillsPromptSection } from '../../utils/skills';
 
 export const DEFAULT_SYSTEM_PROMPT = `You are Mosaic, an AI coding agent operating in the user's terminal.
 You assist with software engineering tasks: coding, debugging, refactoring, testing, and documentation.
@@ -317,7 +318,12 @@ All requests refer to the current workspace ({{WORKSPACE}}), never to Mosaic its
 </scope>
 `;
 
-export function processSystemPrompt(prompt: string, includeTools: boolean = true, mcpToolInfos?: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
+export function processSystemPrompt(
+  prompt: string,
+  includeTools: boolean = true,
+  mcpToolInfos?: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>,
+  options?: { consumeOneShotSkills?: boolean }
+): string {
   const now = new Date();
   const workspace = process.cwd();
   const os = platform();
@@ -365,6 +371,14 @@ ${mosaicContent}`;
     }
   } else {
     processed = `${processed}\n\nNOTE: No MOSAIC.md file found in this workspace. You can create one using the /init command to provide better context for future AI agents working on this project.`;
+  }
+
+  const activeSkillsPrompt = buildActiveSkillsPromptSection({
+    includeOneShot: true,
+    consumeOneShot: options?.consumeOneShotSkills === true,
+  });
+  if (activeSkillsPrompt) {
+    processed = `${processed}\n\n${activeSkillsPrompt}`;
   }
 
   if (includeTools) {
