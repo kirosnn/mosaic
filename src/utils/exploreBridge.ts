@@ -1,3 +1,6 @@
+import type { ConversationMemory } from '../agent/memory';
+import { getGlobalMemory } from '../agent/memory';
+
 type ExploreToolCallback = (toolName: string, args: Record<string, unknown>, result: { success: boolean; preview: string }, tokenEstimate: number) => void;
 
 export interface ExploreToolEvent {
@@ -17,6 +20,7 @@ interface ExploreBridgeGlobal {
   subscribers: Set<ExploreToolSubscriber>;
   parentContext: string;
   previousExploreSummaries: string[];
+  conversationMemory: ConversationMemory | null;
 }
 
 const globalKey = '__mosaic_explore_bridge__';
@@ -30,6 +34,7 @@ if (!g[globalKey]) {
     subscribers: new Set<ExploreToolSubscriber>(),
     parentContext: '',
     previousExploreSummaries: [],
+    conversationMemory: null,
   };
 }
 
@@ -108,4 +113,12 @@ export function getExploreSummaries(): string[] {
 
 export function resetExploreSummaries(): void {
   state.previousExploreSummaries = [];
+}
+
+export function setConversationMemory(memory: ConversationMemory | null): void {
+  state.conversationMemory = memory;
+}
+
+export function getConversationMemory(): ConversationMemory {
+  return state.conversationMemory ?? getGlobalMemory();
 }
