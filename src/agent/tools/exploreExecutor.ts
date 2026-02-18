@@ -4,6 +4,8 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
 import { createXai } from '@ai-sdk/xai';
+import { stat } from 'fs/promises';
+import { resolve } from 'path';
 import { z } from 'zod';
 import { readConfig, getAuthForProvider, setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { executeTool } from './executor';
@@ -181,10 +183,51 @@ function makeCallSignature(tool: string, args: Record<string, unknown>): string 
   return `${tool}::${JSON.stringify(sorted)}`;
 }
 
+function toNumberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function buildReadArgs(rawArgs: Record<string, unknown>): { path: string; start_line?: number; end_line?: number } {
+  const path = typeof rawArgs.path === 'string' ? rawArgs.path : '';
+  const startLine = toNumberOrUndefined(rawArgs.start_line);
+  const endLine = toNumberOrUndefined(rawArgs.end_line);
+  const readArgs: { path: string; start_line?: number; end_line?: number } = { path };
+  if (startLine !== undefined) readArgs.start_line = startLine;
+  if (endLine !== undefined) readArgs.end_line = endLine;
+  return readArgs;
+}
+
+function formatReadScope(path: string, startLine?: number, endLine?: number): string {
+  if (startLine === undefined && endLine === undefined) return path || '?';
+  const start = startLine !== undefined ? String(startLine) : 'start';
+  const end = endLine !== undefined ? String(endLine) : 'end';
+  return `${path || '?'}:${start}-${end}`;
+}
+
+async function getReadFileState(path: string): Promise<string> {
+  try {
+    const filePath = resolve(process.cwd(), path);
+    const fileStat = await stat(filePath);
+    return `${Math.floor(fileStat.mtimeMs)}:${fileStat.size}`;
+  } catch {
+    return 'missing';
+  }
+}
+
+function makeReadCallSignature(
+  args: { path: string; start_line?: number; end_line?: number },
+  fileState: string
+): string {
+  const sigArgs: Record<string, unknown> = { path: args.path, file_state: fileState };
+  if (args.start_line !== undefined) sigArgs.start_line = args.start_line;
+  if (args.end_line !== undefined) sigArgs.end_line = args.end_line;
+  return makeCallSignature('read', sigArgs);
+}
+
 function describeToolCall(log: ExploreLog): string {
   const t = log.tool;
   const a = log.args;
-  if (t === 'read') return a.path as string || '?';
+  if (t === 'read') return formatReadScope(a.path as string || '?', toNumberOrUndefined(a.start_line), toNumberOrUndefined(a.end_line));
   if (t === 'glob') return `${a.pattern}${a.path && a.path !== '.' ? ' in ' + a.path : ''}`;
   if (t === 'grep') return `"${a.query}"${a.pattern ? ' in ' + a.pattern : ''}`;
   if (t === 'list') return a.path as string || '.';
@@ -203,7 +246,7 @@ configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase and the web.
 
 Your goal is to explore the codebase and external documentation to fulfill the given purpose. You have access to these tools:
-- read: Read file contents (params: path)
+- read: Read file contents (params: path, start_line, end_line, force_refresh)
 - glob: Find files by name pattern (params: pattern = glob like "**/*.ts", path = directory)
 - grep: Search for text INSIDE files (params: query = regex to search for, pattern = glob to filter files like "*.ts", path = directory, case_sensitive, max_results)
 - list: List directory contents (params: path, recursive, filter, include_hidden)
@@ -251,6 +294,7 @@ EFFICIENCY PRIORITY:
 # NO DUPLICATE CALLS - ENFORCED
 NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
 If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
+For read, if a file changed or you intentionally need a re-read, use force_refresh=true.
 If you receive a "[DOMAIN BLOCKED]" response, the domain has too many failures. Do NOT try other URLs on the same domain - use a different source entirely.
 
 # SEARCH STRATEGY
@@ -985,24 +1029,34 @@ function createExploreTools() {
       description: 'Read the contents of a file',
       parameters: z.object({
         path: z.string().describe('Path to the file to read'),
+        start_line: z.number().nullable().optional().describe('1-based start line (pass null for file start)'),
+        end_line: z.number().nullable().optional().describe('1-based end line (pass null for file end)'),
+        force_refresh: z.boolean().nullable().optional().describe('Bypass duplicate blocking for this read (pass null for false)'),
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const sig = makeCallSignature('read', args);
-        const cached = exploreCallCache.get(sig);
-        if (cached) {
-          return `[DUPLICATE BLOCKED] Already called read(${args.path}). Cached result: ${cached}`;
+        const forceRefresh = args.force_refresh === true;
+        const readArgs = buildReadArgs(args);
+        const fileState = await getReadFileState(readArgs.path);
+        const sig = makeReadCallSignature(readArgs, fileState);
+        if (!forceRefresh) {
+          const cached = exploreCallCache.get(sig);
+          if (cached) {
+            return `[DUPLICATE BLOCKED] Already called read(${formatReadScope(readArgs.path, readArgs.start_line, readArgs.end_line)}). Cached result: ${cached}`;
+          }
         }
-        const result = await executeTool('read', args);
+        const result = await executeTool('read', readArgs);
         const resultLen = result.result?.length || 0;
         const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
-        exploreLogs.push({ tool: 'read', args, success: result.success, resultPreview: preview });
+        const logArgs: Record<string, unknown> = { ...readArgs };
+        if (forceRefresh) logArgs.force_refresh = true;
+        exploreLogs.push({ tool: 'read', args: logArgs, success: result.success, resultPreview: preview });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('read', args, { success: result.success, preview }, resultLen);
+        notifyExploreTool('read', logArgs, { success: result.success, preview }, resultLen);
         const mem = getConversationMemory();
         if (mem && result.success && result.result) {
-          mem.recordFileRead(args.path, result.result);
-          mem.recordToolCall('read', args, preview, true);
+          mem.recordFileRead(readArgs.path, result.result);
+          mem.recordToolCall('read', logArgs, preview, true);
         }
         if (!result.success) return { error: result.error };
         return result.result;
@@ -1370,7 +1424,8 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreCallCache = persistentExploreState.callCache;
 
   for (const [path, preview] of exploreKnowledge.readFiles) {
-    const sig = makeCallSignature('read', { path });
+    const fileState = await getReadFileState(path);
+    const sig = makeReadCallSignature({ path }, fileState);
     if (!exploreCallCache.has(sig)) exploreCallCache.set(sig, preview);
   }
   for (const [sig, preview] of exploreKnowledge.grepResults) {
@@ -1380,7 +1435,8 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   const mem = getConversationMemory();
   if (mem) {
     for (const filePath of mem.getKnownFilePaths()) {
-      const sig = makeCallSignature('read', { path: filePath });
+      const fileState = await getReadFileState(filePath);
+      const sig = makeReadCallSignature({ path: filePath }, fileState);
       if (!exploreCallCache.has(sig)) {
         const entry = mem.getFileEntry(filePath);
         if (entry) exploreCallCache.set(sig, entry.summary);
