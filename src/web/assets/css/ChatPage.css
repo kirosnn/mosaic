@@ -80,9 +80,20 @@
 }
 
 .messages > .message.user,
-.messages > .message.tool,
-.messages > .tool-compact-line {
+.messages > .message.tool {
     margin-bottom: 1rem;
+}
+
+.messages > .tool-compact-line {
+    margin: 0;
+}
+
+.messages > :not(.tool-compact-line) + .tool-compact-line {
+    margin-top: 1rem;
+}
+
+.messages > .tool-compact-line + :not(.tool-compact-line) {
+    margin-top: 1rem;
 }
 
 .messages > .message.user {
@@ -157,15 +168,26 @@
     color: inherit;
 }
 
-.tool-group > .message.tool,
-.tool-group > .tool-compact-line {
+.tool-group > .message.tool {
     margin-top: 0.3rem;
     padding-left: 1.45rem;
 }
 
-.tool-group > .message.tool:first-of-type,
-.tool-group > .tool-compact-line:first-of-type {
+.tool-group > .message.tool:first-of-type {
     margin-top: 0.2rem;
+}
+
+.tool-group > .tool-compact-line {
+    margin-top: 0;
+    padding-left: 1.45rem;
+}
+
+.tool-group > :not(.tool-compact-line) + .tool-compact-line {
+    margin-top: 0.3rem;
+}
+
+.tool-group > .tool-compact-line + :not(.tool-compact-line) {
+    margin-top: 0.3rem;
 }
 
 .input-area {
