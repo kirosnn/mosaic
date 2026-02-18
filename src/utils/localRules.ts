@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
+import { getBaseCommand as getCommandPatternBase } from './commandPattern';
 
 interface BashRules {
   autoRun: string[];
@@ -42,21 +43,22 @@ function loadLocalBashRules(): LocalRules | null {
 }
 
 function matchesBashRule(command: string, patterns: string[]): boolean {
-  const trimmed = command.trim();
+  const trimmed = command.trim().replace(/\s+/g, ' ');
 
   for (const pattern of patterns) {
-    if (pattern.endsWith(' *')) {
-      const prefix = pattern.slice(0, -2);
+    const normalizedPattern = pattern.trim().replace(/\s+/g, ' ');
+    if (normalizedPattern.endsWith(' *')) {
+      const prefix = normalizedPattern.slice(0, -2);
       if (trimmed === prefix || trimmed.startsWith(prefix + ' ')) {
         return true;
       }
-    } else if (pattern.endsWith('*')) {
-      const prefix = pattern.slice(0, -1);
+    } else if (normalizedPattern.endsWith('*')) {
+      const prefix = normalizedPattern.slice(0, -1);
       if (trimmed.startsWith(prefix)) {
         return true;
       }
     } else {
-      if (trimmed === pattern) {
+      if (trimmed === normalizedPattern) {
         return true;
       }
     }
@@ -90,14 +92,7 @@ function writeRulesFile(rules: LocalRules): void {
 }
 
 export function getBaseCommand(command: string): string {
-  const tokens = command.trim().split(/\s+/);
-  const first = tokens[0];
-  if (!first) return command.trim();
-  const second = tokens[1];
-  if (second && /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(second)) {
-    return first + ' ' + second;
-  }
-  return first;
+  return getCommandPatternBase(command);
 }
 
 export function addAutoRunRule(command: string): void {
