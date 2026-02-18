@@ -26,3 +26,5 @@ test.ts
 .mosaic/*.db-shm
 OPENTUI.md
 TODO.md
+.mosaic/skills/.cache.json
+.cache.json
