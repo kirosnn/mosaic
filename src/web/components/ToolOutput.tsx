@@ -30,6 +30,14 @@ function getFirstBodyLine(content: string): string {
     return '';
 }
 
+function trimTrailingEmptyLines(lines: string[]): string[] {
+    let end = lines.length;
+    while (end > 1 && !(lines[end - 1] || '').trim()) {
+        end -= 1;
+    }
+    return lines.slice(0, end);
+}
+
 function getCompactResult(message: Message): string {
     if (message.isRunning) return 'running...';
     const toolName = message.toolName || '';
@@ -188,7 +196,7 @@ function renderBodyParagraph(line: string, index: number, toolName: string): Rea
 export function ToolOutput({ message }: ToolOutputProps) {
     const toolName = (message.toolName || '').toLowerCase();
     const content = message.displayContent ?? message.content;
-    const paragraphs = useMemo(() => content.split('\n'), [content]);
+    const paragraphs = useMemo(() => trimTrailingEmptyLines(content.split('\n')), [content]);
     const [timerTick, setTimerTick] = useState(0);
 
     useEffect(() => {
