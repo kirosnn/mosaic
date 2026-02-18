@@ -6,8 +6,9 @@ import { createCliRenderer, TextAttributes, ScrollBoxRenderable, TextRenderable 
 import { createRoot } from "@opentui/react";
 import React from "react";
 import { exec } from "child_process";
-import type { ImagePart, TextPart, UserContent } from "ai";
 import type { ImageAttachment } from "../utils/images";
+import { buildSmartConversationHistory } from "../agent/context";
+import { getDefaultContextBudget } from "../utils/tokenEstimator";
 
 const PORT = 8192;
 const HOST = "127.0.0.1";
@@ -53,7 +54,6 @@ type LogEntry = { message: string; timestamp: string };
 
 const logs: LogEntry[] = [];
 const listeners: Set<() => void> = new Set();
-const MAX_HISTORY_MESSAGES = 24;
 const PROVIDER_CONCURRENCY = 1;
 const PROVIDER_QUEUE_TIMEOUT_MS = 30000;
 
@@ -249,31 +249,6 @@ function createDevEventsResponse(): Response {
             "Cache-Control": "no-cache",
             Connection: "keep-alive",
         },
-    });
-}
-
-function buildUserContent(text: string, images?: ImageAttachment[]): UserContent {
-    if (!images || images.length === 0) return text;
-    const parts: Array<TextPart | ImagePart> = [];
-    parts.push({ type: "text", text });
-    for (const img of images) {
-        parts.push({ type: "image", image: img.data, mimeType: img.mimeType });
-    }
-    return parts;
-}
-
-function buildConversationHistory(
-    history: Array<{ role: string; content: string; images?: ImageAttachment[] }>,
-    allowImages: boolean
-) {
-    const filtered = history.filter((m) => m.role === "user" || m.role === "assistant");
-    const sliced = filtered.slice(-MAX_HISTORY_MESSAGES);
-    return sliced.map((m) => {
-        if (m.role === "user") {
-            const content = allowImages ? buildUserContent(m.content, m.images) : m.content;
-            return { role: "user" as const, content };
-        }
-        return { role: "assistant" as const, content: m.content };
     });
 }
 
@@ -786,6 +761,19 @@ async function startServer(port: number, maxRetries = 10) {
                         });
                     }
 
+                    if (url.pathname === "/api/context/reset" && request.method === "POST") {
+                        if (currentAbortController) {
+                            currentAbortController.abort();
+                            currentAbortController = null;
+                        }
+                        const { Agent } = await import("../agent");
+                        Agent.resetSessionState();
+                        addLog("Agent context reset");
+                        return new Response(JSON.stringify({ success: true }), {
+                            headers: { "Content-Type": "application/json" },
+                        });
+                    }
+
                     if (url.pathname === "/api/stop" && request.method === "POST") {
                         if (currentAbortController) {
                             currentAbortController.abort();
@@ -941,15 +929,30 @@ async function startServer(port: number, maxRetries = 10) {
                                         }
                                     } catch { }
 
-                                    const conversationHistory = buildConversationHistory(body.history || [], allowImages);
                                     const userImages = allowImages ? images : [];
-                                    conversationHistory.push({
-                                        role: "user",
-                                        content: allowImages ? buildUserContent(messageText, userImages) : messageText
+                                    const contextBudget = config.maxContextTokens ?? getDefaultContextBudget(config.provider);
+                                    const conversationHistory = buildSmartConversationHistory({
+                                        messages: [
+                                            ...(body.history || [])
+                                                .filter((m) => m.role === 'user' || m.role === 'assistant')
+                                                .map((m) => ({
+                                                    role: m.role as 'user' | 'assistant',
+                                                    content: m.content,
+                                                    images: m.images,
+                                                })),
+                                            {
+                                                role: 'user',
+                                                content: messageText,
+                                                images: userImages,
+                                            },
+                                        ],
+                                        includeImages: allowImages,
+                                        maxContextTokens: contextBudget,
+                                        provider: config.provider,
                                     });
 
 
-                                    for await (const event of agent.streamMessages(conversationHistory as any, {})) {
+                                    for await (const event of agent.streamMessages(conversationHistory as any, { alreadyCompacted: true })) {
                                         if (aborted) break;
                                         if (!safeEnqueue(JSON.stringify(event) + "\n")) break;
                                     }
