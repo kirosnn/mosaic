@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ApprovalRequest } from '../../utils/approvalBridge';
 import { parseDiffLine, getDiffLineColors } from '../utils';
+import { getBaseCommand } from '../../utils/commandPattern';
 
 export type RuleAction = 'auto-run';
 
@@ -16,17 +17,7 @@ export function ApprovalPanel({ request, onRespond }: ApprovalPanelProps) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const isBash = request.toolName === 'bash';
     const bashCommand = isBash ? String(request.args.command ?? '') : '';
-    const bashBaseCommand = (() => {
-        if (!bashCommand) return '';
-        const tokens = bashCommand.trim().split(/\s+/);
-        const first = tokens[0];
-        if (!first) return '';
-        const second = tokens[1];
-        if (second && /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(second)) {
-            return first + ' ' + second;
-        }
-        return first;
-    })();
+    const bashBaseCommand = bashCommand ? getBaseCommand(bashCommand) : '';
     const allOptions = isBash
         ? ['Yes', 'Yes, always allow', 'No'] as const
         : ['Yes', 'No'] as const;
