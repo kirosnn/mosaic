@@ -18,7 +18,7 @@ import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
-import { setExploreContext, getExploreSummaries, setConversationMemory } from '../utils/exploreBridge';
+import { setExploreContext, getExploreSummaries, setConversationMemory, resetExploreSummaries } from '../utils/exploreBridge';
 import { debugLog, initDebugSession } from '../utils/debug';
 import { resetTracker, clearPersistentCache } from './tools/toolCallTracker';
 import { ConversationMemory, getGlobalMemory, resetGlobalMemory } from './memory';
@@ -53,6 +53,32 @@ function estimateTokensForMessages(messages: CoreMessage[]): number {
     total += estimateTokensForContent(contentToText(message.content));
   }
   return total;
+}
+
+function countRoles(messages: CoreMessage[]): { user: number; assistant: number; tool: number; other: number } {
+  let user = 0;
+  let assistant = 0;
+  let tool = 0;
+  let other = 0;
+  for (const message of messages) {
+    if (message.role === 'user') user++;
+    else if (message.role === 'assistant') assistant++;
+    else if (message.role === 'tool') tool++;
+    else other++;
+  }
+  return { user, assistant, tool, other };
+}
+
+function summarizeArgs(args: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof args.path === 'string' && args.path.trim()) parts.push(`path=${args.path}`);
+  if (typeof args.query === 'string' && args.query.trim()) parts.push(`query=${truncateText(args.query, 60)}`);
+  if (typeof args.pattern === 'string' && args.pattern.trim()) parts.push(`pattern=${truncateText(args.pattern, 60)}`);
+  if (typeof args.url === 'string' && args.url.trim()) parts.push(`url=${truncateText(args.url, 80)}`);
+  if (typeof args.command === 'string' && args.command.trim()) parts.push(`command=${truncateText(args.command, 80)}`);
+  if (parts.length > 0) return parts.join(' ');
+  const raw = JSON.stringify(args);
+  return `args=${truncateText(raw, 120)}`;
 }
 
 function normalizeWhitespace(text: string): string {
@@ -213,7 +239,10 @@ function compactMessages(
   const messagesTokens = estimateTokensForMessages(messages);
   const total = systemTokens + messagesTokens;
 
-  if (total <= budget) return messages;
+  if (total <= budget) {
+    debugLog(`[compaction] skipped reason=within_budget totalTokens=${total} budgetTokens=${budget} systemTokens=${systemTokens} messageTokens=${messagesTokens} historyLen=${messages.length}`);
+    return messages;
+  }
 
   const summaryTokens = Math.min(2000, Math.max(400, Math.floor(budget * 0.2)));
   const recentBudget = Math.max(500, budget - summaryTokens);
@@ -235,11 +264,13 @@ function compactMessages(
 
   const summary = buildSummary(older, summaryTokens, memory);
   const summaryMessage: CoreMessage = { role: 'assistant', content: summary };
+  const compacted = [summaryMessage, ...recent];
+  const compactedTokens = systemTokens + estimateTokensForMessages(compacted);
 
   const stats = memory?.getStats();
-  debugLog(`[compaction] history=${messages.length} compacted=${older.length} kept=${recent.length} memory={files:${stats?.files ?? 0}, searches:${stats?.searches ?? 0}, toolCalls:${stats?.toolCalls ?? 0}}`);
+  debugLog(`[compaction] applied totalTokens=${total} -> ${compactedTokens} budgetTokens=${budget} historyLen=${messages.length} older=${older.length} keptRecent=${recent.length} summaryChars=${summary.length} summaryBudgetTokens=${summaryTokens} recentBudgetTokens=${recentBudget} memory={files:${stats?.files ?? 0},searches:${stats?.searches ?? 0},toolCalls:${stats?.toolCalls ?? 0}}`);
 
-  return [summaryMessage, ...recent];
+  return compacted;
 }
 
 function buildExploreContext(messages: CoreMessage[]): string {
@@ -293,7 +324,9 @@ function buildExploreContext(messages: CoreMessage[]): string {
     parts.push(`Files recently accessed:\n${[...recentFiles].map(f => `- ${f}`).join('\n')}`);
   }
 
-  return parts.join('\n\n');
+  const context = parts.join('\n\n');
+  debugLog(`[context] exploreContext built chars=${context.length} userHints=${userMessages.length} previousExploreSummaries=${summaries.length} recentFiles=${recentFiles.size}`);
+  return context;
 }
 
 export class Agent {
@@ -306,6 +339,21 @@ export class Agent {
   private memory: ConversationMemory;
   private pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
   private static sessionInitialized = false;
+
+  static resetSessionState(): void {
+    resetGlobalMemory();
+    resetTracker();
+    clearPersistentCache();
+    resetExploreSummaries();
+    try {
+      const { resetExploreKnowledge } = require('./tools/exploreExecutor');
+      if (typeof resetExploreKnowledge === 'function') {
+        resetExploreKnowledge();
+      }
+    } catch {
+    }
+    Agent.sessionInitialized = false;
+  }
 
   static async ensureProviderReady(): Promise<{ ready: boolean; started?: boolean; error?: string }> {
     const userConfig = readConfig();
@@ -405,6 +453,8 @@ export class Agent {
       role: 'user',
       content: userMessage,
     });
+    const preRoles = countRoles(this.messageHistory);
+    debugLog(`[context] sendMessage historyLen=${this.messageHistory.length} roles={user:${preRoles.user},assistant:${preRoles.assistant},tool:${preRoles.tool},other:${preRoles.other}} estTokens=${estimateTokensForMessages(this.messageHistory)} alreadyCompacted=${options?.alreadyCompacted === true}`);
 
     try {
       if (this.resolvedMaxContextTokens === undefined) {
@@ -423,15 +473,21 @@ export class Agent {
           this.config = { ...this.config, maxOutputTokens: outLimit };
         }
       }
-      const compacted = compactMessages(
-        this.messageHistory,
-        this.config.systemPrompt,
-        this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
-        this.config.provider,
-        this.memory
-      );
-      debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} contextLimit=${this.config.maxContextTokens ?? 'default'} outputLimit=${this.config.maxOutputTokens ?? 'default'}`);
-      setExploreContext(buildExploreContext(this.messageHistory));
+      const shouldCompact = !options?.alreadyCompacted;
+      const compacted = shouldCompact
+        ? compactMessages(
+          this.messageHistory,
+          this.config.systemPrompt,
+          this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
+          this.config.provider,
+          this.memory
+        )
+        : this.messageHistory;
+      const postRoles = countRoles(compacted);
+      debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} compacted=${shouldCompact} contextLimit=${this.config.maxContextTokens ?? 'default'} outputLimit=${this.config.maxOutputTokens ?? 'default'} roles={user:${postRoles.user},assistant:${postRoles.assistant},tool:${postRoles.tool},other:${postRoles.other}} estTokens=${estimateTokensForMessages(compacted)}`);
+      const exploreContext = buildExploreContext(this.messageHistory);
+      setExploreContext(exploreContext);
+      debugLog(`[context] sendMessage exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
       setConversationMemory(this.memory);
 
       for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
@@ -452,10 +508,14 @@ export class Agent {
   }
 
   async *streamMessages(messages: AgentMessage[], options?: ProviderSendOptions): AsyncGenerator<AgentEvent> {
+    this.memory.incrementTurn();
+    resetTracker();
     this.messageHistory = messages.map(msg => ({
       role: msg.role,
       content: msg.content,
     })) as CoreMessage[];
+    const preRoles = countRoles(this.messageHistory);
+    debugLog(`[context] streamMessages historyLen=${this.messageHistory.length} roles={user:${preRoles.user},assistant:${preRoles.assistant},tool:${preRoles.tool},other:${preRoles.other}} estTokens=${estimateTokensForMessages(this.messageHistory)} alreadyCompacted=${options?.alreadyCompacted === true}`);
 
     try {
       if (this.resolvedMaxContextTokens === undefined) {
@@ -474,14 +534,21 @@ export class Agent {
           this.config = { ...this.config, maxOutputTokens: outLimit };
         }
       }
-      const compacted = compactMessages(
-        this.messageHistory,
-        this.config.systemPrompt,
-        this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
-        this.config.provider,
-        this.memory
-      );
-      setExploreContext(buildExploreContext(this.messageHistory));
+      const shouldCompact = !options?.alreadyCompacted;
+      const compacted = shouldCompact
+        ? compactMessages(
+          this.messageHistory,
+          this.config.systemPrompt,
+          this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
+          this.config.provider,
+          this.memory
+        )
+        : this.messageHistory;
+      const postRoles = countRoles(compacted);
+      debugLog(`[agent] streamMessages historyLen=${this.messageHistory.length} compactedLen=${compacted.length} compacted=${shouldCompact} contextLimit=${this.config.maxContextTokens ?? 'default'} roles={user:${postRoles.user},assistant:${postRoles.assistant},tool:${postRoles.tool},other:${postRoles.other}} estTokens=${estimateTokensForMessages(compacted)}`);
+      const exploreContext = buildExploreContext(this.messageHistory);
+      setExploreContext(exploreContext);
+      debugLog(`[context] streamMessages exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
       setConversationMemory(this.memory);
 
       for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
@@ -506,11 +573,9 @@ export class Agent {
 
   clearHistory(): void {
     this.messageHistory = [];
-    resetGlobalMemory();
-    this.memory = getGlobalMemory();
     this.pendingToolCalls.clear();
-    clearPersistentCache();
-    Agent.sessionInitialized = false;
+    Agent.resetSessionState();
+    this.memory = getGlobalMemory();
   }
 
   private recordEvent(event: AgentEvent): void {
@@ -563,7 +628,8 @@ export class Agent {
           this.memory.recordSearch(query, pattern, path, filesFound, matchCount);
         }
 
-        debugLog(`[memory] recorded ${pending.toolName} success=${success} preview="${preview.slice(0, 60)}"`);
+        const stats = this.memory.getStats();
+        debugLog(`[memory] recorded tool=${pending.toolName} success=${success} callId=${event.toolCallId} resultChars=${resultStr.length} ${summarizeArgs(pending.args)} memory={files:${stats.files},searches:${stats.searches},toolCalls:${stats.toolCalls}} preview="${preview.slice(0, 80)}"`);
       }
     }
   }
