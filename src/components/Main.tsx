@@ -4,7 +4,7 @@ import { useKeyboard } from "@opentui/react";
 import { addInputToHistory } from "../utils/history";
 import { readConfig } from "../utils/config";
 
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, parseToolHeader } from '../utils/toolFormatting';
+import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, parseToolHeader, getExploreToolInfo } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
@@ -153,7 +153,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   useEffect(() => {
     let lastExploreTokens = 0;
     setExploreToolCallback((toolName, args, result, totalTokens) => {
-      const info = (args.path || args.pattern || args.query || '') as string;
+      const info = getExploreToolInfo(toolName, args);
       const shortInfo = info.length > 40 ? info.substring(0, 37) + '...' : info;
       exploreToolsRef.current.push({ tool: toolName, info: shortInfo, success: result.success });
 
@@ -171,7 +171,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
           if (idx !== -1) {
             const toolLines = exploreToolsRef.current.map(t => {
               const icon = t.success ? '➔ ' : '-';
-              return `  ${icon} ${t.tool}(${t.info})`;
+              return t.info ? `  ${icon} ${t.tool}(${t.info})` : `  ${icon} ${t.tool}`;
             });
             const purpose = explorePurposeRef.current;
             const newContent = `Explore (${purpose})\n${toolLines.join('\n')}`;
@@ -512,8 +512,6 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
 
     const baseMessages = options?.baseMessages ?? messages;
 
-    let shellCommandDisplay: string | undefined;
-
     if (value.trim().startsWith('!')) {
       const shellCommand = value.trim().slice(1).trim();
       if (!shellCommand) return;
@@ -521,7 +519,17 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       debugLog(`[ui] shell command: ${shellCommand.slice(0, 50)}`);
       addInputToHistory(value.trim());
 
-      shellCommandDisplay = `!${shellCommand}`;
+      const shellCommandDisplay = `!${shellCommand}`;
+      const userMessageId = createId();
+      const userMessageShell: Message = {
+        id: userMessageId,
+        role: "user",
+        content: shellCommandDisplay,
+        displayContent: shellCommandDisplay,
+      };
+
+      setMessages(() => [...baseMessages, userMessageShell]);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       const toolMessageId = createId();
       setMessages((prev: Message[]) => [...prev, {
@@ -538,7 +546,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       let shellResult: string;
       let shellSuccess: boolean;
       try {
-        const result = await executeTool('bash', { command: shellCommand });
+        const result = await executeTool('bash', { command: shellCommand }, { skipApproval: true });
         shellResult = result.result ?? result.error ?? 'No output';
         shellSuccess = result.success;
 
@@ -585,7 +593,42 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         });
       }
 
-      value = `I ran this command: ${shellCommand}\n\nOutput:\n${shellResult}\n\nAnalyze the output and continue.`;
+      const composedShellContent = `I ran this command: ${shellCommand}
+
+Output:
+${shellResult}
+
+Analyze the output and continue. Do not run the same command again unless I explicitly ask.`;
+
+      const userMessageForAgent: Message = {
+        ...userMessageShell,
+        content: composedShellContent,
+      };
+
+      setMessages((prev: Message[]) => {
+        const newMessages = [...prev];
+        const userIdx = newMessages.findIndex(m => m.id === userMessageId);
+        if (userIdx !== -1) {
+          newMessages[userIdx] = userMessageForAgent;
+        }
+        return newMessages;
+      });
+
+      setIsProcessing(true);
+      setProcessingStartTime(Date.now());
+      shouldAutoScroll.current = true;
+
+      const convHistory = buildConversationHistory([...baseMessages, userMessageForAgent], imagesSupported);
+      await runAgentStream({
+        baseMessages,
+        userMessage: userMessageForAgent,
+        conversationHistory: convHistory,
+        abortMessage: "Generation aborted. What should Mosaic do instead ?",
+        userStepContent: composedShellContent,
+        autoCompact: true,
+      }, getStreamCallbacks());
+
+      return;
     }
 
     if (isCommand(value)) {
@@ -685,7 +728,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       id: createId(),
       role: "user",
       content: composedContent,
-      displayContent: shellCommandDisplay ?? (meta?.isPaste ? '[Pasted text]' : undefined),
+      displayContent: meta?.isPaste ? '[Pasted text]' : undefined,
       images: imagesForMessage.length > 0 ? imagesForMessage : undefined,
     };
 
