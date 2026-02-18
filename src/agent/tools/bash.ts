@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { trackMutation } from './toolCallTracker';
 
 export const bash: CoreTool = tool({
   description: 'Execute a shell command in the workspace. Add --timeout <ms> at the END of your command for long-running processes (max 90000ms). IMPORTANT: This operation requires user approval - the user will see the command that will be executed and must approve before it runs. If rejected, ask the user for clarification using the question tool.',
@@ -15,6 +16,7 @@ export const bash: CoreTool = tool({
         ? { error: errorMessage, userMessage: result.userMessage }
         : { error: errorMessage };
     }
+    trackMutation();
     return result.result;
   },
 });
