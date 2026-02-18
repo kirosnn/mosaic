@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { trackMutation } from './toolCallTracker';
 
 export const edit: CoreTool = tool({
   description: 'Edit a specific part of a file by replacing old content with new content. More precise than rewriting the entire file. IMPORTANT: This operation requires user approval - the user will see a preview showing the old and new content and must approve before changes are made. If rejected, ask the user for clarification using the question tool.',
@@ -17,6 +18,11 @@ export const edit: CoreTool = tool({
       return result.userMessage
         ? { error: errorMessage, userMessage: result.userMessage }
         : { error: errorMessage };
+    }
+    if (typeof args.path === 'string' && args.path.trim()) {
+      trackMutation(args.path);
+    } else {
+      trackMutation();
     }
     return result;
   },
