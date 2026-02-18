@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeTool } from './executor';
+import { trackMutation } from './toolCallTracker';
 
 export const write: CoreTool = tool({
   description: 'Write or overwrite a file in the workspace. Creates parent directories automatically if they do not exist. IMPORTANT: This operation requires user approval - the user will see a preview and must approve before the file is written. If rejected, ask the user for clarification using the question tool.',
@@ -15,6 +16,11 @@ export const write: CoreTool = tool({
       return result.userMessage
         ? { error: result.error, userMessage: result.userMessage }
         : { error: result.error };
+    }
+    if (typeof args.path === 'string' && args.path.trim()) {
+      trackMutation(args.path);
+    } else {
+      trackMutation();
     }
     return result;
   },
