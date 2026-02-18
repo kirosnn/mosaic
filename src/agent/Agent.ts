@@ -18,9 +18,10 @@ import { XaiProvider } from './provider/xai';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
-import { setExploreContext, getExploreSummaries } from '../utils/exploreBridge';
-import { debugLog } from '../utils/debug';
-import { resetTracker } from './tools/toolCallTracker';
+import { setExploreContext, getExploreSummaries, setConversationMemory } from '../utils/exploreBridge';
+import { debugLog, initDebugSession } from '../utils/debug';
+import { resetTracker, clearPersistentCache } from './tools/toolCallTracker';
+import { ConversationMemory, getGlobalMemory, resetGlobalMemory } from './memory';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -154,13 +155,23 @@ function buildTaskReminder(messages: CoreMessage[]): string {
   return parts.join('\n\n');
 }
 
-function buildSummary(messages: CoreMessage[], maxTokens: number): string {
+function buildSummary(messages: CoreMessage[], maxTokens: number, memory?: ConversationMemory): string {
   const maxChars = Math.max(0, maxTokens * 3);
 
   const taskReminder = buildTaskReminder(messages);
+
+  let memoryBlock = '';
+  if (memory) {
+    const memoryBudget = Math.floor(maxChars * 0.3);
+    const memCtx = memory.buildMemoryContext(memoryBudget);
+    if (memCtx) {
+      memoryBlock = `\nMEMORY INDEX:\n${memCtx}\n`;
+    }
+  }
+
   const header = taskReminder
-    ? `${taskReminder}\n\nCONVERSATION SUMMARY (auto):`
-    : 'CONVERSATION SUMMARY (auto):';
+    ? `${taskReminder}${memoryBlock}\n\nCONVERSATION SUMMARY (auto):`
+    : `${memoryBlock}\nCONVERSATION SUMMARY (auto):`;
   let charCount = header.length + 1;
   const lines: string[] = [];
 
@@ -194,7 +205,8 @@ function compactMessages(
   messages: CoreMessage[],
   systemPrompt: string,
   maxContextTokens?: number,
-  provider?: string
+  provider?: string,
+  memory?: ConversationMemory
 ): CoreMessage[] {
   const budget = maxContextTokens ?? getDefaultContextBudget(provider);
   const systemTokens = estimateTokensFromText(systemPrompt) + 8;
@@ -221,8 +233,11 @@ function compactMessages(
 
   if (older.length === 0) return recent;
 
-  const summary = buildSummary(older, summaryTokens);
+  const summary = buildSummary(older, summaryTokens, memory);
   const summaryMessage: CoreMessage = { role: 'assistant', content: summary };
+
+  const stats = memory?.getStats();
+  debugLog(`[compaction] history=${messages.length} compacted=${older.length} kept=${recent.length} memory={files:${stats?.files ?? 0}, searches:${stats?.searches ?? 0}, toolCalls:${stats?.toolCalls ?? 0}}`);
 
   return [summaryMessage, ...recent];
 }
@@ -288,6 +303,9 @@ export class Agent {
   private static ollamaChecked = false;
   private resolvedMaxContextTokens?: number;
   private resolvedMaxOutputTokens?: number;
+  private memory: ConversationMemory;
+  private pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  private static sessionInitialized = false;
 
   static async ensureProviderReady(): Promise<{ ready: boolean; started?: boolean; error?: string }> {
     const userConfig = readConfig();
@@ -345,7 +363,14 @@ export class Agent {
     };
 
     this.provider = this.createProvider(userConfig.provider);
-    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps}`);
+    this.memory = getGlobalMemory();
+
+    if (!Agent.sessionInitialized) {
+      initDebugSession(`session-${Date.now()}`);
+      Agent.sessionInitialized = true;
+    }
+
+    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}}`);
   }
 
   private createProvider(providerName: string): Provider {
@@ -373,6 +398,7 @@ export class Agent {
     const messagePreview = userMessage.slice(0, 100).replace(/[\r\n]+/g, ' ');
     debugLog(`[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`);
 
+    this.memory.incrementTurn();
     resetTracker();
 
     this.messageHistory.push({
@@ -401,12 +427,20 @@ export class Agent {
         this.messageHistory,
         this.config.systemPrompt,
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
-        this.config.provider
+        this.config.provider,
+        this.memory
       );
       debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} contextLimit=${this.config.maxContextTokens ?? 'default'} outputLimit=${this.config.maxOutputTokens ?? 'default'}`);
       setExploreContext(buildExploreContext(this.messageHistory));
-      yield* this.provider.sendMessage(compacted, this.config, options);
-      debugLog(`[agent] sendMessage complete`);
+      setConversationMemory(this.memory);
+
+      for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
+        this.recordEvent(event);
+        yield event;
+      }
+
+      const stats = this.memory.getStats();
+      debugLog(`[agent] sendMessage complete memory={files:${stats.files}, searches:${stats.searches}, toolCalls:${stats.toolCalls}}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
       debugLog(`[agent] sendMessage ERROR ${errorMsg.slice(0, 150)}`);
@@ -444,10 +478,16 @@ export class Agent {
         this.messageHistory,
         this.config.systemPrompt,
         this.config.maxContextTokens ?? this.resolvedMaxContextTokens,
-        this.config.provider
+        this.config.provider,
+        this.memory
       );
       setExploreContext(buildExploreContext(this.messageHistory));
-      yield* this.provider.sendMessage(compacted, this.config, options);
+      setConversationMemory(this.memory);
+
+      for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
+        this.recordEvent(event);
+        yield event;
+      }
     } catch (error) {
       yield {
         type: 'error',
@@ -460,8 +500,72 @@ export class Agent {
     return [...this.messageHistory];
   }
 
+  getMemory(): ConversationMemory {
+    return this.memory;
+  }
+
   clearHistory(): void {
     this.messageHistory = [];
+    resetGlobalMemory();
+    this.memory = getGlobalMemory();
+    this.pendingToolCalls.clear();
+    clearPersistentCache();
+    Agent.sessionInitialized = false;
+  }
+
+  private recordEvent(event: AgentEvent): void {
+    if (event.type === 'tool-call-end') {
+      this.pendingToolCalls.set(event.toolCallId, {
+        toolName: event.toolName,
+        args: event.args,
+      });
+    }
+
+    if (event.type === 'tool-result') {
+      const pending = this.pendingToolCalls.get(event.toolCallId);
+      if (pending) {
+        this.pendingToolCalls.delete(event.toolCallId);
+
+        const resultStr = typeof event.result === 'string'
+          ? event.result
+          : (event.result ? JSON.stringify(event.result) : '').slice(0, 500);
+
+        const resultObj = event.result as any;
+        const isExplicitError = (
+          (resultObj && typeof resultObj === 'object' && resultObj.error) ||
+          (typeof event.result === 'string' && event.result.startsWith('Error:'))
+        );
+        const success = !isExplicitError;
+        const preview = resultStr.slice(0, 200);
+
+        this.memory.recordToolCall(pending.toolName, pending.args, preview, success);
+
+        if (pending.toolName === 'read' && success && typeof pending.args.path === 'string') {
+          this.memory.recordFileRead(pending.args.path, resultStr);
+        }
+
+        if ((pending.toolName === 'grep' || pending.toolName === 'glob') && success) {
+          const query = typeof pending.args.query === 'string' ? pending.args.query : '';
+          const pattern = typeof pending.args.pattern === 'string' ? pending.args.pattern : '';
+          const path = typeof pending.args.path === 'string' ? pending.args.path : '';
+          let filesFound = 0;
+          let matchCount = 0;
+          try {
+            const parsed = JSON.parse(resultStr);
+            if (Array.isArray(parsed)) {
+              filesFound = parsed.length;
+              matchCount = parsed.length;
+            } else if (parsed && typeof parsed === 'object') {
+              matchCount = typeof parsed.total_matches === 'number' ? parsed.total_matches : 0;
+              filesFound = typeof parsed.files_with_matches === 'number' ? parsed.files_with_matches : 0;
+            }
+          } catch { }
+          this.memory.recordSearch(query, pattern, path, filesFound, matchCount);
+        }
+
+        debugLog(`[memory] recorded ${pending.toolName} success=${success} preview="${preview.slice(0, 60)}"`);
+      }
+    }
   }
 
   updateConfig(updates: Partial<ProviderConfig>): void {
