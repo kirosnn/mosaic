@@ -395,7 +395,7 @@ export class Agent {
       // MCP not available
     }
 
-    const systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos);
+    const systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, { consumeOneShotSkills: true });
     const tools = getTools();
     const auth = getAuthForProvider(userConfig.provider);
 
