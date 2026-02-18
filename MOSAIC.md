@@ -9,10 +9,10 @@ This file provides contextual information about the Mosaic project to help AI ag
 **Mosaic** is an open-source, AI-powered coding agent designed for terminal and web-based development workflows. It combines:
 - A **React-based TUI** (Terminal User Interface) using OpenTUI.
 - A **tool-driven agent architecture** for interacting with codebases, files, and shell commands.
+- A **CLI entrypoint** that manages run/resume/web/auth/mcp/uninstall workflows.
 - A **web UI** served by Bun for browser-based workflows.
 - **MCP server integration** for external tools (including the native NativeSearch server).
 - **Multi-provider AI support** (OpenAI, Anthropic, Google, Mistral, xAI, Ollama, OpenRouter).
-
 ### Key Features
 - **Terminal-first workflow**: Optimized for CLI usage with React-powered TUI.
 - **Project context awareness**: Uses `MOSAIC.md` files to understand project structure and conventions.
@@ -67,12 +67,11 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 
 ### Key Design Patterns
 - **Tool-Driven Development**: The agent interacts with the codebase via discrete, safe tools (e.g., `read`, `edit`, `bash`).
-- **User Approval Workflow**: Write/edit operations require explicit user approval before execution.
+- **User Approval Workflow**: Write/edit operations require explicit user approval before execution (including MCP tools via approval policy).
 - **Project Context**: Uses `MOSAIC.md` files to understand project structure and conventions.
 - **Multi-Provider AI**: Abstracts AI providers behind a unified interface (Vercel AI SDK).
 - **MCP Tool Catalog**: Merges internal tools with MCP server tools and enforces approval policies.
 - **Modular Tooling**: Tools are dynamically registered and executed via MCP.
-
 ### Technology Stack
 | Category          | Technologies                                                                 |
 |-------------------|------------------------------------------------------------------------------|
@@ -133,9 +132,11 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 | `tsconfig.json`      | TypeScript configuration (strict, noEmit, bundler resolution).                              |
 | `bin/mosaic.cjs`     | CLI entry point (checks Bun, launches `src/index.tsx`).                                      |
 | `docs/`              | Project documentation and assets.                                                           |
-| `script/`            | Build and utility scripts.                                                                  |
-| `benchmark/`         | Benchmarks and reasoning suites.                                                            |
-
+| `benchmark/`         | Benchmarks and reasoning suites (see `benchmark/README.md`).                                |
+| `TODO.md`            | Product and engineering backlog.                                                            |
+| `OPENTUI.md`         | OpenTUI integration notes and references.                                                   |
+| `AGENTS.md`          | Agent behavior notes and checklist.                                                         |
+| `CLAUDE.md`          | Provider-specific guidance for Claude.                                                      |
 ### Source Code (`src/`)
 | Directory/File               | Purpose                                                                                     |
 |------------------------------|---------------------------------------------------------------------------------------------|
@@ -146,11 +147,11 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 | `agent/provider/`            | AI provider integrations (OpenAI, Anthropic, etc.).                                         |
 | `mcp/`                       | Model Context Protocol implementation and server registry.                                  |
 | `mcp/cli/`                   | MCP CLI commands (list/add/doctor/tools).                                                   |
-| `mcp/servers/nativesearch/`    | Native NativeSearch MCP server.                                                             |
+| `mcp/servers/nativesearch/`  | Native NativeSearch MCP server.                                                             |
+| `mcp/servers/nativereact/`   | Native React Doctor MCP server and rules.                                                   |
 | `mcp/processManager.ts`      | Manages tool processes and lifecycle.                                                       |
 | `mcp/toolCatalog.ts`         | Dynamic tool registration and discovery.                                                    |
-| `mcp/approvalPolicy.ts`      | Defines tool risk levels and approval requirements.                                         |
-| `components/`                | TUI components (React + OpenTUI).                                                           |
+| `mcp/approvalPolicy.ts`      | Defines tool risk levels and approval requirements.                                         || `components/`                | TUI components (React + OpenTUI).                                                           |
 | `components/main/`           | Core TUI components (e.g., `ChatPage`, `ApprovalPanel`).                                     |
 | `web/`                       | Web UI components and server.                                                               |
 | `web/app.tsx`                | Web UI entry point.                                                                         |
@@ -210,10 +211,9 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 - Interact with the agent via chat.
 
 ### Running the Web UI
-1. Start the web server: `mosaic web` (or `/web` inside the TUI).
+1. Start the web server: `mosaic web` (or `/web` inside the TUI). Add `--dev` for hot reload (`MOSAIC_WEB_DEV=1`).
 2. Open `http://127.0.0.1:8192` in a browser.
 3. Interact with the agent via the web interface.
-
 ### Managing MCP Servers
 - List servers: `mosaic mcp list`
 - Add a server: `mosaic mcp add`
@@ -236,10 +236,12 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 3. Run tests: `bun test` or `npm test`.
 
 ### Debugging
-- Debug logs are appended to `~/.mosaic/debug.log` via `src/utils/debug.ts`.
+- Debug logs are appended to `~/.mosaic/debug.log` via `src/utils/debug.ts` (invoked from `src/index.tsx` and agent lifecycle).
 - Check the terminal or browser console for errors.
 - Use the `/echo` command to test agent responses.
 
+### Benchmarks (optional)
+- Run the benchmark suites from `benchmark/README.md` (e.g., `bun run bench`).
 ---
 
 ## Notes for AI Agents
