@@ -544,16 +544,23 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       };
     }
 
-    allItems.push({
-      key: `${messageKey}-spacer`,
-      type: 'line',
-      content: '',
-      role: messageRole,
-      toolName: message.toolName,
-      isFirst: false,
-      isSpacer: true,
-      visualLines: 1
-    });
+    const nextMessage = messageIndex + 1 < messages.length ? messages[messageIndex + 1] : null;
+    const nextRole = nextMessage ? (nextMessage.displayRole ?? nextMessage.role) : null;
+    const nextCompactTool = Boolean(nextMessage && nextRole === 'tool' && isCompactTool(nextMessage.toolName));
+    const shouldAddSpacer = !(compactTool && nextCompactTool);
+
+    if (shouldAddSpacer) {
+      allItems.push({
+        key: `${messageKey}-spacer`,
+        type: 'line',
+        content: '',
+        role: messageRole,
+        toolName: message.toolName,
+        isFirst: false,
+        isSpacer: true,
+        visualLines: 1
+      });
+    }
   }
 
   if (pendingBlend) {
