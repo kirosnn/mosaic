@@ -44,6 +44,18 @@ const CODE_FILETYPE_MAP: Record<string, string> = {
 
 const TABLE_HEADER_BG = "#2a2a2a";
 const TABLE_BODY_BG = "#1f1f1f";
+const CHAT_INPUT_HINTS = [
+  "implement {feature} end-to-end",
+  "refactor {module} without regressions",
+  "fix {bug} and add a focused test",
+  "improve {flow} with better UX",
+  "optimize {query} for large datasets",
+  "design {api} with clear contracts",
+  "add telemetry for {critical_path}",
+  "harden {validation} against edge cases",
+  "migrate {component} to a cleaner architecture",
+  "document {system} for faster onboarding",
+];
 
 function normalizeCodeFiletype(language?: string): string {
   const key = (language || "").trim().toLowerCase();
@@ -272,6 +284,9 @@ export function ChatPage({
   const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
   const [hoveredUserMessageId, setHoveredUserMessageId] = useState<string | null>(null);
   const [userMessageModal, setUserMessageModal] = useState<UserMessageModalState | null>(null);
+  const [chatInputHintIndex, setChatInputHintIndex] = useState(() =>
+    Math.floor(Math.random() * CHAT_INPUT_HINTS.length)
+  );
   const scrollboxRef = useRef<any>(null);
   const prevScrollOffsetRef = useRef(scrollOffset);
   const userMessageModalRef = useRef(userMessageModal);
@@ -310,6 +325,23 @@ export function ChatPage({
       sb.verticalScrollBar.visible = false;
     }
   }, []);
+
+  useEffect(() => {
+    if (shortcutsOpen || reviewPanel) return;
+
+    const interval = setInterval(() => {
+      setChatInputHintIndex((prev) => {
+        if (CHAT_INPUT_HINTS.length <= 1) return prev;
+        let next = Math.floor(Math.random() * CHAT_INPUT_HINTS.length);
+        while (next === prev) {
+          next = Math.floor(Math.random() * CHAT_INPUT_HINTS.length);
+        }
+        return next;
+      });
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [shortcutsOpen, reviewPanel]);
 
   useEffect(() => {
     userMessageModalRef.current = userMessageModal;
@@ -393,6 +425,8 @@ export function ChatPage({
     });
     setUserMessageModal(null);
   };
+
+  const defaultInputPlaceholder = `Ask anything... (${CHAT_INPUT_HINTS[chatInputHintIndex] || "implement {feature}"})`;
 
   const allItems = buildChatItems({ messages, maxWidth, viewportHeight, questionRequest, approvalRequest });
 
@@ -682,7 +716,7 @@ export function ChatPage({
           <box flexGrow={1} flexShrink={1} minWidth={0}>
             <CustomInput
               onSubmit={onSubmit}
-              placeholder={reviewPanel ? "Review changes above..." : "Type your message..."}
+              placeholder={reviewPanel ? "Review changes above..." : defaultInputPlaceholder}
               focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel && !isUserModalOpen && !selectMenu}
               pasteRequestId={(shortcutsOpen || isUserModalOpen) ? 0 : pasteRequestId}
               submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen || Boolean(selectMenu)}
