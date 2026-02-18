@@ -32,7 +32,6 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/google": "^1.0.0",
-    "@ai-sdk/groq": "^3.0.24",
     "@ai-sdk/mistral": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
     "@ai-sdk/xai": "^1.0.0",
@@ -47,6 +46,7 @@
     "ollama": "^0.5.0",
     "playwright": "^1.45.0",
     "react": "^19.2.3",
+    "react-doctor": "^0.0.17",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
