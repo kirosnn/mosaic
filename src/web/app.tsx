@@ -222,6 +222,7 @@ function App() {
             conversation = createNewConversation(workspace);
             setCurrentConversation(conversation);
             replaceTo({ page: 'chat', conversationId: conversation.id });
+            fetch('/api/context/reset', { method: 'POST' }).catch(() => { });
         }
 
         if (currentPage === 'home') {
@@ -641,6 +642,7 @@ function App() {
         isExpanded: isSidebarExpanded,
         onToggleExpand: () => setIsSidebarExpanded(!isSidebarExpanded),
         onNavigateToNewChat: () => {
+            fetch('/api/context/reset', { method: 'POST' }).catch(() => { });
             navigateTo({ page: 'chat', conversationId: null });
         },
         onNavigateHome: handleNavigateHome,
