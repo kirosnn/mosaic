@@ -8,6 +8,50 @@ const MCP_DIR = join(homedir(), '.mosaic', 'mcp');
 const CONFIG_FILE = join(MCP_DIR, 'config.json');
 const SERVERS_DIR = join(MCP_DIR, 'servers');
 
+function resolveNativeTsRunner(serverPath: string): { command: string; args: string[] } {
+  if (typeof process.versions.bun === 'string') {
+    return {
+      command: 'bun',
+      args: ['run', serverPath],
+    };
+  }
+
+  return {
+    command: 'npx',
+    args: ['tsx', serverPath],
+  };
+}
+
+function normalizeNativeServerRunner(partial: Partial<McpServerConfig>): Partial<McpServerConfig> {
+  if (partial.id !== 'nativereact' && partial.id !== 'nativesearch') {
+    return partial;
+  }
+
+  const relativePath = partial.id === 'nativereact'
+    ? './servers/nativereact/index.ts'
+    : './servers/nativesearch/index.ts';
+  const serverPath = fileURLToPath(new URL(relativePath, import.meta.url));
+  const runner = resolveNativeTsRunner(serverPath);
+  const currentCommand = partial.command;
+  const currentArgs = partial.args || [];
+  const target = currentArgs[1] || '';
+
+  const isDefaultNpxRunner =
+    currentCommand === 'npx' &&
+    currentArgs[0] === 'tsx' &&
+    (target === serverPath || target.endsWith(relativePath.replace('./', '').replace(/\//g, '\\')) || target.endsWith(relativePath.replace('./', '')));
+
+  if (isDefaultNpxRunner) {
+    return {
+      ...partial,
+      command: runner.command,
+      args: runner.args,
+    };
+  }
+
+  return partial;
+}
+
 function ensureDirs(): void {
   if (!existsSync(MCP_DIR)) mkdirSync(MCP_DIR, { recursive: true });
   if (!existsSync(SERVERS_DIR)) mkdirSync(SERVERS_DIR, { recursive: true });
@@ -38,12 +82,13 @@ export function getDefaultServerConfig(): Partial<McpServerConfig> {
 
 function getNativeSearchServerConfig(): Partial<McpServerConfig> {
   const serverPath = fileURLToPath(new URL('./servers/nativesearch/index.ts', import.meta.url));
+  const runner = resolveNativeTsRunner(serverPath);
   return {
     id: 'nativesearch',
     name: 'NativeSearch',
     native: true,
-    command: 'npx',
-    args: ['tsx', serverPath],
+    command: runner.command,
+    args: runner.args,
     enabled: true,
     autostart: 'startup',
     approval: 'never',
@@ -54,6 +99,25 @@ function getNativeSearchServerConfig(): Partial<McpServerConfig> {
     timeouts: {
       initialize: 30000,
       call: 60000,
+    },
+  };
+}
+
+function getNativeReactServerConfig(): Partial<McpServerConfig> {
+  const serverPath = fileURLToPath(new URL('./servers/nativereact/index.ts', import.meta.url));
+  const runner = resolveNativeTsRunner(serverPath);
+  return {
+    id: 'nativereact',
+    name: 'NativeReact',
+    native: true,
+    command: runner.command,
+    args: runner.args,
+    enabled: true,
+    autostart: 'startup',
+    approval: 'never',
+    timeouts: {
+      initialize: 30000,
+      call: 120000,
     },
   };
 }
@@ -97,28 +161,34 @@ function resolveServerName(partial: Partial<McpServerConfig>): string {
       return 'NativeSearch';
     }
   }
+  if (partial.id === 'nativereact') {
+    if (!rawName || /^nativereact$/i.test(rawName)) {
+      return 'NativeReact';
+    }
+  }
   return rawName || partial.id!;
 }
 
 function mergeWithDefaults(partial: Partial<McpServerConfig>): McpServerConfig {
+  const normalizedPartial = normalizeNativeServerRunner(partial);
   const defaults = getDefaultServerConfig();
   return {
-    id: partial.id!,
-    name: resolveServerName(partial),
-    enabled: partial.enabled ?? defaults.enabled!,
-    native: partial.native,
-    transport: partial.transport || defaults.transport!,
-    command: partial.command!,
-    args: partial.args || defaults.args!,
-    cwd: partial.cwd,
-    env: partial.env,
-    autostart: partial.autostart || defaults.autostart!,
-    timeouts: { ...defaults.timeouts!, ...partial.timeouts },
-    limits: { ...defaults.limits!, ...partial.limits },
-    logs: { ...defaults.logs!, ...partial.logs },
-    tools: { ...defaults.tools, ...partial.tools },
-    approval: partial.approval || defaults.approval!,
-    toolApproval: partial.toolApproval,
+    id: normalizedPartial.id!,
+    name: resolveServerName(normalizedPartial),
+    enabled: normalizedPartial.enabled ?? defaults.enabled!,
+    native: normalizedPartial.native,
+    transport: normalizedPartial.transport || defaults.transport!,
+    command: normalizedPartial.command!,
+    args: normalizedPartial.args || defaults.args!,
+    cwd: normalizedPartial.cwd,
+    env: normalizedPartial.env,
+    autostart: normalizedPartial.autostart || defaults.autostart!,
+    timeouts: { ...defaults.timeouts!, ...normalizedPartial.timeouts },
+    limits: { ...defaults.limits!, ...normalizedPartial.limits },
+    logs: { ...defaults.logs!, ...normalizedPartial.logs },
+    tools: { ...defaults.tools, ...normalizedPartial.tools },
+    approval: normalizedPartial.approval || defaults.approval!,
+    toolApproval: normalizedPartial.toolApproval,
   };
 }
 
@@ -182,6 +252,10 @@ export function loadMcpConfig(): McpServerConfig[] {
 
   if (!configMap.has('nativesearch')) {
     configMap.set('nativesearch', getNativeSearchServerConfig());
+  }
+
+  if (!configMap.has('nativereact')) {
+    configMap.set('nativereact', getNativeReactServerConfig());
   }
 
   const results: McpServerConfig[] = [];
