@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { HomePage } from './components/HomePage';
 import { ChatPage } from './components/ChatPage';
 import { Message } from './types';
-import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord, normalizeToolCall } from './utils';
+import { createId, extractTitle, setDocumentTitle, formatToolMessage, parseToolHeader, getExploreToolInfo, formatErrorMessage, DEFAULT_MAX_TOOL_LINES, getRandomBlendWord, normalizeToolCall } from './utils';
 import { Conversation, getAllConversations, getConversation, saveConversation, deleteConversation, createNewConversation, mergeConversations } from './storage';
 import { QuestionRequest } from '../utils/questionBridge';
 import { ApprovalRequest } from '../utils/approvalBridge';
@@ -410,7 +410,7 @@ function App() {
                             }
                         } else if (event.type === 'explore-tool') {
                             console.log('[CLIENT] explore-tool received:', event.toolName, 'exploreMessageId:', exploreMessageId);
-                            const info = (event.args?.path || event.args?.pattern || event.args?.query || '') as string;
+                            const info = getExploreToolInfo(event.toolName, event.args || {});
                             const shortInfo = info.length > 40 ? info.substring(0, 37) + '...' : info;
                             exploreTools.push({ tool: event.toolName, info: shortInfo, success: event.success });
 
@@ -426,7 +426,7 @@ function App() {
                                     if (idx !== -1) {
                                         const toolLines = exploreTools.map(t => {
                                             const icon = t.success ? '+' : '-';
-                                            return `  ${icon} ${t.tool}(${t.info})`;
+                                            return t.info ? `  ${icon} ${t.tool}(${t.info})` : `  ${icon} ${t.tool}`;
                                         });
                                         const newContent = `Explore (${explorePurpose})\n${toolLines.join('\n')}`;
                                         newMessages[idx] = { ...newMessages[idx]!, content: newContent };
