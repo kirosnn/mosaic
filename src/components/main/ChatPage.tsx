@@ -120,6 +120,108 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
   return <text fg="white" attributes={paragraphIndex > 0 ? TextAttributes.DIM : 0}>{`${' '.repeat(indent)}${content || ' '}`}</text>;
 }
 
+function renderSlashText(content: string, indent: number) {
+  const line = content || ' ';
+  const padded = `${' '.repeat(indent)}${line}`;
+
+  if (!line.startsWith('[CTX_')) {
+    return <text fg="white">{padded}</text>;
+  }
+
+  const parts = line.split('|');
+  const head = parts[0] || '';
+
+  if (head === '[CTX_HEADER]') {
+    return <text fg="#ffffffff" attributes={TextAttributes.BOLD}>{parts[1] || 'Context Usage'}</text>;
+  }
+
+  if (head === '[CTX_MODEL]') {
+    const model = parts[1] || 'model';
+    const used = parts[2] || '0';
+    const max = parts[3] || '0';
+    return (
+      <box flexDirection="row">
+        <text fg="#ffca38">Model in use : </text>
+        <text fg="white" attributes={TextAttributes.BOLD}>{model}</text>
+        <text fg="#9a9a9a">{` · ${used}/${max} tokens`}</text>
+      </box>
+    );
+  }
+
+  if (head === '[CTX_BAR]') {
+    const usedCells = Math.max(0, parseInt(parts[1] || '0', 10) || 0);
+    const bufferCells = Math.max(0, parseInt(parts[2] || '0', 10) || 0);
+    const freeCells = Math.max(0, parseInt(parts[3] || '0', 10) || 0);
+    const usedPct = parts[4] || '0';
+    const remainingCells = bufferCells + freeCells;
+    return (
+      <box flexDirection="row">
+        <box flexDirection="row">
+          <text bg="#c8a84a">{' '.repeat(usedCells)}</text>
+          <text bg="#45546a">{' '.repeat(remainingCells)}</text>
+        </box>
+        <text fg="#c6d3e3">{` ${usedPct}% used`}</text>
+      </box>
+    );
+  }
+
+  if (head === '[CTX_SECTION]') {
+    return <text fg="#9a9a9a" attributes={TextAttributes.DIM | TextAttributes.ITALIC}>{parts[1] || ''}</text>;
+  }
+
+  const catLineMatch = line.match(/^\[CTX_CAT\|([A-Z]+)\]\|([^|]+)\|([^|]+)\|([^|]+)$/);
+  if (catLineMatch) {
+    const code = catLineMatch[1] || '';
+    const label = catLineMatch[2] || '';
+    const value = catLineMatch[3] || '';
+    const pct = catLineMatch[4] || '';
+
+    const colorByCode: Record<string, string> = {
+      SP: '#5cc8ff',
+      SK: '#f778ba',
+      ST: '#ffb454',
+      MI: '#7ee787',
+      MC: '#d2a8ff',
+      UP: '#58a6ff',
+      MS: '#79c0ff',
+      FS: '#8b949e',
+      AB: '#ffca38',
+    };
+    const color = colorByCode[code] || 'white';
+
+    return (
+      <box flexDirection="row">
+        <text fg={color}>{'• '}</text>
+        <text fg="white">{label}</text>
+        <text fg="#9a9a9a">{`: ${value} tokens (${pct}%)`}</text>
+      </box>
+    );
+  }
+
+  if (head === '[CTX_MEM]') {
+    const path = parts[1] || '';
+    const tokens = parts[2] || '0';
+    return (
+      <box flexDirection="row">
+        <text fg="#7ee787">- </text>
+        <text fg="white">{path}</text>
+        <text fg="#9a9a9a">{`: ${tokens} tokens`}</text>
+      </box>
+    );
+  }
+
+  if (head === '[CTX_NOTE]') {
+    return (
+      <box flexDirection="row">
+        <text fg="#ffca38">! </text>
+        <text fg="#ffca38" attributes={TextAttributes.DIM}>{parts.slice(1).join('|') || ''}</text>
+      </box>
+    );
+  }
+
+  return <text fg="white">{padded}</text>;
+}
+
 interface ChatPageProps {
   messages: Message[];
   isProcessing: boolean;
@@ -510,8 +612,10 @@ export function ChatPage({
                     renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus, item.codeLanguage)
                   )}
                 </box>
-              ) : item.role === "user" || item.role === "slash" ? (
+              ) : item.role === "user" ? (
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
+              ) : item.role === "slash" ? (
+                renderSlashText(item.content || ' ', item.indent || 0)
               ) : item.segments && item.segments.length > 0 ? (
                 <box flexDirection="row">
                   {item.segments.map((segment, segIndex) => renderMarkdownSegment(segment, segIndex))}
