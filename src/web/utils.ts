@@ -1,6 +1,7 @@
 export {
     formatToolMessage,
     parseToolHeader,
+    getExploreToolInfo,
     formatToolResult,
     isToolSuccess,
     formatErrorMessage,
