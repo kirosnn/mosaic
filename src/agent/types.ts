@@ -155,12 +155,13 @@ export interface AgentContext {
 }
 
 export interface AgentMessage {
-  role: 'user' | 'assistant';
-  content: string | UserContent;
+  role: 'user' | 'assistant' | 'tool';
+  content: CoreMessage['content'];
 }
 
 export interface ProviderSendOptions {
   abortSignal?: AbortSignal;
+  alreadyCompacted?: boolean;
 }
 
 export interface Provider {
