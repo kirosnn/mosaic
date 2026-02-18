@@ -1,7 +1,12 @@
 {
   "bash": {
     "autoRun": [
-      "mosaic mcp *"
+      "mosaic mcp *",
+      "git add *",
+      "git commit *",
+      "git push *",
+      "git status *",
+      "git diff *"
     ]
   }
 }
