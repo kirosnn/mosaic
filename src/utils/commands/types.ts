@@ -1,3 +1,5 @@
+import type { ImageAttachment } from '../images';
+
 export interface SelectOption {
   name: string;
   description: string;
@@ -22,12 +24,39 @@ export interface CommandResult {
   };
 }
 
+export interface CommandTokenBreakdown {
+  prompt: number;
+  reasoning: number;
+  output: number;
+  tools: number;
+}
+
+export interface CommandContextMessage {
+  role: "user" | "assistant" | "tool" | "slash";
+  content: string;
+  thinkingContent?: string;
+  images?: ImageAttachment[];
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: unknown;
+  success?: boolean;
+}
+
+export interface CommandExecutionContext {
+  messages?: CommandContextMessage[];
+  imagesSupported?: boolean;
+  currentTokens?: number;
+  tokenBreakdown?: CommandTokenBreakdown;
+  lastPromptTokens?: number;
+  isProcessing?: boolean;
+}
+
 export interface Command {
   name: string;
   description: string;
   usage?: string;
   aliases?: string[];
-  execute: (args: string[], fullCommand: string) => Promise<CommandResult> | CommandResult;
+  execute: (args: string[], fullCommand: string, context?: CommandExecutionContext) => Promise<CommandResult> | CommandResult;
 }
 
 export interface CommandRegistry {
