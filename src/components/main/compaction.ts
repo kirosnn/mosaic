@@ -111,7 +111,8 @@ export function compactMessagesForUi(
   systemPrompt: string,
   maxContextTokens: number,
   createId: () => string,
-  summaryOnly: boolean
+  summaryOnly: boolean,
+  knownFiles?: string[]
 ): { messages: Message[]; estimatedTokens: number; didCompact: boolean } {
   const systemTokens = estimateTokensFromText(systemPrompt) + 8;
   const totalTokens = systemTokens + estimateTokensForMessages(messages);
@@ -134,9 +135,12 @@ export function compactMessagesForUi(
 
   const cutoff = messages.length - recent.length;
   const older = cutoff > 0 ? messages.slice(0, cutoff) : [];
-  const files = collectContextFiles(messages);
+  const contextFiles = collectContextFiles(messages);
+  const allFiles = knownFiles
+    ? [...new Set([...contextFiles, ...knownFiles])].sort((a, b) => a.localeCompare(b))
+    : contextFiles;
   const summaryBase = buildSummary(summaryOnly ? messages : (older.length > 0 ? older : messages), summaryTokens);
-  const summary = appendContextFiles(summaryBase, files, summaryTokens);
+  const summary = appendContextFiles(summaryBase, allFiles, summaryTokens);
   const summaryMessage: Message = {
     id: createId(),
     role: "assistant",
