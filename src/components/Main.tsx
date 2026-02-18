@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { ImagePart, TextPart, UserContent } from "ai";
 import { useKeyboard } from "@opentui/react";
 import { addInputToHistory } from "../utils/history";
 import { readConfig } from "../utils/config";
@@ -26,6 +25,8 @@ import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/sys
 import { getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
+import { Agent } from "../agent";
+import { buildSmartConversationHistory } from "../agent/context";
 import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, respondReview, acceptAllReview, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
 import { ReviewMenu } from "./main/ReviewMenu";
@@ -389,82 +390,23 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }
   });
 
-  const buildUserContent = (text: string, images?: ImageAttachment[]): UserContent => {
-    if (!images || images.length === 0) return text;
-    const parts: Array<TextPart | ImagePart> = [];
-    parts.push({ type: "text", text });
-    for (const img of images) {
-      parts.push({ type: "image", image: img.data, mimeType: img.mimeType });
-    }
-    return parts;
-  };
-
-  const buildToolMemory = (base: Message[]): string | null => {
-    const skipTools = new Set(["title", "plan", "question", "abort"]);
-    const seen = new Set<string>();
-    const lines: string[] = [];
-
-    const toOneLine = (value: string) => value.replace(/\s+/g, " ").trim();
-    const safeJson = (value: unknown) => {
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return "";
-      }
-    };
-    const truncate = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 3)}...` : value);
-
-    for (let i = base.length - 1; i >= 0 && lines.length < 10; i--) {
-      const m = base[i];
-      if (!m || m.role !== "tool") continue;
-      const toolName = m.toolName || "tool";
-      if (skipTools.has(toolName)) continue;
-
-      const argsJson = safeJson(m.toolArgs ?? {});
-      const signature = `${toolName}|${argsJson}`;
-      if (seen.has(signature)) continue;
-      seen.add(signature);
-
-      const argsPreview = truncate(toOneLine(argsJson || "{}"), 100);
-      let resultRaw = "";
-      if (typeof m.toolResult === "string") {
-        resultRaw = m.toolResult;
-      } else if (m.toolResult !== undefined) {
-        resultRaw = safeJson(m.toolResult);
-      } else {
-        resultRaw = m.content || "";
-      }
-      const status = m.success === false ? "error" : "ok";
-      const resultPreview = truncate(toOneLine(resultRaw || status), 180);
-      lines.push(`- ${toolName}(${argsPreview}) => ${resultPreview}`);
-    }
-
-    if (lines.length === 0) return null;
-    return `Recent tool memory (reuse this and avoid repeating identical calls unless inputs changed):\n${lines.join("\n")}`;
-  };
-
   const buildConversationHistory = (base: Message[], includeImages: boolean) => {
-    const result: Array<{ role: "user" | "assistant"; content: UserContent }> = [];
-    const toolMemory = buildToolMemory(base);
-    if (toolMemory) {
-      result.push({ role: "assistant" as const, content: toolMemory });
-    }
-    for (const m of base) {
-      if (m.role === "tool" && m.toolName === "abort") {
-        const last = result[result.length - 1];
-        if (last && last.role === "assistant" && typeof last.content === "string") {
-          last.content += "\n\n[Your previous response was interrupted by the user.]";
-        }
-        continue;
-      }
-      if (m.role === "user") {
-        const content = includeImages ? buildUserContent(m.content, m.images) : m.content;
-        result.push({ role: "user" as const, content });
-      } else if (m.role === "assistant") {
-        result.push({ role: "assistant" as const, content: m.content });
-      }
-    }
-    return result;
+    const config = readConfig();
+    const maxContextTokens = config.maxContextTokens ?? getDefaultContextBudget(config.provider);
+    return buildSmartConversationHistory({
+      messages: base.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        images: msg.images,
+        toolName: msg.toolName,
+        toolArgs: msg.toolArgs,
+        toolResult: msg.toolResult,
+        success: msg.success,
+      })),
+      includeImages,
+      maxContextTokens,
+      provider: config.provider,
+    });
   };
 
   const getStreamCallbacks = (): AgentStreamCallbacks => ({
@@ -641,6 +583,14 @@ Analyze the output and continue. Do not run the same command again unless I expl
         }
 
         if (result.shouldClearMessages === true) {
+          Agent.resetSessionState();
+          currentTitleRef.current = null;
+          titleExtractedRef.current = false;
+          setCurrentTitle(null);
+          setTerminalTitle('⁘ Mosaic');
+          setCurrentTokens(0);
+          setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
+          setPendingImages([]);
           const commandMessage: Message = {
             id: createId(),
             role: "slash",
