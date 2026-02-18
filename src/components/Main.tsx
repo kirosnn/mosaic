@@ -32,7 +32,7 @@ import { ReviewPanel } from "./main/ReviewPanel";
 import { ReviewMenu } from "./main/ReviewMenu";
 import { revertChange } from "../utils/revertChanges";
 import { CommandSelectMenu } from "./main/CommandSelectMenu";
-import type { SelectOption } from "../utils/commands/types";
+import type { CommandExecutionContext, SelectOption } from "../utils/commands/types";
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
@@ -430,6 +430,24 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     currentTitle,
   });
 
+  const buildCommandContext = useCallback((sourceMessages: Message[]): CommandExecutionContext => ({
+    messages: sourceMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      thinkingContent: message.thinkingContent,
+      images: message.images,
+      toolName: message.toolName,
+      toolArgs: message.toolArgs,
+      toolResult: message.toolResult,
+      success: message.success,
+    })),
+    imagesSupported,
+    currentTokens,
+    tokenBreakdown: { ...tokenBreakdown },
+    lastPromptTokens: lastPromptTokensRef.current,
+    isProcessing,
+  }), [imagesSupported, currentTokens, tokenBreakdown, isProcessing]);
+
   const handleResubmitUserMessage = (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => {
     if (isProcessing) return;
     const byId = messages.findIndex(m => m.id === payload.id);
@@ -575,7 +593,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
 
     if (isCommand(value)) {
       debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
-      const result = await executeCommand(value);
+      const result = await executeCommand(value, buildCommandContext(baseMessages));
       if (result) {
         if (result.showSelectMenu) {
           setSelectMenu(result.showSelectMenu);
@@ -716,7 +734,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
       if (!value.trim() && !hasPastedContent) return;
 
       if (isCommand(value)) {
-        const result = await executeCommand(value);
+        const result = await executeCommand(value, buildCommandContext(messages));
         if (result?.showSelectMenu) {
           setCurrentPage("chat");
           setSelectMenu(result.showSelectMenu);
