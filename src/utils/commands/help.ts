@@ -1,5 +1,6 @@
 import type { Command } from './types';
 import { commandRegistry } from './registry';
+import { listWorkspaceSkills } from '../skills';
 
 export const helpCommand: Command = {
   name: 'help',
@@ -17,9 +18,14 @@ export const helpCommand: Command = {
       })
       .join('\n\n');
 
+    const skills = listWorkspaceSkills();
+    const skillHint = skills.length > 0
+      ? `\n\nSkill shortcuts:\n- Skills are auto-enabled by default.\n- Force one with /<skill-id> <instructions>\n- Examples: ${skills.slice(0, 3).map((skill) => `/${skill.id}`).join(', ')}`
+      : '';
+
     return {
       success: true,
-      content: `Available commands:\n\n${commandList}`
+      content: `Available commands:\n\n${commandList}${skillHint}`
     };
   }
 };
