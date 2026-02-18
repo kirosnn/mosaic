@@ -88,7 +88,7 @@
     margin: 0;
 }
 
-.messages > :not(.tool-compact-line) + .tool-compact-line {
+.messages > :not(.tool-compact-line):not(.message.tool) + .tool-compact-line {
     margin-top: 1rem;
 }
 
