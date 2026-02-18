@@ -383,6 +383,10 @@ export interface ToolResult {
   diff?: string[];
 }
 
+export interface ExecuteToolOptions {
+  skipApproval?: boolean;
+}
+
 const globPatternCache = new Map<string, RegExp>();
 
 async function validatePath(fullPath: string, workspace: string): Promise<boolean> {
@@ -976,7 +980,7 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
   }
 }
 
-export async function executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+export async function executeTool(toolName: string, args: Record<string, unknown>, options: ExecuteToolOptions = {}): Promise<ToolResult> {
   const workspace = process.cwd();
   const startTime = Date.now();
   const argsPreview = JSON.stringify(args).slice(0, 200);
@@ -987,6 +991,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
     const bashCommand = isBashTool ? (args.command as string) : '';
     const approvalsEnabled = shouldRequireApprovals();
     const localBashDecision = isBashTool ? getLocalBashDecision(bashCommand) : null;
+    const bypassBashApproval = isBashTool && options.skipApproval === true;
 
     if (isBashTool) {
       if (localBashDecision === 'disallow') {
@@ -1000,9 +1005,9 @@ export async function executeTool(toolName: string, args: Record<string, unknown
       }
     }
 
-    const bashNeedsApproval = isBashTool && !isSafeBashCommand(bashCommand) && approvalsEnabled
+    const bashNeedsApproval = isBashTool && !bypassBashApproval && !isSafeBashCommand(bashCommand) && approvalsEnabled
       && localBashDecision !== 'auto-run';
-    const shouldTrackBashChanges = isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
+    const shouldTrackBashChanges = isBashTool && !bypassBashApproval && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
     let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
 
     if (bashNeedsApproval) {
@@ -1400,9 +1405,11 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           })))
           : undefined;
 
+        const isPatternActualGlob = pattern && pattern !== '.' && pattern !== './' && (pattern.includes('*') || pattern.includes('?') || pattern.includes('['));
+
         let finalPattern: string;
-        if (pattern) {
-          finalPattern = pattern.includes('**') ? pattern : `**/${pattern}`;
+        if (isPatternActualGlob) {
+          finalPattern = pattern!.includes('**') ? pattern! : `**/${pattern}`;
         } else if (resolvedExtensions && resolvedExtensions.length === 1) {
           finalPattern = `**/*${resolvedExtensions[0]}`;
         } else {
@@ -1415,7 +1422,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           allFiles = allFiles.filter(f => !f.split('/').some(part => part.startsWith('.')));
         }
 
-        if (resolvedExtensions && !pattern) {
+        if (resolvedExtensions && !isPatternActualGlob) {
           allFiles = allFiles.filter(f => resolvedExtensions.some(ext => f.toLowerCase().endsWith(ext)));
         }
 
