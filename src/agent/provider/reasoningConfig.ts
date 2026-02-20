@@ -12,16 +12,16 @@ export async function resolveReasoningEnabled(providerId: string, modelId: strin
   return { enabled: decision.enabled };
 }
 
-export function getOpenAIReasoningOptions(enabled: boolean): { reasoningEffort: 'high' } | undefined {
+export function getOpenAIReasoningOptions(enabled: boolean): { reasoningEffort: 'medium' } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][openai] reasoningEffort=high');
-  return { reasoningEffort: 'high' };
+  debugLog('[reasoning][openai] reasoningEffort=medium');
+  return { reasoningEffort: 'medium' };
 }
 
-export function getXaiReasoningOptions(enabled: boolean): { reasoningEffort: 'high' } | undefined {
+export function getXaiReasoningOptions(enabled: boolean): { reasoningEffort: 'medium' } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][xai] reasoningEffort=high');
-  return { reasoningEffort: 'high' };
+  debugLog('[reasoning][xai] reasoningEffort=medium');
+  return { reasoningEffort: 'medium' };
 }
 
 export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: { includeThoughts: false } } | undefined {
@@ -36,11 +36,11 @@ export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: {
 
 export function getAnthropicReasoningOptions(enabled: boolean): { thinking: { type: 'enabled'; budgetTokens: number } } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][anthropic] thinking=enabled budgetTokens=10000');
+  debugLog('[reasoning][anthropic] thinking=enabled budgetTokens=4000');
   return {
     thinking: {
       type: 'enabled',
-      budgetTokens: 10000,
+      budgetTokens: 4000,
     },
   };
 }
