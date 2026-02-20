@@ -235,6 +235,7 @@ export function compactMessagesForUi(
   const summaryMessage: Message = {
     id: createId(),
     role: "assistant",
+    hiddenInUi: true,
     content: summary
   };
 
