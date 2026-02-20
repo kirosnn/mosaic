@@ -6,18 +6,17 @@ This file provides contextual information about the Mosaic project to help AI ag
 
 ## 1. Project Overview
 
-**Mosaic** is an open-source, AI-powered coding agent designed for terminal and web-based development workflows. It combines:
+**Mosaic** is an open-source, AI-powered coding agent designed for terminal development workflows. It combines:
 - A **React-based TUI** (Terminal User Interface) using OpenTUI.
 - A **tool-driven agent architecture** for interacting with codebases, files, and shell commands.
-- A **CLI entrypoint** that manages run/resume/web/auth/mcp/uninstall workflows.
-- A **web UI** served by Bun for browser-based workflows.
+- A **CLI entrypoint** that manages run/resume/auth/mcp/uninstall workflows.
 - **MCP server integration** for external tools (including the native NativeSearch server).
 - **Multi-provider AI support** (OpenAI, Anthropic, Google, Mistral, xAI, Ollama, OpenRouter).
 ### Key Features
 - **Terminal-first workflow**: Optimized for CLI usage with React-powered TUI.
 - **Project context awareness**: Uses `MOSAIC.md` files to understand project structure and conventions.
 - **Safe tool execution**: Requires user approval for write/edit/bash operations.
-- **Slash commands**: Quick actions like `/init`, `/web`, `/help`, `/provider`, `/model`.
+- **Slash commands**: Quick actions like `/init`, `/help`, `/provider`, `/model`.
 - **MCP integration**: Configurable external tools with approval policies.
 - **Multi-provider AI**: Supports cloud and local models via the Vercel AI SDK.
 
@@ -53,17 +52,9 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
    - Built with **React** and **OpenTUI** for terminal rendering.
    - Provides interactive panels for chat, approvals, and questions.
 
-5. **Web UI** (`src/web/`)
-   - Browser-based alternative to the TUI.
-   - Built with React and served via a Bun-powered web server.
-
-6. **Web Server** (`src/web/server.tsx`)
-   - Serves the web UI bundle and exposes API endpoints for agent interactions.
-   - Bridges approvals/questions between the web UI and agent runtime.
-
-7. **Utilities** (`src/utils/`)
+5. **Utilities** (`src/utils/`)
    - Shared helpers for configuration, debugging, and file operations.
-   - Bridges between the TUI, web UI, and agent core.
+   - Bridges between the TUI and agent core.
 
 ### Key Design Patterns
 - **Tool-Driven Development**: The agent interacts with the codebase via discrete, safe tools (e.g., `read`, `edit`, `bash`).
@@ -77,12 +68,12 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 |-------------------|------------------------------------------------------------------------------|
 | **Runtime**       | Bun (required), Node.js >= 18                                                |
 | **Language**      | TypeScript                                                                   |
-| **UI**            | React, OpenTUI (TUI), React (Web)                                            |
+| **UI**            | React, OpenTUI (TUI)                                                         |
 | **AI**            | Vercel AI SDK, OpenAI, Anthropic, Google, Mistral, xAI, Ollama, OpenRouter   |
 | **Database**      | Better-SQLite3 (for tool registry and state)                                 |
 | **Web Scraping**  | Linkedom, Mozilla Readability                                                |
-| **Markdown**      | React-Markdown, Remark-GFM                                                   |
-| **Testing**       | Playwright (for web UI tests)                                                |
+| **Markdown**      | Internal markdown parsing/rendering utilities                                |
+| **Testing**       | Unit and integration tests                                                   |
 
 ---
 
@@ -118,7 +109,7 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 ### Testing
 - **Unit Tests**: Test individual functions and tools in isolation.
 - **Integration Tests**: Test tool interactions and agent workflows.
-- **E2E Tests**: Use Playwright to test the web UI and TUI workflows.
+- **E2E Tests**: Focus on terminal workflows.
 
 ---
 
@@ -153,13 +144,9 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 | `mcp/toolCatalog.ts`         | Dynamic tool registration and discovery.                                                    |
 | `mcp/approvalPolicy.ts`      | Defines tool risk levels and approval requirements.                                         || `components/`                | TUI components (React + OpenTUI).                                                           |
 | `components/main/`           | Core TUI components (e.g., `ChatPage`, `ApprovalPanel`).                                     |
-| `web/`                       | Web UI components and server.                                                               |
-| `web/app.tsx`                | Web UI entry point.                                                                         |
-| `web/server.tsx`             | Bun web server, API bridge, and TUI streaming.                                              |
-| `web/router.ts`              | Client-side routing for the web UI.                                                         |
 | `utils/`                     | Shared utilities and helpers.                                                               |
 | `utils/config.ts`            | Configuration management (providers, models, API keys).                                     |
-| `utils/commands/`            | Slash command implementations (e.g., `/init`, `/web`, `/provider`, `/model`).                |
+| `utils/commands/`            | Slash command implementations (e.g., `/init`, `/provider`, `/model`).                      |
 
 ### Configuration
 | File/Directory               | Purpose                                                                                     |
@@ -197,23 +184,18 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
    };
    ```
 3. Register the tool in `src/agent/tools/index.ts`.
-4. Test the tool in the TUI or web UI.
+4. Test the tool in the TUI.
 
 ### Adding a New AI Provider
 1. Create a new provider file in `src/agent/provider/` (e.g., `newProvider.ts`).
 2. Implement the provider integration using the Vercel AI SDK.
 3. Register the provider in `src/utils/config.ts` (add to `AI_PROVIDERS`).
-4. Test the provider in the TUI or web UI.
+4. Test the provider in the TUI.
 
 ### Running the TUI
 - Start the TUI: `bun run dev` (watch) or `bun run start`.
-- Use slash commands (e.g., `/help`, `/web`, `/provider`, `/model`, `/approvals`).
+- Use slash commands (e.g., `/help`, `/provider`, `/model`, `/approvals`).
 - Interact with the agent via chat.
-
-### Running the Web UI
-1. Start the web server: `mosaic web` (or `/web` inside the TUI). Add `--dev` for hot reload (`MOSAIC_WEB_DEV=1`).
-2. Open `http://127.0.0.1:8192` in a browser.
-3. Interact with the agent via the web interface.
 ### Managing MCP Servers
 - List servers: `mosaic mcp list`
 - Add a server: `mosaic mcp add`
@@ -231,13 +213,13 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 - Turning approvals off auto-approves pending tool requests.
 
 ### Testing Tools
-1. Use the TUI or web UI to test tools interactively.
+1. Use the TUI to test tools interactively.
 2. Write unit tests in `src/agent/tools/__tests__/` (if present).
 3. Run tests: `bun test` or `npm test`.
 
 ### Debugging
 - Debug logs are appended to `~/.mosaic/debug.log` via `src/utils/debug.ts` (invoked from `src/index.tsx` and agent lifecycle).
-- Check the terminal or browser console for errors.
+- Check the terminal for errors.
 - Use the `/echo` command to test agent responses.
 
 ### Benchmarks (optional)
@@ -250,4 +232,3 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 - **User Approval**: Always show a preview of changes before applying them.
 - **Error Handling**: Provide clear, actionable error messages to users.
 - **Performance**: Optimize for terminal responsiveness (e.g., avoid long-running operations).
-- **Web UI Bridge**: The web server proxies approvals/questions between the agent and browser UI.
