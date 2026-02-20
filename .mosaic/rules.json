@@ -12,7 +12,9 @@
       "Write-Output MERGE_HEAD: $(Test-Path .git\\MERGE_HEAD); *",
       "git rev-parse *",
       "if (Test-Path *",
-      "Get-ChildItem package.json; *"
+      "Get-ChildItem package.json; *",
+      "Test-Path .git\\MERGE_HEAD; *",
+      "Get-Item .git\\MERGE_HEAD, *"
     ]
   }
 }
