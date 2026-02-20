@@ -5,7 +5,7 @@ import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToo
 import { setExploreAbortController } from "../../utils/exploreBridge";
 import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
 import { extractTitle, extractTitleFromToolResult, setTerminalTitle } from "./titleUtils";
-import { compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./compaction";
+import { buildCompactionDisplay, compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./compaction";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../../utils/tokenEstimator";
 import { getModelsDevContextLimit } from "../../utils/models";
@@ -22,68 +22,6 @@ const CONTINUATION_LEDGER_PREFIX = 'TOOL LEDGER (continuation context):';
 const CONTINUATION_TOOL_PRIORITY = ['plan', 'explore', 'grep', 'glob', 'read', 'write', 'edit'];
 const CONTINUATION_TOOL_SKIP = new Set(['title', 'question', 'abort', 'review']);
 const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['grep', 'glob', 'fetch', 'list']);
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function formatCompactTokens(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return Math.round(value).toLocaleString('en-US');
-}
-
-function formatPercent(part: number, total: number): string {
-  if (!Number.isFinite(total) || total <= 0) return '0.00';
-  return ((part / total) * 100).toFixed(2);
-}
-
-function buildUsageBarSegments(used: number, buffer: number, total: number, width: number): { usedCells: number; bufferCells: number; freeCells: number } {
-  if (!Number.isFinite(total) || total <= 0 || width <= 0) {
-    return { usedCells: 0, bufferCells: 0, freeCells: Math.max(0, width) };
-  }
-  const usedRatio = clampNumber(used / total, 0, 1);
-  const bufferRatio = clampNumber(buffer / total, 0, 1);
-  let usedCells = Math.round(usedRatio * width);
-  let bufferCells = Math.round(bufferRatio * width);
-  if (usedCells + bufferCells > width) {
-    const overflow = usedCells + bufferCells - width;
-    if (bufferCells >= overflow) {
-      bufferCells -= overflow;
-    } else {
-      usedCells = Math.max(0, usedCells - (overflow - bufferCells));
-      bufferCells = 0;
-    }
-  }
-  const freeCells = Math.max(0, width - usedCells - bufferCells);
-  return { usedCells, bufferCells, freeCells };
-}
-
-function buildAutoCompactDisplay(usedTokens: number, maxContextTokens: number, compactedTokens: number): string {
-  const thresholdTokens = Math.floor(maxContextTokens * 0.95);
-  const bufferTokens = Math.max(0, maxContextTokens - thresholdTokens);
-  const usedForBar = Math.min(maxContextTokens, usedTokens);
-  const effectiveBuffer = Math.max(0, Math.min(bufferTokens, maxContextTokens - usedForBar));
-  const bar = buildUsageBarSegments(usedForBar, effectiveBuffer, maxContextTokens, 40);
-  const reclaimedTokens = Math.max(0, usedTokens - compactedTokens);
-  const overflowTokens = Math.max(0, usedTokens - maxContextTokens);
-  const lines: string[] = [];
-  lines.push('[CTX_HEADER]|Auto Compaction');
-  lines.push(`[CTX_BAR]|${bar.usedCells}|${bar.bufferCells}|${bar.freeCells}|${formatPercent(usedForBar, maxContextTokens)}`);
-  lines.push('[CTX_SECTION]|Compaction summary');
-  lines.push(`[CTX_CAT|MS]|Before compaction|${formatCompactTokens(usedTokens)}|${formatPercent(usedTokens, maxContextTokens)}`);
-  lines.push(`[CTX_CAT|AB]|Trigger threshold (95%)|${formatCompactTokens(thresholdTokens)}|${formatPercent(thresholdTokens, maxContextTokens)}`);
-  lines.push(`[CTX_CAT|UP]|After compaction|${formatCompactTokens(compactedTokens)}|${formatPercent(compactedTokens, maxContextTokens)}`);
-  lines.push(`[CTX_CAT|FS]|Tokens reclaimed|${formatCompactTokens(reclaimedTokens)}|${formatPercent(reclaimedTokens, maxContextTokens)}`);
-  if (overflowTokens > 0) {
-    lines.push(`[CTX_NOTE]|Compaction triggered above max context by ${formatCompactTokens(overflowTokens)} tokens.`);
-  } else {
-    lines.push('[CTX_NOTE]|Compaction triggered near the context limit.');
-  }
-  lines.push('[CTX_NOTE]|Run /context for full diagnostics.');
-  return lines.join('\n');
-}
 
 function stringifyUnknown(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -863,6 +801,7 @@ export async function runAgentStream(
       }
     }
 
+    const hasForcedSkillInvocation = /FORCED SKILL INVOCATION/i.test(userStepContent);
     let continuationCount = 0;
     let lastActionSignature: string | null = null;
 
@@ -873,7 +812,12 @@ export async function runAgentStream(
 
     const needsContinuation = (): boolean => {
       if (lastFinishReason === 'length') return true;
-      return hasPendingStepsInConversation(conversationSteps);
+      if (hasPendingStepsInConversation(conversationSteps)) return true;
+      if (hasForcedSkillInvocation && lastFinishReason === 'stop') {
+        const hasToolStep = conversationSteps.some((step) => step.type === 'tool');
+        if (!hasToolStep) return true;
+      }
+      return false;
     };
 
     const computeActionSignature = (): string => {
@@ -901,15 +845,21 @@ export async function runAgentStream(
     ) {
       continuationCount++;
       const isLengthTruncation = lastFinishReason === 'length';
+      const isForcedSkillStall = hasForcedSkillInvocation && conversationSteps.every((step) => step.type !== 'tool');
       const continuationPrompt = isLengthTruncation
         ? 'Your previous response was cut off due to length limits. Continue exactly where you left off.'
+        : isForcedSkillStall
+          ? 'You were given a FORCED SKILL INVOCATION. Execute the requested workflow now. Start by using plan for concrete steps, then run the required tools. Do not stop before completion unless blocked by an explicit error.'
         : buildContinuationPromptFromSteps(conversationSteps);
       if (!continuationPrompt) break;
 
       const pendingBefore = countPendingSteps();
       let continuationToolCalls = 0;
 
-      debugLog(`[continuation] auto-continue #${continuationCount} - reason=${isLengthTruncation ? 'length_truncation' : 'pending_plan_steps'} pendingBefore=${pendingBefore}`);
+      const continuationReason = isLengthTruncation
+        ? 'length_truncation'
+        : isForcedSkillStall ? 'forced_skill_no_progress' : 'pending_plan_steps';
+      debugLog(`[continuation] auto-continue #${continuationCount} - reason=${continuationReason} pendingBefore=${pendingBefore}`);
       debugLog(`[context] continuation before-prompt ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`);
 
       conversationSteps.push({
@@ -1232,7 +1182,7 @@ export async function runAgentStream(
           const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
           if (!compacted.didCompact) return prev;
           pendingCompactTokensRef.current = compacted.estimatedTokens;
-          const autoCompactDisplay = buildAutoCompactDisplay(usedTokens, maxContextTokens, compacted.estimatedTokens);
+          const autoCompactDisplay = buildCompactionDisplay('auto', usedTokens, maxContextTokens, compacted.estimatedTokens);
           const compactNotice: Message = {
             id: createId(),
             role: "slash",
