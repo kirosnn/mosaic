@@ -20,11 +20,11 @@ export const compactCommand: Command = {
 
     return {
       success: true,
-      content: 'Conversation compacted.',
+      content: '',
       shouldAddToHistory: false,
       shouldCompactMessages: true,
       compactMaxTokens: maxTokens,
-      shouldClearMessages: true
+      shouldClearMessages: false
     };
   }
 };
