@@ -46,7 +46,7 @@ describe('securityRules', () => {
     const rule = securityRules.find(r => r.id === 'noSecretsInClientCode');
     expect(rule).toBeTruthy();
     const file = makeFile(
-      'src/web/server.tsx',
+      'src/server.ts',
       '.tsx',
       'const value = process.env.MOSAIC_PROJECT_PATH; export default value;',
     );
@@ -59,7 +59,7 @@ describe('securityRules', () => {
     const rule = securityRules.find(r => r.id === 'noSecretsInClientCode');
     expect(rule).toBeTruthy();
     const file = makeFile(
-      'src/web/components/App.tsx',
+      'src/components/App.tsx',
       '.tsx',
       "'use client';\nconst value = process.env.INTERNAL_SECRET;\nexport default function App(){return <div>{value}</div>}",
     );
