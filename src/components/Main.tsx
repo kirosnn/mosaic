@@ -81,6 +81,15 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const pendingChangesRef = useRef<PendingChange[]>([]);
 
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const toLogPreview = (value: string, max = 1200) => {
+    const normalized = value
+      .replace(/\r/g, "\\r")
+      .replace(/\n/g, "\\n")
+      .replace(/\t/g, "\\t")
+      .replace(/"/g, "'");
+    if (normalized.length <= max) return normalized;
+    return `${normalized.slice(0, Math.max(0, max - 3))}...`;
+  };
 
   useEffect(() => {
     initializeCommands();
@@ -449,6 +458,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }), [imagesSupported, currentTokens, tokenBreakdown, isProcessing]);
 
   const handleResubmitUserMessage = (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => {
+    debugLog(`[ui] input-resubmit requested id=${payload.id} index=${payload.index} chars=${payload.content.length} images=${payload.images.length} preview="${toLogPreview(payload.content, 800)}"`);
     if (isProcessing) return;
     const byId = messages.findIndex(m => m.id === payload.id);
     const targetIndex = byId >= 0 ? byId : payload.index;
@@ -469,6 +479,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const imagesForMessage = options?.images ?? (imagesSupported ? pendingImages : []);
     const hasImages = imagesForMessage.length > 0;
     if (!value.trim() && !hasPastedContent && !hasImages) return;
+    debugLog(`[ui] submit received chars=${value.length} trimmed=${value.trim().length} pasted=${hasPastedContent} images=${imagesForMessage.length} hasBaseMessages=${Boolean(options?.baseMessages)} preview="${toLogPreview(value, 800)}"`);
 
     const baseMessages = options?.baseMessages ?? messages;
 
@@ -476,7 +487,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       const shellCommand = value.trim().slice(1).trim();
       if (!shellCommand) return;
 
-      debugLog(`[ui] shell command: ${shellCommand.slice(0, 50)}`);
+      debugLog(`[ui] input type=shell commandChars=${shellCommand.length} command="${toLogPreview(shellCommand, 2000)}"`);
       addInputToHistory(value.trim());
 
       const shellCommandDisplay = `!${shellCommand}`;
@@ -509,6 +520,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         const result = await executeTool('bash', { command: shellCommand }, { skipApproval: true });
         shellResult = result.result ?? result.error ?? 'No output';
         shellSuccess = result.success;
+        debugLog(`[ui] shell result success=${shellSuccess} resultChars=${shellResult.length} preview="${toLogPreview(shellResult, 1200)}"`);
 
         const { content: toolContent } = formatToolMessage(
           'bash',
@@ -536,6 +548,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
         shellResult = `Error: ${errorMsg}`;
         shellSuccess = false;
+        debugLog(`[ui] shell error message="${toLogPreview(errorMsg, 600)}"`);
 
         setMessages((prev: Message[]) => {
           const newMessages = [...prev];
@@ -592,9 +605,10 @@ Analyze the output and continue. Do not run the same command again unless I expl
     }
 
     if (isCommand(value)) {
-      debugLog(`[ui] command executed: ${value.slice(0, 50)}`);
+      debugLog(`[ui] input type=slash commandChars=${value.trim().length} command="${toLogPreview(value.trim(), 1200)}"`);
       const result = await executeCommand(value, buildCommandContext(baseMessages));
       if (result) {
+        debugLog(`[ui] slash result success=${result.success} clear=${Boolean(result.shouldClearMessages)} compact=${Boolean(result.shouldCompactMessages)} addToHistory=${result.shouldAddToHistory !== false} showSelect=${Boolean(result.showSelectMenu)} contentPreview="${toLogPreview(result.content || '', 500)}"`);
         if (result.showSelectMenu) {
           setSelectMenu(result.showSelectMenu);
           return;
@@ -689,6 +703,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
     const composedContent = hasPastedContent
       ? `${meta!.pastedContent!}${value.trim() ? `\n\n${value}` : ''}`
       : value;
+    debugLog(`[ui] input type=user chars=${composedContent.length} pasted=${hasPastedContent} images=${imagesForMessage.length} preview="${toLogPreview(composedContent, 2000)}"`);
 
     addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : (hasImages ? '[Image]' : value)));
 
@@ -728,14 +743,16 @@ Analyze the output and continue. Do not run the same command again unless I expl
     }
   }, [initialMessage, currentPage, handleSubmit]);
 
-  if (currentPage === "home") {
+    if (currentPage === "home") {
     const handleHomeSubmit = async (value: string, meta?: InputSubmitMeta) => {
       const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
       if (!value.trim() && !hasPastedContent) return;
+      debugLog(`[ui] home-submit chars=${value.length} pasted=${hasPastedContent} isCommand=${isCommand(value)} preview="${toLogPreview(value, 800)}"`);
 
       if (isCommand(value)) {
         const result = await executeCommand(value, buildCommandContext(messages));
         if (result?.showSelectMenu) {
+          debugLog(`[ui] home-submit slash-select-menu title="${toLogPreview(result.showSelectMenu.title, 120)}" options=${result.showSelectMenu.options.length}`);
           setCurrentPage("chat");
           setSelectMenu(result.showSelectMenu);
           return;
