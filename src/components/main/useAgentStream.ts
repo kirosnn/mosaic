@@ -15,12 +15,13 @@ import { hasPendingChanges, clearPendingChanges, startReview } from "../../utils
 import type { ImageAttachment } from "../../utils/images";
 
 const MAX_CONTINUATIONS = 3;
-const MAX_CONTINUATION_TOOL_MESSAGES = 16;
-const MAX_CONTINUATION_TOOL_RESULT_CHARS = 3200;
-const MAX_CONTINUATION_LEDGER_ENTRIES = 10;
+const MAX_CONTINUATION_TOOL_MESSAGES = 8;
+const MAX_CONTINUATION_TOOL_RESULT_CHARS = 900;
+const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
 const CONTINUATION_LEDGER_PREFIX = 'TOOL LEDGER (continuation context):';
 const CONTINUATION_TOOL_PRIORITY = ['plan', 'explore', 'grep', 'glob', 'read', 'write', 'edit'];
 const CONTINUATION_TOOL_SKIP = new Set(['title', 'question', 'abort', 'review']);
+const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['grep', 'glob', 'fetch', 'list']);
 
 function stringifyUnknown(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -34,6 +35,16 @@ function stringifyUnknown(value: unknown): string {
 function truncateForContinuation(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return text.slice(0, Math.max(0, maxChars - 3)) + '...';
+}
+
+function toLogPreview(value: string, maxChars: number): string {
+  const normalized = value
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+    .replace(/"/g, "'");
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
 function getToolNameFromHistoryMessage(message: AgentMessage): string | null {
@@ -52,8 +63,8 @@ function buildContinuationLedgerLine(
   success: boolean
 ): string {
   const status = success ? 'OK' : 'FAILED';
-  const argsText = truncateForContinuation(stringifyUnknown(toolArgs).replace(/\s+/g, ' ').trim(), 120);
-  const resultText = truncateForContinuation(stringifyUnknown(toolResult).replace(/\s+/g, ' ').trim(), 260);
+  const argsText = truncateForContinuation(stringifyUnknown(toolArgs).replace(/\s+/g, ' ').trim(), 80);
+  const resultText = truncateForContinuation(stringifyUnknown(toolResult).replace(/\s+/g, ' ').trim(), 140);
   return `- [${status}] ${toolName}(${argsText}) => ${resultText}`;
 }
 
@@ -137,34 +148,35 @@ function pushContinuationToolContext(
 
   const rawResult = stringifyUnknown(toolResult);
   const isLargePayload = rawResult.length > MAX_CONTINUATION_TOOL_RESULT_CHARS;
+  const compactResult = truncateForContinuation(rawResult, MAX_CONTINUATION_TOOL_RESULT_CHARS);
   const continuationResult = isLargePayload
-    ? `${truncateForContinuation(rawResult, MAX_CONTINUATION_TOOL_RESULT_CHARS)} [truncated for continuation context]`
+    ? `${compactResult} [truncated for continuation context]`
     : toolResult;
 
   const normalizedToolCallId = toolCallId && toolCallId.trim()
     ? toolCallId
     : `continuation-${toolName}-${Date.now()}`;
 
-  history.push({
-    role: 'tool',
-    content: [{
-      type: 'tool-result',
-      toolCallId: normalizedToolCallId,
-      toolName,
-      result: continuationResult,
-    }] as any,
-  });
-
-  pruneContinuationToolMessages(history);
-
-  if (isLargePayload) {
-    ledgerEntries.push(buildContinuationLedgerLine(toolName, toolArgs, toolResult, success));
-    if (ledgerEntries.length > MAX_CONTINUATION_LEDGER_ENTRIES) {
-      ledgerEntries.splice(0, ledgerEntries.length - MAX_CONTINUATION_LEDGER_ENTRIES);
-    }
-    upsertContinuationLedgerMessage(history, ledgerEntries);
-    debugLog(`[context] continuation tool-ledger updated tool=${toolName} rawChars=${rawResult.length} ledgerEntries=${ledgerEntries.length}`);
+  const ledgerOnly = CONTINUATION_LEDGER_ONLY_TOOLS.has(toolName) || toolName.startsWith('mcp__');
+  if (!ledgerOnly) {
+    history.push({
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: normalizedToolCallId,
+        toolName,
+        result: continuationResult,
+      }] as any,
+    });
+    pruneContinuationToolMessages(history);
   }
+
+  ledgerEntries.push(buildContinuationLedgerLine(toolName, toolArgs, toolResult, success));
+  if (ledgerEntries.length > MAX_CONTINUATION_LEDGER_ENTRIES) {
+    ledgerEntries.splice(0, ledgerEntries.length - MAX_CONTINUATION_LEDGER_ENTRIES);
+  }
+  upsertContinuationLedgerMessage(history, ledgerEntries);
+  debugLog(`[context] continuation tool-ledger updated tool=${toolName} rawChars=${rawResult.length} ledgerEntries=${ledgerEntries.length} ledgerOnly=${ledgerOnly}`);
 }
 
 function extractPlanFromMessages(messages: Message[]): { steps: Array<{ step: string; status: string }> } | null {
@@ -311,6 +323,7 @@ export async function runAgentStream(
   let maxTokensSeen = 0;
 
   const conversationId = createId();
+  debugLog(`[agent] stream start conversationId=${conversationId} baseMessages=${baseMessages.length} historyLen=${conversationHistory.length} autoCompact=${autoCompact} userChars=${userStepContent.length} userImages=${userStepImages?.length ?? 0} preview="${toLogPreview(userStepContent, 1600)}"`);
   const conversationSteps: ConversationStep[] = [];
   const continuationHistory: AgentMessage[] = conversationHistory.map((entry) => ({
     role: entry.role,
@@ -398,6 +411,7 @@ export async function runAgentStream(
   const notifyAbort = () => {
     if (abortNotified) return;
     abortNotified = true;
+    debugLog(`[agent] stream abort conversationId=${conversationId}`);
     if (disposedRef.current) return;
     setMessages((prev: Message[]) => {
       const newMessages = [...prev];
@@ -1139,6 +1153,7 @@ export async function runAgentStream(
     };
 
     saveConversation(conversationData);
+    debugLog(`[agent] stream saved conversationId=${conversationId} steps=${conversationSteps.length} totalSteps=${stepCount} tokens=${totalTokens.total}`);
 
     if (autoCompact) {
       const resolvedMax = await resolveMaxContextTokens();
@@ -1166,6 +1181,7 @@ export async function runAgentStream(
       return;
     }
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    debugLog(`[agent] stream ERROR conversationId=${conversationId} message="${toLogPreview(errorMessage, 600)}"`);
     const errorContent = formatErrorMessage('Mosaic', errorMessage);
     setMessages((prev: Message[]) => {
       const newMessages = [...prev];
@@ -1190,8 +1206,10 @@ export async function runAgentStream(
     if (abortControllerRef.current === abortController) {
       abortControllerRef.current = null;
     }
+    const finalDuration = responseDuration ?? (Date.now() - localStartTime);
+    debugLog(`[agent] stream end conversationId=${conversationId} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`);
     if (!disposedRef.current) {
-      const duration = responseDuration ?? (Date.now() - localStartTime);
+      const duration = finalDuration;
       if (duration >= 60000) {
         const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
         setMessages((prev: Message[]) => {
