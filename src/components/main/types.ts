@@ -31,6 +31,7 @@ export interface Message {
   role: "user" | "assistant" | "tool" | "slash";
   displayRole?: "user" | "assistant" | "tool" | "slash";
   displayContent?: string;
+  hiddenInUi?: boolean;
   content: string;
   images?: import("../../utils/images").ImageAttachment[];
   toolName?: string;
