@@ -23,6 +23,68 @@ const CONTINUATION_TOOL_PRIORITY = ['plan', 'explore', 'grep', 'glob', 'read', '
 const CONTINUATION_TOOL_SKIP = new Set(['title', 'question', 'abort', 'review']);
 const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['grep', 'glob', 'fetch', 'list']);
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatCompactTokens(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function formatPercent(part: number, total: number): string {
+  if (!Number.isFinite(total) || total <= 0) return '0.00';
+  return ((part / total) * 100).toFixed(2);
+}
+
+function buildUsageBarSegments(used: number, buffer: number, total: number, width: number): { usedCells: number; bufferCells: number; freeCells: number } {
+  if (!Number.isFinite(total) || total <= 0 || width <= 0) {
+    return { usedCells: 0, bufferCells: 0, freeCells: Math.max(0, width) };
+  }
+  const usedRatio = clampNumber(used / total, 0, 1);
+  const bufferRatio = clampNumber(buffer / total, 0, 1);
+  let usedCells = Math.round(usedRatio * width);
+  let bufferCells = Math.round(bufferRatio * width);
+  if (usedCells + bufferCells > width) {
+    const overflow = usedCells + bufferCells - width;
+    if (bufferCells >= overflow) {
+      bufferCells -= overflow;
+    } else {
+      usedCells = Math.max(0, usedCells - (overflow - bufferCells));
+      bufferCells = 0;
+    }
+  }
+  const freeCells = Math.max(0, width - usedCells - bufferCells);
+  return { usedCells, bufferCells, freeCells };
+}
+
+function buildAutoCompactDisplay(usedTokens: number, maxContextTokens: number, compactedTokens: number): string {
+  const thresholdTokens = Math.floor(maxContextTokens * 0.95);
+  const bufferTokens = Math.max(0, maxContextTokens - thresholdTokens);
+  const usedForBar = Math.min(maxContextTokens, usedTokens);
+  const effectiveBuffer = Math.max(0, Math.min(bufferTokens, maxContextTokens - usedForBar));
+  const bar = buildUsageBarSegments(usedForBar, effectiveBuffer, maxContextTokens, 40);
+  const reclaimedTokens = Math.max(0, usedTokens - compactedTokens);
+  const overflowTokens = Math.max(0, usedTokens - maxContextTokens);
+  const lines: string[] = [];
+  lines.push('[CTX_HEADER]|Auto Compaction');
+  lines.push(`[CTX_BAR]|${bar.usedCells}|${bar.bufferCells}|${bar.freeCells}|${formatPercent(usedForBar, maxContextTokens)}`);
+  lines.push('[CTX_SECTION]|Compaction summary');
+  lines.push(`[CTX_CAT|MS]|Before compaction|${formatCompactTokens(usedTokens)}|${formatPercent(usedTokens, maxContextTokens)}`);
+  lines.push(`[CTX_CAT|AB]|Trigger threshold (95%)|${formatCompactTokens(thresholdTokens)}|${formatPercent(thresholdTokens, maxContextTokens)}`);
+  lines.push(`[CTX_CAT|UP]|After compaction|${formatCompactTokens(compactedTokens)}|${formatPercent(compactedTokens, maxContextTokens)}`);
+  lines.push(`[CTX_CAT|FS]|Tokens reclaimed|${formatCompactTokens(reclaimedTokens)}|${formatPercent(reclaimedTokens, maxContextTokens)}`);
+  if (overflowTokens > 0) {
+    lines.push(`[CTX_NOTE]|Compaction triggered above max context by ${formatCompactTokens(overflowTokens)} tokens.`);
+  } else {
+    lines.push('[CTX_NOTE]|Compaction triggered near the context limit.');
+  }
+  lines.push('[CTX_NOTE]|Run /context for full diagnostics.');
+  return lines.join('\n');
+}
+
 function stringifyUnknown(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
@@ -1168,8 +1230,16 @@ export async function runAgentStream(
             : estimateTotalTokens(prev, systemPrompt);
           if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
           const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
+          if (!compacted.didCompact) return prev;
           pendingCompactTokensRef.current = compacted.estimatedTokens;
-          return compacted.messages;
+          const autoCompactDisplay = buildAutoCompactDisplay(usedTokens, maxContextTokens, compacted.estimatedTokens);
+          const compactNotice: Message = {
+            id: createId(),
+            role: "slash",
+            content: autoCompactDisplay,
+            success: true
+          };
+          return [compactNotice, ...compacted.messages];
         });
         setCurrentTokensMonotonic(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
       }
