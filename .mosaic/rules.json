@@ -10,7 +10,8 @@
       "powershell *",
       "Get-ChildItem .git *",
       "Write-Output MERGE_HEAD: $(Test-Path .git\\MERGE_HEAD); *",
-      "git rev-parse *"
+      "git rev-parse *",
+      "if (Test-Path *"
     ]
   }
 }
