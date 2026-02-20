@@ -594,7 +594,7 @@ export function ChatPage({
                   const result = item.compactResult || '';
                   return (
                     <box flexDirection="row">
-                      <text fg={arrowColor}>{'   '}➔  </text>
+                      <text fg={arrowColor}>{''}➔  </text>
                       <text attributes={TextAttributes.DIM}>{`${label}${result ? ` : ${result}` : ''}`}</text>
                     </box>
                   );
