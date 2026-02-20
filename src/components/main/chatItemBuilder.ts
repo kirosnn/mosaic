@@ -201,6 +201,9 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
+    if (message.hiddenInUi) {
+      continue;
+    }
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
     const userMessageText = message.content;
