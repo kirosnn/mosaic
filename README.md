@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/mosaic_logo_white.png" width="200" alt="Mosaic logo" />
+  <img src="docs/logo_white.svg" width="200" alt="Mosaic logo" />
 </p>
 
 <h1 align="center">Mosaic CLI</h1>
