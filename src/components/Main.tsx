@@ -614,7 +614,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
           return;
         }
 
-        if (result.shouldClearMessages === true) {
+        if (result.shouldClearMessages === true && result.shouldCompactMessages !== true) {
           Agent.resetSessionState();
           currentTitleRef.current = null;
           titleExtractedRef.current = false;
