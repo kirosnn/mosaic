@@ -1,53 +1,55 @@
 <p align="center">
-  <img src="docs/mosaic_logo_white.png" width="200" />
+  <img src="docs/mosaic_logo_white.png" width="200" alt="Mosaic logo" />
 </p>
 
 <h1 align="center">Mosaic CLI</h1>
 
 <p align="center">
-  <strong>Version 0.75.5</strong>
+  <strong>Terminal-first AI coding agent</strong>
 </p>
 
 <p align="center">
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#ai-providers">Providers</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#commands">Commands</a> •
+  <a href="#configuration">Configuration</a> •
+  <a href="#development">Development</a>
 </p>
 
 ---
 
-Mosaic is an open-source, AI-powered coding agent for the terminal. It combines a React-based TUI (OpenTUI) with a tool-driven agent architecture to deliver a fast, context-aware development workflow. A web UI is also available for those who prefer a browser experience.
-
+Mosaic is an open-source AI coding agent focused on terminal workflows.
+It combines a React + OpenTUI interface, a tool-driven agent runtime, MCP integration, and multi-provider model support.
 ## Highlights
 
-- Multi-provider AI support (OpenAI, Anthropic, Google, Mistral, xAI, Ollama)
-- Terminal-first UI powered by React + OpenTUI
-- Optional web interface on http://127.0.0.1:8192
-- Built-in tools for file operations, search, and shell commands
-- Slash commands for quick actions
-- Project context via `MOSAIC.md` files
+- Terminal UI built with React and OpenTUI
+- Multi-provider model support (OpenAI, Anthropic, Google, Mistral, xAI, Ollama, OpenRouter)
+- Built-in coding tools (`read`, `write`, `edit`, `bash`, `glob`, `grep`, `explore`, and more)
+- Approval workflow for risky actions, with optional auto-approve mode
+- Conversation history + resume support
+- MCP server management from the CLI
+- Workspace context via `MOSAIC.md` + `.mosaic/skills`
 
 ## Requirements
 
-- [Bun](https://bun.sh) (required at runtime)
-- Node.js >= 18 (for npm installation)
+- Bun runtime (required to run Mosaic)
+- Node.js >= 18 (for npm installation path)
 
 ## Installation
 
-### Via npm (recommended)
+### npm (recommended)
 
 ```bash
 npm install -g @kirosnn/mosaic
 ```
 
-Then run from any directory:
+Then run:
 
 ```bash
 mosaic
 ```
 
-### Via npx (no install)
+### npx (no global install)
 
 ```bash
 npx @kirosnn/mosaic
@@ -60,128 +62,172 @@ git clone https://github.com/kirosnn/mosaic.git
 cd mosaic
 bun install
 bun link
-```
-
-After linking, run Mosaic from any directory:
-
-```bash
 mosaic
 ```
 
-If you prefer not to link globally:
-
-```bash
-bun run mosaic
-```
-
-> **Note:** Mosaic requires Bun at runtime. If Bun is not installed, the CLI will prompt you to install it.
+If Bun is missing, the launcher prints installation instructions automatically.
 
 ## Quick Start
 
-1. Run `mosaic` in a project directory.
-2. On first run, Mosaic creates `~/.mosaic/` and guides you through provider setup.
-3. Initialize project context with:
+1. Run `mosaic` in your project directory.
+2. Complete first-run provider/model setup in the TUI.
+3. Run `/init` to generate or refresh `MOSAIC.md` and create `.mosaic/skills`.
+4. Start asking for concrete tasks (for example: fix a bug, implement a feature, refactor a module).
+
+## Commands
+
+### CLI Commands
 
 ```bash
-/init
+mosaic
+mosaic ./my-project
+mosaic -d ./my-project
+mosaic run "fix failing tests in parser"
+mosaic resume
+mosaic resume <session-id>
+mosaic auth <subcommand>
+mosaic mcp <subcommand>
+mosaic uninstall --force
 ```
 
-This creates:
-- `MOSAIC.md` with project context and conventions
-- `.mosaic/` for project-specific settings
+### Slash Commands (inside Mosaic)
 
-## CLI Usage
+| Command | Description |
+|---|---|
+| `/help` | Show available slash commands |
+| `/init` | Initialize workspace context (`MOSAIC.md` + `.mosaic/skills`) |
+| `/provider [id]` | List or switch AI provider |
+| `/model [id]` | List or switch model for active provider |
+| `/approvals on\|off\|toggle\|status` | Manage approval mode |
+| `/new` | Start a new chat (alias: `/clear`) |
+| `/compact [maxTokens]` | Compact current conversation context |
+| `/context [--full]` | Show context budget diagnostics |
+| `/image <path>` | Attach image for next message |
+| `/image clear` | Clear pending images |
+| `/skill ...` | Manage workspace skills |
+| `/echo <text>` | Echo text (debug) |
+
+Tip: run `/help` to see the exact command list for your current build.
+
+## Authentication
+
+Mosaic supports both API-key and OAuth flows.
+
+### Auth CLI
 
 ```bash
-mosaic                       # Start in current directory
-mosaic ./my-project          # Start in a specific directory
-mosaic run "fix the bug"     # Launch with a task
-mosaic --help                # Show help
+mosaic auth list
+mosaic auth set --provider openai --token <key>
+mosaic auth remove --provider openai
+mosaic auth login openai
+mosaic auth login google
 ```
 
-## Web Interface
+Supported OAuth providers currently include `openai` and `google`.
+
+## MCP Integration
+
+Mosaic can manage MCP servers directly:
 
 ```bash
-mosaic web
+mosaic mcp list
+mosaic mcp tools [serverId]
+mosaic mcp doctor
+mosaic mcp add [name]
+mosaic mcp show <serverId>
+mosaic mcp logs <serverId>
+mosaic mcp enable <serverId>
+mosaic mcp disable <serverId>
+mosaic mcp start <serverId>
+mosaic mcp stop <serverId>
+mosaic mcp restart <serverId>
+mosaic mcp refresh [serverId]
+mosaic mcp remove <serverId>
 ```
 
-Open http://127.0.0.1:8192 in your browser.
+By default, Mosaic maintains native MCP servers including:
 
-## Slash Commands
+- `nativesearch`
+- `nativereact`
 
-| Command     | Description                          |
-|-------------|--------------------------------------|
-| `/init`     | Initialize project context (MOSAIC.md) |
-| `/help`     | Show available commands              |
-| `/web`      | Open web interface                   |
-| `/echo`     | Echo a message (debug)               |
+## Built-in Agent Tools
+
+Core internal tools include:
+
+- `read`
+- `write`
+- `edit`
+- `list`
+- `glob`
+- `grep`
+- `bash`
+- `question`
+- `explore`
+- `fetch`
+- `plan`
+- `title`
+
+MCP tools are merged into the callable toolset at runtime.
+
+## Skills and Workspace Context
+
+`/init` prepares project context files:
+
+- `MOSAIC.md`: workspace guidance for agents
+- `.mosaic/skills/local`
+- `.mosaic/skills/team`
+- `.mosaic/skills/vendor`
+
+Skills are auto-activated based on workspace configuration and can be managed with `/skill`.
 
 ## Configuration
 
-Mosaic stores global settings in `~/.mosaic/`:
-- `mosaic.jsonc` includes first-run status and version metadata
+### Global Paths
 
-Project-specific settings live in `.mosaic/` at the repository root.
+- `~/.mosaic/mosaic.jsonc`: main config (provider, model, approvals, custom models/providers)
+- `~/.mosaic/history/`: conversation history + input history
+- `~/.mosaic/mcp/`: MCP config, server files, logs
+- `~/.mosaic/debug.log`: runtime debug log
 
-## Project Structure
+### Project Paths
 
-- `src/index.tsx` - CLI entry point and routing
-- `src/agent/` - Agent core, tools, and providers
-- `src/components/` - TUI components
-- `src/web/` - Web UI and server
-- `src/utils/` - Helpers, config, and commands
+- `MOSAIC.md`: project-level context
+- `.mosaic/`: project-local skill structure and metadata
 
-## How It Works
+## Safety Model
 
-Mosaic relies on a tool registry that exposes safe, focused capabilities to the agent:
-
-| Tool       | Description                              |
-|------------|------------------------------------------|
-| `read`     | Read file contents                       |
-| `write`    | Create or overwrite files                |
-| `edit`     | Apply targeted edits to files            |
-| `bash`     | Execute shell commands                   |
-| `glob`     | Find files by pattern                    |
-| `grep`     | Search code with regex                   |
-| `list`     | List directory contents                  |
-| `question` | Ask clarifying questions to the user     |
-
-**Safety Features:**
-- Write and edit operations require user approval before execution
-- Project context via `MOSAIC.md` helps the agent understand your codebase
-
-## AI Providers
-
-Mosaic uses the Vercel AI SDK and currently supports:
-
-| Provider   | Models                        |
-|------------|-------------------------------|
-| OpenAI     | GPT-5, GPT-4, GPT-3.5         |
-| Anthropic  | Claude Sonnet, Haiku, Opus    |
-| Google     | Gemini 3 and others           |
-| Mistral    | Mistral Large, Mixtral        |
-| xAI        | Grok                          |
-| Ollama     | Any local model               |
-
-Configure your preferred provider on first run or edit `~/.mosaic/mosaic.jsonc`.
+- Write/edit/shell operations are approval-gated by default.
+- Use `/approvals off` to enable auto-approve mode.
+- MCP approvals are managed per server/tool policy.
 
 ## Development
 
 ```bash
-bun run dev              # Watch mode
-bun run start            # Normal run
+bun install
+bun run dev
+bun run start
+bunx tsc --noEmit
 ```
+
+Optional:
+
+```bash
+bun test
+```
+
+## Project Structure
+
+- `src/index.tsx`: CLI entrypoint and app bootstrap
+- `src/components/`: TUI components
+- `src/agent/`: core agent, providers, prompts, and internal tools
+- `src/mcp/`: MCP runtime, config, and CLI
+- `src/utils/`: config, commands, history, bridges, formatting, misc helpers
+- `bin/mosaic.cjs`: launcher that validates Bun availability
 
 ## Contributing
 
-Issues and pull requests are welcome. Please include clear reproduction steps and context for behavior changes.
-
+Issues and pull requests are welcome.
+Prefer focused, well-scoped changes with clear reproduction steps for bug fixes.
 ## License
 
-MIT - see [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  Made with <a href="https://bun.sh">Bun</a>, <a href="https://react.dev">React</a>, and <a href="https://opentui.com">OpenTUI</a>
-</p>
+MIT. See `LICENSE`.
