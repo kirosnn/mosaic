@@ -19,7 +19,7 @@ import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 import { setExploreContext, getExploreSummaries, setConversationMemory, resetExploreSummaries } from '../utils/exploreBridge';
-import { debugLog, initDebugSession } from '../utils/debug';
+import { debugLog } from '../utils/debug';
 import { resetTracker, clearPersistentCache } from './tools/toolCallTracker';
 import { ConversationMemory, getGlobalMemory, resetGlobalMemory } from './memory';
 
@@ -338,7 +338,6 @@ export class Agent {
   private resolvedMaxOutputTokens?: number;
   private memory: ConversationMemory;
   private pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
-  private static sessionInitialized = false;
 
   static resetSessionState(): void {
     resetGlobalMemory();
@@ -352,7 +351,6 @@ export class Agent {
       }
     } catch {
     }
-    Agent.sessionInitialized = false;
   }
 
   static async ensureProviderReady(): Promise<{ ready: boolean; started?: boolean; error?: string }> {
@@ -412,11 +410,6 @@ export class Agent {
 
     this.provider = this.createProvider(userConfig.provider);
     this.memory = getGlobalMemory();
-
-    if (!Agent.sessionInitialized) {
-      initDebugSession(`session-${Date.now()}`);
-      Agent.sessionInitialized = true;
-    }
 
     debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}}`);
   }
