@@ -127,6 +127,17 @@ export const AI_PROVIDERS: AIProvider[] = [
     ]
   },
   {
+    id: 'groq',
+    name: 'Groq',
+    description: 'GroqCloud hosted models and systems',
+    requiresApiKey: true,
+    models: [
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast general model with 131k context window' },
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'High quality general model with 131k context window' },
+      { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', description: 'OpenAI open-weight model hosted on GroqCloud' },
+    ]
+  },
+  {
     id: 'openrouter',
     name: 'OpenRouter',
     description: 'Access to various AI models through a unified API',
@@ -138,7 +149,6 @@ export const AI_PROVIDERS: AIProvider[] = [
     ]
   }
 ];
-
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
