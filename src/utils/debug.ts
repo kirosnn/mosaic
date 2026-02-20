@@ -2,7 +2,7 @@ import { appendFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-export type LogCategory = 'memory' | 'context' | 'compaction' | 'agent' | 'tool' | 'explore' | 'general';
+export type LogCategory = 'memory' | 'context' | 'compaction' | 'agent' | 'tool' | 'explore' | 'ui' | 'general';
 
 const DEBUG_LOG = join(homedir(), '.mosaic', 'debug.log');
 const LATEST_LOG = join(homedir(), '.mosaic', 'debug-latest.log');
@@ -48,5 +48,6 @@ function inferCategory(message: string): LogCategory {
   if (message.startsWith('[agent]')) return 'agent';
   if (message.startsWith('[tool]')) return 'tool';
   if (message.startsWith('[explore]')) return 'explore';
+  if (message.startsWith('[ui]')) return 'ui';
   return 'general';
 }
