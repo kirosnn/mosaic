@@ -3,7 +3,6 @@ import { commandRegistry } from './registry';
 import { echoCommand } from './echo';
 import { helpCommand } from './help';
 import { initCommand } from './init';
-import { webCommand } from './web';
 import { imageCommand } from './image';
 import { approvalsCommand } from './approvals';
 import { newCommand } from './new';
@@ -86,7 +85,6 @@ export function initializeCommands(): void {
   commandRegistry.register(echoCommand);
   commandRegistry.register(helpCommand);
   commandRegistry.register(initCommand);
-  commandRegistry.register(webCommand);
   commandRegistry.register(imageCommand);
   commandRegistry.register(approvalsCommand);
   commandRegistry.register(newCommand);
