@@ -48,6 +48,10 @@ interface SnapshotBuildResult {
   };
 }
 
+const SMART_HISTORY_TOKEN_CAP = 22000;
+const SMART_HISTORY_DIALOGUE_TOKEN_CAP = 14000;
+const SMART_HISTORY_SNAPSHOT_CHAR_CAP = 9000;
+
 function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
@@ -133,8 +137,8 @@ function buildToolMemoryLines(messages: SmartContextMessage[], maxLines: number)
         : msg.content;
     const resultText = normalizeWhitespace(rawResult || '');
     const status = detectToolResultError(resultText, msg.success) ? 'FAILED' : 'OK';
-    const argsText = truncateText(normalizeWhitespace(argsJson || '{}'), 120);
-    const preview = truncateText(resultText || status, 220);
+    const argsText = truncateText(normalizeWhitespace(argsJson || '{}'), 80);
+    const preview = truncateText(resultText || status, 140);
     lines.push(`- [${status}] ${toolName}(${argsText}) => ${preview}`);
   }
 
@@ -166,7 +170,7 @@ function buildPinnedFacts(messages: SmartContextMessage[], maxLines: number, max
   const addFact = (key: string, priority: number, recency: number, text: string) => {
     if (!text.trim() || seen.has(key)) return;
     seen.add(key);
-    facts.push({ key, priority, recency, text: truncateText(normalizeWhitespace(text), 260) });
+    facts.push({ key, priority, recency, text: truncateText(normalizeWhitespace(text), 180) });
   };
 
   const latestPlan = getLatestPlanState(messages);
@@ -248,9 +252,9 @@ function summarizeDialogueMessage(message: AgentHistoryMessage, isFirstUser: boo
   if (!cleaned) return `${message.role}: [empty]`;
   if (message.role === 'assistant') {
     const sentence = cleaned.match(/^[^.!?\n]{10,}[.!?]/)?.[0] ?? cleaned;
-    return `assistant: ${truncateText(sentence, 220)}`;
+    return `assistant: ${truncateText(sentence, 160)}`;
   }
-  const limit = isFirstUser || isLastUser ? 1000 : 420;
+  const limit = isFirstUser || isLastUser ? 700 : 320;
   return `user: ${truncateText(cleaned, limit)}`;
 }
 
@@ -351,19 +355,19 @@ function buildSnapshotMessage(messages: SmartContextMessage[], maxChars: number)
     : '';
 
   const plan = getLatestPlanState(messages);
-  const pinnedFacts = buildPinnedFacts(messages, 10, 1800);
-  const workingSet = buildWorkingSet(messages, 40);
-  const toolMemory = buildToolMemoryLines(messages, 14);
+  const pinnedFacts = buildPinnedFacts(messages, 6, 900);
+  const workingSet = buildWorkingSet(messages, 18);
+  const toolMemory = buildToolMemoryLines(messages, 8);
 
   const sections: string[] = [];
   sections.push('Codebase context snapshot:');
 
   if (originalTask) {
-    sections.push(`Original task:\n- ${truncateText(originalTask, 1200)}`);
+    sections.push(`Original task:\n- ${truncateText(originalTask, 700)}`);
   }
 
   if (currentTask && currentTask !== originalTask) {
-    sections.push(`Current user request:\n- ${truncateText(currentTask, 1200)}`);
+    sections.push(`Current user request:\n- ${truncateText(currentTask, 700)}`);
   }
 
   if (plan.length > 0) {
@@ -466,10 +470,12 @@ function buildDialogueHistory(
 export function buildSmartConversationHistory(
   options: BuildSmartConversationHistoryOptions
 ): Array<{ role: 'user' | 'assistant'; content: UserContent }> {
-  const budget = options.maxContextTokens ?? getDefaultContextBudget(options.provider);
+  const requestedBudget = options.maxContextTokens ?? getDefaultContextBudget(options.provider);
+  const budget = Math.min(requestedBudget, SMART_HISTORY_TOKEN_CAP);
   const reserveTokens = options.reserveTokens ?? Math.max(1200, Math.floor(budget * 0.2));
   const historyBudget = Math.max(800, budget - reserveTokens);
-  const snapshot = buildSnapshotMessage(options.messages, Math.max(800, Math.floor(historyBudget * 2.2)));
+  const snapshotCharBudget = Math.min(SMART_HISTORY_SNAPSHOT_CHAR_CAP, Math.max(900, Math.floor(historyBudget * 1.2)));
+  const snapshot = buildSnapshotMessage(options.messages, snapshotCharBudget);
   const snapshotMessage: AgentHistoryMessage[] = snapshot.text
     ? [{
       role: 'assistant',
@@ -481,13 +487,13 @@ export function buildSmartConversationHistory(
 
   const dialogue = buildDialogueHistory(options.messages, options.includeImages);
   const dialogueTokensBefore = estimateHistoryTokens(dialogue);
-  const dialogueBudget = Math.max(400, historyBudget - estimateHistoryTokens(snapshotMessage));
+  const dialogueBudget = Math.max(400, Math.min(SMART_HISTORY_DIALOGUE_TOKEN_CAP, historyBudget - estimateHistoryTokens(snapshotMessage)));
   const compactedDialogue = compactDialogueHistory(dialogue, dialogueBudget);
   const dialogueTokensAfter = estimateHistoryTokens(compactedDialogue);
 
   const combined = [...snapshotMessage, ...compactedDialogue];
   const inputRoles = countSmartRoles(options.messages);
-  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} includeImages=${options.includeImages} budgetTokens={max:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},planSteps:${snapshot.stats.planSteps},pinnedFacts:${snapshot.stats.pinnedFacts},workingSet:${snapshot.stats.workingSet},toolOutcomes:${snapshot.stats.toolMemory}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length}`);
+  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} includeImages=${options.includeImages} budgetTokens={requested:${requestedBudget},effective:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},planSteps:${snapshot.stats.planSteps},pinnedFacts:${snapshot.stats.pinnedFacts},workingSet:${snapshot.stats.workingSet},toolOutcomes:${snapshot.stats.toolMemory}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length}`);
 
   return combined.map((msg) => ({
     role: msg.role,
