@@ -29,6 +29,7 @@ import { createRoot } from "@opentui/react";
 import { App } from "./components/App";
 import { existsSync, statSync } from 'fs';
 import { resolve } from 'path';
+import { debugLog, initDebugSession } from './utils/debug';
 
 interface ParsedArgs {
   directory?: string;
@@ -36,8 +37,6 @@ interface ParsedArgs {
   initialMessage?: string;
   uninstall?: boolean;
   forceUninstall?: boolean;
-  webServer?: boolean;
-  webDev?: boolean;
   mcpCommand?: boolean;
   mcpArgs?: string[];
   authCommand?: boolean;
@@ -89,14 +88,6 @@ class CLI {
         parsed.authCommand = true;
         parsed.authArgs = args.slice(i + 1);
         i = args.length;
-      } else if (arg === 'web') {
-        parsed.webServer = true;
-        if (args[i + 1] === '--dev') {
-          parsed.webDev = true;
-          i += 2;
-        } else {
-          i++;
-        }
       } else if (!arg.startsWith('-')) {
         parsed.directory = arg;
         i++;
@@ -127,7 +118,6 @@ ${gold('Options')}
 ${gold('Commands')}
   run "<message>"           ${gray('Launch Mosaic with an initial prompt to execute immediately')}
   resume [id]               ${gray('Open a menu to resume a previous conversation session (or resume directly by id)')}
-  web [--dev]               ${gray('Start the Mosaic web interface server (default: http://127.0.0.1:8192)')}
   auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
   uninstall [--force]       ${gray('Uninstall Mosaic from your system')}
@@ -151,8 +141,6 @@ ${gold('Examples')}
   ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
   ${gray('mosaic resume')}                       # Resume a previous session
   ${gray('mosaic resume <id>')}                  # Resume a specific session by id
-  ${gray('mosaic web')}                          # Start the web UI
-  ${gray('mosaic web --dev')}                    # Start web UI with live reload
   ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
   ${gray('mosaic uninstall --force')}            # Completely remove Mosaic
@@ -168,6 +156,10 @@ ${gold('Examples')}
 const cli = new CLI();
 const args = process.argv.slice(2);
 const parsed = cli.parseArgs(args);
+const startupSessionId = `session-${Date.now()}-${process.pid}`;
+initDebugSession(startupSessionId);
+debugLog(`[boot] startup pid=${process.pid} cwd=${process.cwd()} args=${JSON.stringify(args)}`);
+debugLog(`[boot] parsedArgs=${JSON.stringify(parsed)}`);
 
 if (parsed.help) {
   cli.showHelp();
@@ -191,49 +183,6 @@ if (parsed.authCommand) {
   process.exit(0);
 }
 
-if (parsed.webServer) {
-  const { spawn } = await import('child_process');
-  const path = await import('path');
-  const { fileURLToPath } = await import('url');
-  const { dirname } = await import('path');
-
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const serverPath = path.join(__dirname, 'web', 'server.tsx');
-
-  if (!existsSync(serverPath)) {
-    console.error(`Error: Web server file not found at: ${serverPath}`);
-    process.exit(1);
-  }
-
-  const serverProcess = spawn('bun', ['run', serverPath], {
-    detached: false,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      MOSAIC_PROJECT_PATH: process.cwd(),
-      MOSAIC_WEB_DEV: parsed.webDev ? '1' : '0'
-    }
-  });
-
-  serverProcess.on('error', (error) => {
-    console.error(`Failed to start web server: ${error.message}`);
-    process.exit(1);
-  });
-
-  process.on('SIGINT', () => {
-    serverProcess.kill();
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    serverProcess.kill();
-    process.exit(0);
-  });
-
-  await new Promise(() => { });
-}
-
 if (parsed.directory) {
   const resolvedPath = resolve(parsed.directory);
 
@@ -248,19 +197,12 @@ if (parsed.directory) {
   }
 
   process.chdir(resolvedPath);
+  debugLog(`[boot] cwd changed to ${resolvedPath}`);
 }
 
 import { addRecentProject } from './utils/config';
-import { appendFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import type { Message } from './components/main/types';
 import { getLastConversationId, loadConversationById, type ConversationHistory, type ConversationStep } from './utils/history';
-
-const DEBUG_LOG = join(homedir(), '.mosaic', 'debug.log');
-const debugLog = (msg: string) => {
-  try { appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}\n`); } catch { }
-};
 
 function printResumeHint(): void {
   const lastId = getLastConversationId();
