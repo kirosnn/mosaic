@@ -128,6 +128,22 @@ export function summarizeMessage(message: CompactableMessage, isLastUser: boolea
   return `user: ${truncateText(cleaned, limit)}`;
 }
 
+export function shouldHideFromCompactionSummary(message: CompactableMessage): boolean {
+  const text = (message.content || "").trimStart();
+  if (message.role === "user") {
+    return /^FORCED SKILL INVOCATION\b/i.test(text);
+  }
+  if (message.role === "tool") {
+    const toolName = (message.toolName || "").toLowerCase();
+    return toolName === "title" || toolName === "plan";
+  }
+  if (message.role === "assistant") {
+    if (/^running\b/i.test(text)) return true;
+    if (/^api error\b/i.test(text)) return true;
+  }
+  return false;
+}
+
 export function buildSummary(messages: CompactableMessage[], maxTokens: number): string {
   const maxChars = Math.max(0, maxTokens * 3);
   let charCount = 0;
@@ -144,6 +160,7 @@ export function buildSummary(messages: CompactableMessage[], maxTokens: number):
 
   for (let i = 0; i < messages.length; i++) {
     if (charCount >= maxChars) break;
+    if (shouldHideFromCompactionSummary(messages[i]!)) continue;
     const line = `- ${summarizeMessage(messages[i]!, i === lastUserIndex, i === firstUserIndex)}`;
     charCount += line.length + 1;
     lines.push(line);
