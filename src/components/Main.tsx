@@ -14,7 +14,7 @@ import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
 import { getCurrentApproval, cancelApproval } from "../utils/approvalBridge";
 import { type MainProps, type Message, type TokenBreakdown } from "./main/types";
 import { setTerminalTitle } from "./main/titleUtils";
-import { compactMessagesForUi } from "./main/compaction";
+import { buildCompactionDisplay, compactMessagesForUi, estimateTotalTokens } from "./main/compaction";
 import { runAgentStream, type AgentStreamCallbacks } from "./main/useAgentStream";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
@@ -647,9 +647,18 @@ Analyze the output and continue. Do not run the same command again unless I expl
           const targetTokens = maxContextTokens ?? getDefaultContextBudget(config.provider);
           let nextTokens = currentTokens;
           setMessages(prev => {
+            const usedTokens = estimateTotalTokens(prev, systemPrompt);
             const compacted = compactMessagesForUi(prev, systemPrompt, targetTokens, createId, true);
+            if (!compacted.didCompact) return prev;
+            const compactDisplay = buildCompactionDisplay('manual', usedTokens, targetTokens, compacted.estimatedTokens);
+            const compactNotice: Message = {
+              id: createId(),
+              role: "slash",
+              content: compactDisplay,
+              success: true
+            };
             nextTokens = compacted.estimatedTokens;
-            return compacted.messages;
+            return [compactNotice, ...compacted.messages];
           });
           setCurrentTokens(nextTokens);
           return;
