@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mosaic</title>
+    <link rel="stylesheet" href="./styles/theme.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/topbar.css" />
+    <link rel="stylesheet" href="./styles/layout.css" />
+    <link rel="stylesheet" href="./styles/sidebar.css" />
+    <link rel="stylesheet" href="./styles/explorer.css" />
+    <link rel="stylesheet" href="./styles/editor.css" />
+    <link rel="stylesheet" href="./styles/chat.css" />
+    <link rel="stylesheet" href="./styles/modal.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      (function bootstrapRenderer() {
+        const root = document.getElementById("root");
+        function showBootstrapError(message) {
+          if (!root) return;
+          root.innerHTML = "";
+          const el = document.createElement("div");
+          el.style.padding = "24px";
+          el.style.fontFamily = "Consolas, monospace";
+          el.style.color = "#b91c1c";
+          el.textContent = "Bootstrap error: " + message;
+          root.appendChild(el);
+        }
+
+        try {
+          const path = require("path");
+          const { fileURLToPath } = require("url");
+          const currentFilePath = fileURLToPath(window.location.href);
+          const rendererDir = path.dirname(currentFilePath);
+          const candidates = [
+            path.join(rendererDir, "dist", "index.js"),
+            path.join(process.cwd(), "src", "electron", "renderer", "dist", "index.js"),
+          ];
+
+          let loaded = false;
+          let lastError = null;
+          for (const candidate of candidates) {
+            try {
+              require(candidate);
+              loaded = true;
+              break;
+            } catch (error) {
+              lastError = error;
+            }
+          }
+
+          if (!loaded) {
+            const message = lastError && lastError.message ? lastError.message : String(lastError || "Unable to load renderer bundle");
+            showBootstrapError(message);
+          }
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          showBootstrapError(message);
+        }
+      })();
+    </script>
+  </body>
+</html>
