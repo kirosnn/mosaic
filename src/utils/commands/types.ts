@@ -22,6 +22,7 @@ export interface CommandResult {
     options: SelectOption[];
     onSelect: (value: string) => void;
   };
+  errorBanner?: string;
 }
 
 export interface CommandTokenBreakdown {
