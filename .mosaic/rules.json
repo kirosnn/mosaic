@@ -14,7 +14,8 @@
       "if (Test-Path *",
       "Get-ChildItem package.json; *",
       "Test-Path .git\\MERGE_HEAD; *",
-      "Get-Item .git\\MERGE_HEAD, *"
+      "Get-Item .git\\MERGE_HEAD, *",
+      "Write-Output MERGE_HEAD=$(Test-Path .git\\MERGE_HEAD); *"
     ]
   }
 }
