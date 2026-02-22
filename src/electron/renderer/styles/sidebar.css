@@ -1,0 +1,140 @@
+.sidebar {
+  border: none;
+  border-radius: 14px;
+  background: var(--bg-0);
+  box-shadow: none;
+  backdrop-filter: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 12px;
+  min-height: 0;
+  transition: padding 220ms cubic-bezier(0.2, 0.8, 0.2, 1), gap 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="light"] .sidebar {
+  background: var(--bg-0);
+}
+
+.sidebar.closed {
+  padding: 0 12px 12px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  min-height: 37px;
+  padding-right: 40px;
+}
+
+.sidebar.closed .sidebar-header {
+  justify-content: flex-start;
+  padding-right: 0;
+}
+
+.sidebar-toggle-btn {
+  color: var(--text-3);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  flex-shrink: 0;
+  position: absolute;
+  top: 6px;
+  right: 12px;
+}
+
+.sidebar-toggle-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-top {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  justify-items: center;
+}
+
+.sidebar-primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+  color: var(--primary-text);
+}
+
+.sidebar-primary:hover:not(:disabled) {
+  background: var(--primary-bg);
+  border-color: var(--primary-border);
+  box-shadow: none;
+  opacity: 0.9;
+}
+
+.sidebar-link {
+  width: 100%;
+  text-align: center;
+  background: var(--transparent);
+}
+
+.sidebar-link:hover:not(:disabled) {
+  background: var(--sidebar-link-hover-bg);
+  border: none;
+  box-shadow: none;
+}
+
+.sidebar-section {
+  border: none;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  min-height: 0;
+}
+
+.sidebar-section h2 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.sidebar-path,
+.sidebar-file {
+  margin: 0;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-file {
+  color: var(--text-3);
+}
+
+.sidebar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.sidebar-list {
+  flex: 1;
+}
+
+.sidebar-item {
+  width: 100%;
+  text-align: center;
+  opacity: 0.8;
+}
