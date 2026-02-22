@@ -204,15 +204,103 @@ async function readDirectoryEntries(relativePath = "") {
   return visibleEntries;
 }
 
+function getBunExecutable() {
+  return process.platform === "win32" ? "bun.exe" : "bun";
+}
+
+function parseBackendJson(stdoutText) {
+  const lines = String(stdoutText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      return JSON.parse(lines[i]);
+    } catch {
+    }
+  }
+  return null;
+}
+
+function runBackendTask(entryFileName, payload) {
+  return new Promise((resolve, reject) => {
+    const entry = path.join(__dirname, "backend", entryFileName);
+    const child = spawn(getBunExecutable(), ["run", entry], {
+      cwd: workspaceRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        MOSAIC_READONLY: "1",
+      },
+    });
+
+    let stdoutText = "";
+    let stderrText = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdoutText += String(chunk || "");
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderrText += String(chunk || "");
+    });
+
+    child.on("error", (error) => {
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      const parsed = parseBackendJson(stdoutText);
+      if (parsed) {
+        resolve(parsed);
+        return;
+      }
+
+      const detail = stderrText.trim() || stdoutText.trim() || `Backend exited with code ${code ?? 0}`;
+      reject(new Error(detail));
+    });
+
+    const inputPayload = JSON.stringify({
+      workspaceRoot,
+      ...(payload && typeof payload === "object" ? payload : {}),
+    });
+    child.stdin.write(inputPayload);
+    child.stdin.end();
+  });
+}
+
+async function getCommandCatalog() {
+  const payload = await runBackendTask("commandBackend.ts", { action: "catalog" });
+  if (!payload || payload.ok !== true || !payload.catalog) {
+    const message = payload?.error || "Unable to fetch command catalog";
+    throw new Error(message);
+  }
+  return payload.catalog;
+}
+
+async function executeDesktopCommand(input, context) {
+  const payload = await runBackendTask("commandBackend.ts", {
+    action: "execute",
+    execute: {
+      input,
+      context,
+    },
+  });
+  if (!payload || payload.ok !== true || !payload.result) {
+    const message = payload?.error || "Unable to execute command";
+    throw new Error(message);
+  }
+  return payload.result;
+}
+
 function startChat(messages) {
   if (activeChat) {
     throw new Error("A chat request is already running");
   }
 
   const requestId = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  const bunExecutable = process.platform === "win32" ? "bun.exe" : "bun";
   const backendEntry = path.join(__dirname, "backend", "agentBackend.ts");
-  const child = spawn(bunExecutable, ["run", backendEntry], {
+  const child = spawn(getBunExecutable(), ["run", backendEntry], {
     cwd: workspaceRoot,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
@@ -240,18 +328,18 @@ function startChat(messages) {
       }
       sendWindowEvent("chat:event", { requestId, ...payload });
     } catch {
-      sendWindowEvent("chat:event", { requestId, type: "error", error: line });
+      sendWindowEvent("chat:event", { requestId, type: "error", source: "backend", error: line });
     }
   });
 
   stderrReader.on("line", (line) => {
     if (!line || activeChat?.requestId !== requestId) return;
-    sendWindowEvent("chat:event", { requestId, type: "error", error: line });
+    sendWindowEvent("chat:event", { requestId, type: "error", source: "backend", error: line });
   });
 
   child.on("error", (error) => {
     if (activeChat?.requestId !== requestId) return;
-    sendWindowEvent("chat:event", { requestId, type: "error", error: error.message });
+    sendWindowEvent("chat:event", { requestId, type: "error", source: "backend", error: error.message });
   });
 
   child.on("close", (code, signal) => {
@@ -439,6 +527,16 @@ ipcMain.handle("chat:start", async (_event, payload) => {
 
 ipcMain.handle("chat:cancel", async (_event, payload) => {
   return { cancelled: cancelChat(payload?.requestId ?? "") };
+});
+
+ipcMain.handle("command:catalog", async () => {
+  return getCommandCatalog();
+});
+
+ipcMain.handle("command:execute", async (_event, payload) => {
+  const input = typeof payload?.input === "string" ? payload.input : "";
+  const context = payload?.context && typeof payload.context === "object" ? payload.context : undefined;
+  return executeDesktopCommand(input, context);
 });
 
 ipcMain.handle("ui:get-constants", async () => {
