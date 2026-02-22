@@ -200,6 +200,24 @@ Skills are auto-activated based on workspace configuration and can be managed wi
 - Use `/approvals off` to enable auto-approve mode.
 - MCP approvals are managed per server/tool policy.
 
+## Electron IDE (Experimental)
+
+Mosaic now includes an Electron desktop interface inspired by coding-agent IDE workflows.
+
+### Run
+
+```bash
+bun install
+bun run electron:dev
+```
+
+### Features
+
+- Workspace explorer with file open/create actions
+- Built-in text editor with save support
+- React renderer inside Electron (IDE-style layout)
+- Streaming agent chat panel powered by the existing Mosaic agent runtime
+
 ## Development
 
 ```bash
