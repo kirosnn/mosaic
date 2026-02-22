@@ -1,31 +1,90 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { X, Info } from "lucide-react";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneLight, vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { getMediaKind } from "../mediaPreview";
 import type { FsEntry } from "../types";
 import { FileTree } from "./FileTree";
 
-const CodeLineRenderer = ({ text }: { text: string }) => {
-  const parts = text.split(/(<[^>]+>|"[^"]*"|^\s*\d+\.|\/\/.+)/g);
-
-  return (
-    <span>
-      {parts.map((part, i) => {
-        if (part.startsWith("<") && part.endsWith(">")) {
-          return <span key={i} className="syntax-tag">{part}</span>;
-        } else if (part.startsWith('"') && part.endsWith('"')) {
-          return <span key={i} className="syntax-string">{part}</span>;
-        } else if (part.trim().startsWith("//")) {
-          return <span key={i} className="syntax-comment">{part}</span>;
-        } else if (part.includes("=")) {
-          return <span key={i} className="syntax-attr">{part}</span>;
-        }
-        return part;
-      })}
-    </span>
-  );
+const LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  js: "javascript",
+  jsx: "jsx",
+  ts: "typescript",
+  tsx: "tsx",
+  mjs: "javascript",
+  cjs: "javascript",
+  json: "json",
+  html: "markup",
+  htm: "markup",
+  xml: "markup",
+  svg: "markup",
+  css: "css",
+  scss: "scss",
+  sass: "sass",
+  less: "less",
+  md: "markdown",
+  markdown: "markdown",
+  py: "python",
+  rb: "ruby",
+  php: "php",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  cxx: "cpp",
+  cc: "cpp",
+  hpp: "cpp",
+  hxx: "cpp",
+  cs: "csharp",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  ps1: "powershell",
+  sql: "sql",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  ini: "ini",
+  dockerfile: "docker",
+  vue: "markup",
+  svelte: "svelte",
+  graphql: "graphql",
+  gql: "graphql",
+  lua: "lua",
+  r: "r",
+  dart: "dart",
+  ex: "elixir",
+  exs: "elixir",
 };
+
+const LANGUAGE_BY_FILENAME: Record<string, string> = {
+  dockerfile: "docker",
+  makefile: "makefile",
+  "cmakelists.txt": "cmake",
+  ".env": "bash",
+  ".bashrc": "bash",
+  ".zshrc": "bash",
+  ".gitignore": "git",
+  ".gitattributes": "git",
+};
+
+function getCodeLanguage(filePath: string): string {
+  if (!filePath) return "text";
+  const normalized = filePath.replace(/\\/g, "/");
+  const baseName = path.basename(normalized).toLowerCase();
+  const byName = LANGUAGE_BY_FILENAME[baseName];
+  if (byName) return byName;
+  const ext = path.extname(baseName).slice(1);
+  if (!ext) return "text";
+  return LANGUAGE_BY_EXTENSION[ext] ?? "text";
+}
 
 interface EditorPanelProps {
   currentFile: string;
@@ -41,8 +100,9 @@ interface EditorPanelProps {
 export function EditorPanel(props: EditorPanelProps) {
   const mediaKind = useMemo(() => getMediaKind(props.currentFile), [props.currentFile]);
   const [explorerOpen, setExplorerOpen] = useState(true);
-  const gutterRef = useRef<HTMLDivElement | null>(null);
-  const codeRef = useRef<HTMLDivElement | null>(null);
+  const codeLanguage = useMemo(() => getCodeLanguage(props.currentFile), [props.currentFile]);
+  const activeTheme = document.documentElement.getAttribute("data-theme");
+  const syntaxTheme = activeTheme === "light" ? oneLight : vscDarkPlus;
 
   const mediaSrc = useMemo(() => {
     if (!props.workspaceRoot || !props.currentFile || !mediaKind) return "";
@@ -53,15 +113,8 @@ export function EditorPanel(props: EditorPanelProps) {
     }
   }, [mediaKind, props.currentFile, props.workspaceRoot]);
 
-  const displayText = useMemo(() => {
-    if (props.editorValue) return props.editorValue;
-    return "";
-  }, [props.currentFile, props.editorValue]);
-
-  const textLines = useMemo(() => {
-    const lines = displayText.split(/\r?\n/);
-    return lines.length > 0 ? lines : [""];
-  }, [displayText]);
+  const displayText = props.editorValue ? props.editorValue : "";
+  const highlightedSource = displayText.length > 0 ? displayText : " ";
 
   const fileName = props.currentFile ? path.basename(props.currentFile) : "";
 
@@ -102,29 +155,41 @@ export function EditorPanel(props: EditorPanelProps) {
               </div>
             ) : props.currentFile ? (
               <div className="code-preview-shell">
-                <div className="code-preview-gutter" ref={gutterRef}>
-                  {textLines.map((_line, index) => (
-                    <div key={`ln-${index + 1}`} className="code-preview-line-number">
-                      {index + 1}
-                    </div>
-                  ))}
-                </div>
-
-                <div
-                  className="code-preview-content"
-                  ref={codeRef}
-                  onScroll={(e) => {
-                    if (gutterRef.current) {
-                      gutterRef.current.scrollTop = (e.target as HTMLDivElement).scrollTop;
-                    }
-                  }}
-                >
-                  {textLines.map((line, index) => (
-                    <div key={index} className="code-line">
-                      <CodeLineRenderer text={line} />
-                    </div>
-                  ))}
-                </div>
+                {React.createElement(
+                  SyntaxHighlighter as any,
+                  {
+                    className: "code-preview-highlighter",
+                    language: codeLanguage,
+                    style: syntaxTheme,
+                    showLineNumbers: true,
+                    wrapLongLines: false,
+                    wrapLines: true,
+                    lineProps: () => ({ className: "code-preview-line" }),
+                    customStyle: {
+                      margin: 0,
+                      padding: "16px",
+                      minHeight: "100%",
+                      whiteSpace: "pre",
+                      background: "transparent",
+                      fontFamily: "\"JetBrains Mono\", \"Consolas\", monospace",
+                      fontSize: "13px",
+                      lineHeight: "1.5",
+                    },
+                    lineNumberStyle: {
+                      minWidth: "38px",
+                      marginRight: "12px",
+                      textAlign: "right",
+                      color: "var(--editor-gutter-text)",
+                      userSelect: "none",
+                    },
+                    codeTagProps: {
+                      style: {
+                        fontFamily: "\"JetBrains Mono\", \"Consolas\", monospace",
+                      },
+                    },
+                  },
+                  highlightedSource
+                )}
               </div>
             ) : null}
           </div>
