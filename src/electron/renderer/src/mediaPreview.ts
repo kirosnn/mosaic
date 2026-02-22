@@ -33,7 +33,6 @@ const VIDEO_EXTENSIONS = new Set([
   "mpg",
   "mts",
   "ogv",
-  "ts",
   "webm",
   "wmv",
 ]);
