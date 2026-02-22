@@ -6,7 +6,16 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { getLogoSrc, getThemeLabel } from "./constants";
 import { getMediaKind } from "./mediaPreview";
-import type { AgentEvent, ChatMessage, EditorStatus, FsEntry, Theme } from "./types";
+import { applyCommandCompletion, computeCommandCompletions, type CommandCompletionItem } from "./commandCompletion";
+import type {
+  AgentEvent,
+  ChatMessage,
+  CommandCatalogResponse,
+  DesktopCommandContext,
+  EditorStatus,
+  FsEntry,
+  Theme,
+} from "./types";
 import { buildAgentHistory, createId, normalizeRelative, stringifyValue, summarizeArgs } from "./utils";
 
 const api = window.mosaicDesktop;
@@ -18,6 +27,63 @@ type PendingToolCall = {
 
 function shouldShowRunningTool(toolName: string): boolean {
   return toolName === "explore" || toolName.startsWith("mcp__");
+}
+
+type DesktopErrorContext = {
+  source?: string;
+  provider?: string;
+  model?: string;
+};
+
+function normalizeErrorDetail(input: string): string {
+  const value = String(input || "").replace(/\s+/g, " ").trim();
+  if (value.length <= 260) return value;
+  return `${value.slice(0, 257)}...`;
+}
+
+function buildDesktopErrorScope(context?: DesktopErrorContext): string {
+  const source = String(context?.source || "").trim().toLowerCase();
+  const provider = String(context?.provider || "").trim();
+  const model = String(context?.model || "").trim();
+
+  if (source === "provider" || provider || model) {
+    if (provider && model) return `Provider: ${provider} (${model})`;
+    if (provider) return `Provider: ${provider}`;
+    if (model) return `Provider model: ${model}`;
+    return "Provider";
+  }
+
+  if (source === "backend") return "Mosaic backend";
+  if (source === "runtime") return "Mosaic runtime";
+  return "Mosaic";
+}
+
+function formatDesktopError(errorMessage: string, context?: DesktopErrorContext): string {
+  const detail = normalizeErrorDetail(errorMessage);
+  const scope = buildDesktopErrorScope(context);
+  const lower = detail.toLowerCase();
+
+  if (lower.includes("rate limit") || lower.includes("429")) {
+    return `${scope}\nRate limit exceeded. Wait a moment and retry.\nDetails: ${detail}`;
+  }
+
+  if (lower.includes("unauthorized") || lower.includes("401") || lower.includes("invalid api key")) {
+    return `${scope}\nAuthentication failed. Check your API key and model access.\nDetails: ${detail}`;
+  }
+
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return `${scope}\nRequest timed out. Retry or reduce request size.\nDetails: ${detail}`;
+  }
+
+  if (lower.includes("network") || lower.includes("connection") || lower.includes("econnrefused")) {
+    return `${scope}\nNetwork connection failed.\nDetails: ${detail}`;
+  }
+
+  if (lower.includes("context length") || lower.includes("too long") || lower.includes("max tokens")) {
+    return `${scope}\nContext limit exceeded. Reduce prompt size and retry.\nDetails: ${detail}`;
+  }
+
+  return `${scope}\n${detail}`;
 }
 
 export function App() {
@@ -38,6 +104,7 @@ export function App() {
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [commandCatalog, setCommandCatalog] = useState<CommandCatalogResponse | null>(null);
   const [activeRequestId, setActiveRequestId] = useState("");
   const [activeAssistantId, setActiveAssistantId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -65,10 +132,47 @@ export function App() {
   const chatRunning = useMemo(() => Boolean(activeRequestId), [activeRequestId]);
   const themeLabel = useMemo(() => getThemeLabel(theme), [theme]);
   const logoSrc = useMemo(() => getLogoSrc(theme), [theme]);
+  const commandCompletions = useMemo(
+    () => computeCommandCompletions(chatInput, commandCatalog),
+    [chatInput, commandCatalog],
+  );
 
   const setStatus = useCallback((text: string, error = false) => {
     setEditorStatus({ text, error });
   }, []);
+
+  const refreshCommandCatalog = useCallback(async () => {
+    try {
+      const catalog = await api.getCommandCatalog();
+      setCommandCatalog(catalog);
+    } catch {
+      setCommandCatalog(null);
+    }
+  }, []);
+
+  const buildCommandContext = useCallback((messages: ChatMessage[]): DesktopCommandContext => {
+    const contextMessages = messages
+      .map((message) => {
+        if (message.role === "system") return null;
+        if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
+          return {
+            role: message.role,
+            content: message.content,
+            toolName: message.toolName,
+            toolArgs: message.toolArgs,
+            toolResult: message.toolResult,
+            success: message.success,
+          };
+        }
+        return null;
+      })
+      .filter((message): message is NonNullable<typeof message> => Boolean(message));
+
+    return {
+      messages: contextMessages,
+      isProcessing: chatRunning,
+    };
+  }, [chatRunning]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -200,6 +304,75 @@ export function App() {
     });
   }, []);
 
+  const executeLocalCommand = useCallback(async (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (activeRequestIdRef.current) return;
+
+    const context = buildCommandContext(chatMessages);
+    const baseMessages = chatMessages;
+
+    try {
+      const result = await api.executeCommand(trimmed, context);
+
+      if (result.errorBanner) {
+        appendChatMessage({
+          id: createId("system"),
+          role: "system",
+          content: result.errorBanner,
+          isError: true,
+        });
+      }
+
+      if (result.shouldClearMessages) {
+        pendingToolCallsRef.current.clear();
+        activeAssistantIdRef.current = "";
+        setActiveAssistantId("");
+      }
+
+      const historyBase = result.shouldClearMessages ? [] : baseMessages;
+
+      if (result.shouldAddToHistory) {
+        const userMessage: ChatMessage = {
+          id: createId("user"),
+          role: "user",
+          content: result.content,
+          displayContent: trimmed,
+        };
+
+        setChatMessages([...historyBase, userMessage]);
+        activeAssistantIdRef.current = "";
+        setActiveAssistantId("");
+
+        const history = buildAgentHistory(historyBase);
+        const response = await api.startChat([...history, { role: "user", content: result.content }]);
+        setActiveRequestId(response.requestId);
+      } else {
+        const nextMessages = result.shouldClearMessages ? [] : [...baseMessages];
+        if (result.content && result.content.trim()) {
+          nextMessages.push({
+            id: createId("system"),
+            role: "system",
+            content: result.content,
+            isError: !result.success,
+          });
+        }
+        setChatMessages(nextMessages);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to execute command";
+      appendChatMessage({
+        id: createId("system"),
+        role: "system",
+        content: formatDesktopError(message, { source: "runtime" }),
+        isError: true,
+      });
+      finalizeChatRun("");
+    } finally {
+      void refreshCommandCatalog();
+    }
+  }, [appendChatMessage, buildCommandContext, chatMessages, finalizeChatRun, refreshCommandCatalog]);
+
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     if (event.type === "text-delta") {
       const chunk = event.content ?? "";
@@ -291,7 +464,12 @@ export function App() {
       appendChatMessage({
         id: createId("system"),
         role: "system",
-        content: event.error ?? "Agent error",
+        content: formatDesktopError(event.error ?? "Agent error", {
+          source: event.source ?? "provider",
+          provider: event.provider,
+          model: event.model,
+        }),
+        isError: true,
       });
     }
   }, [appendChatMessage, updateChatMessage]);
@@ -301,6 +479,12 @@ export function App() {
     const prompt = chatInput.trim();
     if (!prompt) return;
 
+    setChatInput("");
+    if (prompt.startsWith("/")) {
+      await executeLocalCommand(prompt);
+      return;
+    }
+
     const history = buildAgentHistory(chatMessages);
     const userMessage: ChatMessage = {
       id: createId("user"),
@@ -309,7 +493,6 @@ export function App() {
     };
 
     setChatMessages((prev) => [...prev, userMessage]);
-    setChatInput("");
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
 
@@ -321,11 +504,12 @@ export function App() {
       appendChatMessage({
         id: createId("system"),
         role: "system",
-        content: message,
+        content: formatDesktopError(message, { source: "runtime" }),
+        isError: true,
       });
       finalizeChatRun("");
     }
-  }, [appendChatMessage, chatInput, chatMessages, finalizeChatRun]);
+  }, [appendChatMessage, chatInput, chatMessages, executeLocalCommand, finalizeChatRun]);
 
   const stopChat = useCallback(async () => {
     const requestId = activeRequestIdRef.current;
@@ -344,6 +528,10 @@ export function App() {
     setChatInput("");
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
+  }, []);
+
+  const applyCompletion = useCallback((completion: CommandCompletionItem) => {
+    setChatInput((prev) => applyCommandCompletion(prev, completion.token));
   }, []);
 
   const pickWorkspace = useCallback(async () => {
@@ -385,6 +573,7 @@ export function App() {
         const workspace = await api.getWorkspace();
         setWorkspaceRoot(workspace.workspaceRoot ?? "");
         await refreshTree();
+        await refreshCommandCatalog();
         setStatus("Ready");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Initialization failed";
@@ -392,7 +581,7 @@ export function App() {
       }
     };
     void init();
-  }, [refreshTree, setStatus]);
+  }, [refreshCommandCatalog, refreshTree, setStatus]);
 
   useEffect(() => {
     const unsubscribe = api.onChatEvent((payload) => {
@@ -407,7 +596,12 @@ export function App() {
         appendChatMessage({
           id: createId("system"),
           role: "system",
-          content: payload.error ?? "Runtime error",
+          content: formatDesktopError(payload.error ?? "Runtime error", {
+            source: payload.source ?? "backend",
+            provider: payload.provider,
+            model: payload.model,
+          }),
+          isError: true,
         });
         return;
       }
@@ -425,15 +619,23 @@ export function App() {
       setCurrentFile("");
       setEditorValue("");
       await refreshTree();
+      await refreshCommandCatalog();
       setStatus("Workspace changed");
     });
     return unsubscribe;
-  }, [refreshTree, setStatus]);
+  }, [refreshCommandCatalog, refreshTree, setStatus]);
 
   useEffect(() => {
     const unsubscribe = api.onFsChanged(async (payload) => {
       const changes = Array.isArray(payload?.changes) ? payload.changes : [];
+      const catalogTouched = changes.some((entry) => {
+        const normalized = normalizeRelative(entry).toLowerCase();
+        return normalized.startsWith(".mosaic/skills/");
+      });
       await refreshTree();
+      if (catalogTouched) {
+        await refreshCommandCatalog();
+      }
 
       if (!currentFile) {
         setStatus("Workspace refreshed");
@@ -451,7 +653,7 @@ export function App() {
       }
     });
     return unsubscribe;
-  }, [currentFile, openFile, refreshTree, setStatus]);
+  }, [currentFile, openFile, refreshCommandCatalog, refreshTree, setStatus]);
 
   useEffect(() => {
     const unsubscribe = api.onFsWatchError((payload) => {
@@ -517,7 +719,9 @@ export function App() {
             inputValue={chatInput}
             isRunning={chatRunning}
             chatLogRef={chatLogRef}
+            commandCompletions={commandCompletions}
             onInputChange={setChatInput}
+            onApplyCompletion={applyCompletion}
             onSend={() => {
               void sendChat();
             }}
