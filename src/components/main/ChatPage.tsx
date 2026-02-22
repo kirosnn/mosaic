@@ -19,6 +19,7 @@ import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarB
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuilder";
 import { UserMessageModal, type UserMessageModalState } from "./UserMessageModal";
+import { wrapText } from "./wrapText";
 
 const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
   keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
@@ -249,6 +250,7 @@ interface ChatPageProps {
   onCopyMessage?: (text: string) => void;
   onResubmitUserMessage?: (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => void;
   pendingImages: ImageAttachment[];
+  chatError?: string | null;
   reviewPanel?: React.ReactNode;
   reviewMenu?: React.ReactNode;
   selectMenu?: React.ReactNode;
@@ -270,6 +272,7 @@ export function ChatPage({
   onCopyMessage,
   onResubmitUserMessage,
   pendingImages,
+  chatError,
   reviewPanel,
   reviewMenu,
   selectMenu,
@@ -366,13 +369,16 @@ export function ChatPage({
 
   const planProgress = getPlanProgress(messages);
   const extraInputLines = pendingImages.length > 0 ? 1 : 0;
+  const wrappedErrorLines = chatError ? wrapText(chatError, Math.max(10, terminalWidth - 8)) : [];
+  const errorBannerLines = wrappedErrorLines.length;
+  const inputBottomOffset = 1 + errorBannerLines;
   const inputBarBaseLines = getInputBarBaseLines() + extraInputLines;
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
     hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
     inProgressStep: planProgress.inProgressStep,
     nextStep: planProgress.nextStep,
-  }) + extraInputLines;
+  }) + extraInputLines + errorBannerLines;
   const viewportHeight = Math.max(5, terminalHeight - bottomReservedLines);
   const isUserModalOpen = Boolean(userMessageModal);
   const modalWidth = Math.min(70, Math.max(28, Math.floor(terminalWidth * 0.6)));
@@ -580,7 +586,7 @@ export function ChatPage({
               )}
 
               {showErrorBar && (
-                <text fg="#ff3838">▎ </text>
+                <text fg="#ff3838">▣ </text>
               )}
               {item.type === 'tool_compact' ? (
                 (() => {
@@ -655,7 +661,7 @@ export function ChatPage({
                   {item.segments.map((segment, segIndex) => renderMarkdownSegment(segment, segIndex))}
                 </box>
               ) : (
-                <text fg={item.isError ? "#ff3838" : "white"}>{item.content || ' '}</text>
+                <text fg="white">{item.content || ' '}</text>
               )}
             </box>
           );
@@ -679,7 +685,7 @@ export function ChatPage({
       {reviewMenu && (
         <box
           position="absolute"
-          bottom={inputBarBaseLines + 1}
+          bottom={inputBarBaseLines + 1 + errorBannerLines}
           left={0}
           right={0}
           flexDirection="column"
@@ -693,7 +699,7 @@ export function ChatPage({
 
       <box
         position="absolute"
-        bottom={1.4}
+        bottom={inputBottomOffset}
         left={0}
         right={0}
         flexDirection="column"
@@ -732,8 +738,19 @@ export function ChatPage({
         </box>
       </box>
 
+      {wrappedErrorLines.length > 0 && (
+        <box position="absolute" bottom={1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+          {wrappedErrorLines.map((line, index) => (
+            <box key={`chat-error-line-${index}`} flexDirection="row">
+              <text fg="#ff3838">{index === 0 ? '▣ ' : '  '}</text>
+              <text fg="white">{line || ' '}</text>
+            </box>
+          ))}
+        </box>
+      )}
+
       {!reviewMenu && (
-        <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box position="absolute" bottom={inputBarBaseLines + 1 + errorBannerLines} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
           <ThinkingIndicatorBlock
             isProcessing={isProcessing}
             hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
