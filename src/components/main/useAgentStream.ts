@@ -253,6 +253,7 @@ function buildContinuationPrompt(messages: Message[]): string {
 export interface AgentStreamCallbacks {
   createId: () => string;
   setMessages: (updater: (prev: Message[]) => Message[]) => void;
+  setChatError: (value: string | null) => void;
   setCurrentTokens: (updater: number | ((prev: number) => number)) => void;
   setTokenBreakdown: (updater: TokenBreakdown | ((prev: TokenBreakdown) => TokenBreakdown)) => void;
   setIsProcessing: (value: boolean) => void;
@@ -298,6 +299,7 @@ export async function runAgentStream(
   const {
     createId,
     setMessages,
+    setChatError,
     setCurrentTokens,
     setTokenBreakdown,
     setIsProcessing,
@@ -319,6 +321,7 @@ export async function runAgentStream(
   const localStartTime = Date.now();
   setCurrentTokens(0);
   setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
+  setChatError(null);
   lastPromptTokensRef.current = 0;
   let maxTokensSeen = 0;
 
@@ -439,16 +442,13 @@ export async function runAgentStream(
   try {
     const providerStatus = await Agent.ensureProviderReady();
     if (!providerStatus.ready) {
-      setMessages((prev: Message[]) => {
-        const newMessages = [...prev];
-        newMessages.push({
-          id: createId(),
-          role: "assistant",
-          content: `Ollama error: ${providerStatus.error || 'Could not start Ollama. Make sure Ollama is installed.'}`,
-          isError: true
-        });
-        return newMessages;
+      const providerError = providerStatus.error || 'Provider is not ready. Check your local runtime and credentials.';
+      const errorContent = formatErrorMessage('API', providerError, {
+        source: 'provider',
+        provider: config.provider,
+        model: config.model,
       });
+      setChatError(errorContent);
       setIsProcessing(false);
       return;
     }
@@ -727,23 +727,17 @@ export async function runAgentStream(
           });
         }
 
-        const errorContent = formatErrorMessage('API', event.error);
+        const errorContent = formatErrorMessage('API', event.error, {
+          source: 'provider',
+          provider: config.provider,
+          model: config.model,
+        });
         conversationSteps.push({
           type: 'assistant',
           content: errorContent,
           timestamp: Date.now()
         });
-
-        setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          newMessages.push({
-            id: createId(),
-            role: 'assistant',
-            content: errorContent,
-            isError: true,
-          });
-          return newMessages;
-        });
+        setChatError(errorContent);
 
         assistantChunk = '';
         thinkingChunk = '';
@@ -1071,9 +1065,13 @@ export async function runAgentStream(
               timestamp: Date.now()
             });
           }
-          const errorContent = formatErrorMessage('API', event.error);
+          const errorContent = formatErrorMessage('API', event.error, {
+            source: 'provider',
+            provider: config.provider,
+            model: config.model,
+          });
           conversationSteps.push({ type: 'assistant', content: errorContent, timestamp: Date.now() });
-          setMessages((prev: Message[]) => [...prev, { id: createId(), role: 'assistant', content: errorContent, isError: true }]);
+          setChatError(errorContent);
           assistantChunk = '';
           thinkingChunk = '';
           assistantMessageId = null;
@@ -1202,26 +1200,12 @@ export async function runAgentStream(
     }
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
     debugLog(`[agent] stream ERROR conversationId=${conversationId} message="${toLogPreview(errorMessage, 600)}"`);
-    const errorContent = formatErrorMessage('Mosaic', errorMessage);
-    setMessages((prev: Message[]) => {
-      const newMessages = [...prev];
-      if (newMessages[newMessages.length - 1]?.role === 'assistant' && newMessages[newMessages.length - 1]?.content === '') {
-        newMessages[newMessages.length - 1] = {
-          id: newMessages[newMessages.length - 1]!.id,
-          role: "assistant",
-          content: errorContent,
-          isError: true
-        };
-      } else {
-        newMessages.push({
-          id: createId(),
-          role: "assistant",
-          content: errorContent,
-          isError: true
-        });
-      }
-      return newMessages;
+    const errorContent = formatErrorMessage('Mosaic', errorMessage, {
+      source: 'runtime',
+      provider: config.provider,
+      model: config.model,
     });
+    setChatError(errorContent);
   } finally {
     if (abortControllerRef.current === abortController) {
       abortControllerRef.current = null;
