@@ -42,6 +42,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [currentTokens, setCurrentTokens] = useState(0);
   const [tokenBreakdown, setTokenBreakdown] = useState<TokenBreakdown>({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
+  const [chatError, setChatError] = useState<string | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
@@ -421,6 +422,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const getStreamCallbacks = (): AgentStreamCallbacks => ({
     createId,
     setMessages,
+    setChatError,
     setCurrentTokens,
     setTokenBreakdown,
     setIsProcessing,
@@ -475,6 +477,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const handleSubmit = async (value: string, meta?: InputSubmitMeta, options?: { baseMessages?: Message[]; images?: ImageAttachment[] }) => {
     if (isProcessing) return;
 
+    setChatError(null);
     const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
     const imagesForMessage = options?.images ?? (imagesSupported ? pendingImages : []);
     const hasImages = imagesForMessage.length > 0;
@@ -609,6 +612,11 @@ Analyze the output and continue. Do not run the same command again unless I expl
       const result = await executeCommand(value, buildCommandContext(baseMessages));
       if (result) {
         debugLog(`[ui] slash result success=${result.success} clear=${Boolean(result.shouldClearMessages)} compact=${Boolean(result.shouldCompactMessages)} addToHistory=${result.shouldAddToHistory !== false} showSelect=${Boolean(result.showSelectMenu)} contentPreview="${toLogPreview(result.content || '', 500)}"`);
+        if (result.errorBanner) {
+          setChatError(result.errorBanner);
+        } else {
+          setChatError(null);
+        }
         if (result.showSelectMenu) {
           setSelectMenu(result.showSelectMenu);
           return;
@@ -619,6 +627,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
           currentTitleRef.current = null;
           titleExtractedRef.current = false;
           setCurrentTitle(null);
+          setChatError(null);
           setTerminalTitle('⁘ Mosaic');
           setCurrentTokens(0);
           setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
@@ -869,6 +878,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
       onCopyMessage={onCopy}
       onResubmitUserMessage={handleResubmitUserMessage}
       pendingImages={pendingImages}
+      chatError={chatError}
       reviewPanel={reviewPanelElement}
       reviewMenu={reviewMenuElement}
       selectMenu={selectMenuElement}
