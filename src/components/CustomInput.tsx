@@ -7,6 +7,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { getInputHistory } from '../utils/history'
 import { tryPasteImage, normalizePastedText } from './main/clipboard'
+import { commandRegistry, initializeCommands } from '../utils/commands'
+import { listWorkspaceSkills } from '../utils/skills'
 
 export interface InputSubmitMeta {
   isPaste?: boolean
@@ -25,6 +27,69 @@ interface CustomInputProps {
   initialValue?: string
 }
 
+interface SlashCompletionItem {
+  token: string
+  kind: 'command' | 'skill'
+}
+
+function parseSlashInput(input: string): { prefix: string; query: string; suffix: string } | null {
+  const match = input.match(/^(\s*\/)([^\s]*)([\s\S]*)$/)
+  if (!match) return null
+  return {
+    prefix: match[1] || '/',
+    query: (match[2] || '').toLowerCase(),
+    suffix: match[3] || '',
+  }
+}
+
+function buildSlashCompletions(input: string): SlashCompletionItem[] {
+  const parsed = parseSlashInput(input)
+  if (!parsed) return []
+  if (/\S/.test(parsed.suffix)) return []
+
+  const commands = Array.from(commandRegistry.getAll().entries())
+    .filter(([name, cmd]) => name === cmd.name)
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b))
+  const skills = listWorkspaceSkills().map((skill) => skill.id)
+
+  const query = parsed.query
+  const score = (token: string) => {
+    const lower = token.toLowerCase()
+    if (!query) return 0.55
+    if (lower === query) return 1
+    if (lower.startsWith(query)) return 0.92 + (query.length / Math.max(1, lower.length)) * 0.06
+    if (lower.includes(query)) return 0.72
+    return 0
+  }
+
+  const commandItems = commands
+    .map((token) => ({ token, kind: 'command' as const, score: score(token) + 0.04 }))
+    .filter((item) => item.score > 0)
+  const skillItems = skills
+    .map((token) => ({ token, kind: 'skill' as const, score: score(token) }))
+    .filter((item) => item.score > 0)
+
+  return [...commandItems, ...skillItems]
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (a.kind !== b.kind) return a.kind === 'command' ? -1 : 1
+      return a.token.localeCompare(b.token)
+    })
+    .slice(0, 6)
+    .map(({ token, kind }) => ({ token, kind }))
+}
+
+function applySlashCompletion(input: string, token: string): string {
+  const parsed = parseSlashInput(input)
+  if (!parsed) return input
+  const normalized = token.replace(/^\//, '').trim()
+  if (!normalized) return input
+  const nextBase = `${parsed.prefix}${normalized}`
+  if (parsed.suffix) return `${nextBase}${parsed.suffix}`
+  return `${nextBase} `
+}
+
 export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth, initialValue }: CustomInputProps) {
   const [value, setValue] = useState(initialValue ?? '')
   const [cursorPosition, setCursorPosition] = useState(0)
@@ -36,6 +101,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [currentInput, setCurrentInput] = useState('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
+  const [completionIndex, setCompletionIndex] = useState(0)
 
   const pasteFlagRef = useRef(false)
   const pastedContentRef = useRef('')
@@ -52,6 +118,16 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const initialValueRef = useRef(initialValue ?? '')
 
   const renderer = useRenderer()
+  const completions = buildSlashCompletions(value)
+  const completionKey = completions.map((item) => item.token).join('|')
+
+  useEffect(() => {
+    initializeCommands()
+  }, [])
+
+  useEffect(() => {
+    setCompletionIndex(0)
+  }, [completionKey])
 
   useEffect(() => {
     if (initialValue === undefined) return
@@ -359,6 +435,27 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       return
     }
 
+    if (key.name === 'tab') {
+      const total = completions.length
+      if (total > 0) {
+        const index = Math.max(0, Math.min(completionIndex, total - 1))
+        const selected = completions[index]
+        if (!selected) return
+        const nextValue = applySlashCompletion(valueRef.current, selected.token)
+        setValue(nextValue)
+        setCursorPosition(nextValue.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
+        setHistoryIndex(-1)
+        desiredCursorColRef.current = null
+        setCompletionIndex((prev) => {
+          if (total <= 1) return 0
+          return prev >= total - 1 ? 0 : prev + 1
+        })
+      }
+      return
+    }
+
     if (key.name === 'return') {
       if (submitDisabled) return
       const meta: InputSubmitMeta | undefined = pasteFlagRef.current
@@ -638,6 +735,42 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
           })()}
         </box>
       ))}
+      {completions.length > 0 && (
+        <box
+          flexDirection="column"
+          marginTop={1}
+          backgroundColor="#141414"
+          opacity={0.92}
+          padding={1}
+          width="100%"
+        >
+          <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
+            <text attributes={TextAttributes.BOLD}>Completions</text>
+            <box flexDirection="row">
+              <text fg="white">tab </text>
+              <text attributes={TextAttributes.DIM}>next</text>
+            </box>
+          </box>
+          <box flexDirection="column" width="100%">
+            {completions.map((item, index) => {
+              const active = index === completionIndex
+              return (
+                <box
+                  key={`completion-${item.token}-${index}`}
+                  flexDirection="row"
+                  width="100%"
+                  backgroundColor={active ? "#2a2a2a" : "transparent"}
+                  paddingLeft={1}
+                  paddingRight={1}
+                >
+                  <text fg="#ffca38">{'\u203A'} </text>
+                  <text>{`/${item.token}`}</text>
+                </box>
+              )
+            })}
+          </box>
+        </box>
+      )}
     </box>
   )
 }
