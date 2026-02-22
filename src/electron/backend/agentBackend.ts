@@ -52,21 +52,31 @@ function normalizeMessages(inputMessages: InputMessage[] | undefined): SmartCont
 }
 
 async function run(): Promise<void> {
+  let configProvider: string | undefined;
+  let configModel: string | undefined;
   try {
     const rawInput = await readStdin();
     const payload = (rawInput ? JSON.parse(rawInput) : {}) as BackendPayload;
     const workspaceRoot = typeof payload.workspaceRoot === "string" ? payload.workspaceRoot : process.cwd();
     process.chdir(workspaceRoot);
+    const config = readConfig();
+    configProvider = config.provider;
+    configModel = config.model;
 
     const providerStatus = await Agent.ensureProviderReady();
     if (!providerStatus.ready) {
-      emit({ type: "error", error: providerStatus.error ?? "Provider is not ready" });
+      emit({
+        type: "error",
+        source: "provider",
+        provider: configProvider,
+        model: configModel,
+        error: providerStatus.error ?? "Provider is not ready",
+      });
       emit({ type: "done" });
       return;
     }
 
     const normalized = normalizeMessages(payload.messages);
-    const config = readConfig();
     const history = buildSmartConversationHistory({
       messages: normalized,
       includeImages: false,
@@ -80,13 +90,31 @@ async function run(): Promise<void> {
 
     const agent = new Agent();
     for await (const event of agent.streamMessages(streamInput, { alreadyCompacted: true })) {
-      emit({ type: "event", event });
+      if (event.type === "error") {
+        emit({
+          type: "event",
+          event: {
+            ...event,
+            source: "provider",
+            provider: configProvider,
+            model: configModel,
+          },
+        });
+      } else {
+        emit({ type: "event", event });
+      }
     }
 
     emit({ type: "done" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown backend error";
-    emit({ type: "error", error: message });
+    emit({
+      type: "error",
+      source: "backend",
+      provider: configProvider,
+      model: configModel,
+      error: message,
+    });
     emit({ type: "done" });
   }
 }
