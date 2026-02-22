@@ -5,6 +5,8 @@ import { debugLog } from './debug';
 const TOOL_BODY_INDENT = 2;
 
 export const DEFAULT_MAX_TOOL_LINES = 10;
+const MAX_BASH_HEADER_COMMAND_CHARS = 96;
+const MAX_BASH_BODY_LINE_CHARS = 220;
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   read: 'Read',
@@ -73,6 +75,45 @@ function truncateLines(lines: string[], maxLines?: number): string[] {
   const visibleLines = lines.slice(0, Math.max(0, maxLines - 1));
   const hiddenCount = Math.max(0, lines.length - visibleLines.length);
   return [...visibleLines, `(${hiddenCount} more lines)`];
+}
+
+function stripAnsiControlSequences(text: string): string {
+  if (!text) return '';
+  let out = text.replace(/\r\n/g, '\n');
+  if (out.includes('\r')) {
+    const parts = out.split('\n');
+    out = parts.map((line) => (line.includes('\r') ? (line.split('\r').pop() || '') : line)).join('\n');
+  }
+  out = out.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-Z\\-_])/g, '');
+  out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return out;
+}
+
+function truncateMiddle(text: string, maxChars: number): string {
+  if (maxChars <= 0) return '';
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 3) return text.slice(0, maxChars);
+  const head = Math.ceil((maxChars - 3) * 0.72);
+  const tail = Math.max(0, maxChars - 3 - head);
+  return `${text.slice(0, head)}...${tail > 0 ? text.slice(-tail) : ''}`;
+}
+
+function normalizeBashCommand(command: string): string {
+  return command
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\t/g, ' ')
+    .trim()
+    .replace(/\s+--timeout\s+\d+$/, '')
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeBashOutputLine(line: string): string {
+  return line.replace(/\t/g, '  ').trimEnd();
+}
+
+function sanitizeBashOutputText(text: string): string {
+  const stripped = stripAnsiControlSequences(text);
+  return stripped.replace(/\uFEFF/g, '');
 }
 
 export function formatToolResult(result: unknown): string {
@@ -226,8 +267,9 @@ function formatToolHeader(toolName: string, args: Record<string, unknown>): stri
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      const cleanCommand = command.replace(/[\r\n]+/g, ' ').trim().replace(/\s+--timeout\s+\d+$/, '');
-      return cleanCommand ? `${displayName} (${cleanCommand})` : displayName;
+      const cleanCommand = normalizeBashCommand(command);
+      const shortCommand = truncateMiddle(cleanCommand, MAX_BASH_HEADER_COMMAND_CHARS);
+      return shortCommand ? `${displayName} (${shortCommand})` : displayName;
     }
     case 'explore': {
       const purpose = typeof args.purpose === 'string' ? args.purpose : '';
@@ -300,8 +342,9 @@ export function parseToolHeader(toolName: string, args: Record<string, unknown>)
     }
     case 'bash': {
       const command = typeof args.command === 'string' ? args.command : '';
-      const cleanCommand = command.replace(/[\r\n]+/g, ' ').trim().replace(/\s+--timeout\s+\d+$/, '');
-      return { name: displayName, info: cleanCommand || null };
+      const cleanCommand = normalizeBashCommand(command);
+      const shortCommand = truncateMiddle(cleanCommand, MAX_BASH_HEADER_COMMAND_CHARS);
+      return { name: displayName, info: shortCommand || null };
     }
     case 'explore': {
       const purpose = typeof args.purpose === 'string' ? args.purpose : '';
@@ -764,6 +807,23 @@ function formatMcpObject(obj: Record<string, unknown>): string[] {
 function formatToolBodyLines(toolName: string, args: Record<string, unknown>, result: unknown): string[] {
   const errorText = getToolErrorText(result);
   if (errorText) {
+    if (toolName === 'bash') {
+      const sanitized = sanitizeBashOutputText(errorText);
+      const sourceLines = sanitized.split(/\r?\n/);
+      const lines: string[] = [];
+      for (const line of sourceLines) {
+        const cleanLine = normalizeBashOutputLine(line);
+        if (!cleanLine && lines.length > 0 && lines[lines.length - 1] === '') continue;
+        const truncated = cleanLine.length > MAX_BASH_BODY_LINE_CHARS
+          ? `${cleanLine.slice(0, MAX_BASH_BODY_LINE_CHARS - 3)}...`
+          : cleanLine;
+        lines.push(truncated);
+      }
+      while (lines.length > 1 && lines[lines.length - 1] === '') {
+        lines.pop();
+      }
+      return lines.length > 0 ? lines : ['Command failed'];
+    }
     if (toolName === 'fetch') {
       const statusMatch = errorText.match(/HTTP (\d+(?: [a-zA-Z ]+)?)/);
       if (statusMatch) {
@@ -901,6 +961,33 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
         return lines.length > 0 ? lines : ['(no steps)'];
       }
       return ['(no steps)'];
+    }
+
+    case 'bash': {
+      const rawText = formatToolResult(result);
+      if (!rawText) return ['Command executed with no output'];
+
+      const sanitized = sanitizeBashOutputText(rawText);
+      if (!sanitized.trim()) return ['Command executed with no output'];
+
+      const sourceLines = sanitized.split(/\r?\n/);
+      const normalized: string[] = [];
+      for (const line of sourceLines) {
+        const cleanLine = normalizeBashOutputLine(line);
+        if (!cleanLine && normalized.length > 0 && normalized[normalized.length - 1] === '') {
+          continue;
+        }
+        const truncated = cleanLine.length > MAX_BASH_BODY_LINE_CHARS
+          ? `${cleanLine.slice(0, MAX_BASH_BODY_LINE_CHARS - 3)}...`
+          : cleanLine;
+        normalized.push(truncated);
+      }
+
+      while (normalized.length > 1 && normalized[normalized.length - 1] === '') {
+        normalized.pop();
+      }
+
+      return normalized.length > 0 ? normalized : ['Command executed with no output'];
     }
 
     default: {
