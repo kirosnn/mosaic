@@ -987,6 +987,17 @@ export async function executeTool(toolName: string, args: Record<string, unknown
   debugLog(`[tool] ${toolName} START args=${argsPreview}`);
 
   try {
+    const readOnlyMode = process.env.MOSAIC_READONLY === '1';
+    if (readOnlyMode) {
+      const blockedTools = new Set(['write', 'edit', 'create_directory', 'bash']);
+      if (blockedTools.has(toolName)) {
+        return {
+          success: false,
+          error: `Read-only mode: tool "${toolName}" is disabled in Mosaic desktop.`,
+        };
+      }
+    }
+
     const isBashTool = toolName === 'bash';
     const bashCommand = isBashTool ? (args.command as string) : '';
     const approvalsEnabled = shouldRequireApprovals();
