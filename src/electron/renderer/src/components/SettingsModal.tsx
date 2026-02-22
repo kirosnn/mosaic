@@ -30,6 +30,7 @@ export function SettingsModal(props: SettingsModalProps) {
   return (
     <div
       className="modal-backdrop"
+      role="presentation"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) {
           props.onClose();
@@ -55,15 +56,9 @@ export function SettingsModal(props: SettingsModalProps) {
               <button onClick={props.onToggleTheme}>{`Theme ${props.themeLabel}`}</button>
               <button onClick={props.onRefresh}>Refresh files</button>
             </div>
-
-            <div className="settings-card">
-              <h3>Current file</h3>
-              <p>{props.currentFile || "No file selected"}</p>
-            </div>
           </section>
         </div>
       </section>
     </div>
   );
 }
-
