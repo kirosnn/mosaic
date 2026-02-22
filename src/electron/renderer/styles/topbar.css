@@ -1,0 +1,48 @@
+.topbar {
+  height: var(--topbar-height);
+  padding: 0 16px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-0);
+  border-bottom: none;
+  backdrop-filter: none;
+  -webkit-app-region: drag;
+}
+
+.topbar.platform-win32,
+.topbar.platform-linux {
+  padding-right: 148px;
+}
+
+.topbar.platform-darwin {
+  padding-left: 94px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+button.icon-btn {
+  background: var(--transparent);
+  border: none;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+button.icon-btn:hover:not(:disabled) {
+  background: var(--icon-btn-hover-bg);
+  border: none;
+  box-shadow: none;
+  transform: none;
+}
