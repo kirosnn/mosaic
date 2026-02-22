@@ -206,7 +206,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
     }
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
-    const userMessageText = message.content;
+    const userMessageText = message.displayContent ?? message.content;
     const userMessageImages = message.images ?? [];
     const userMessageMeta = messageRole === "user"
       ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
