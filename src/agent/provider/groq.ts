@@ -188,7 +188,7 @@ export class GroqProvider implements Provider {
 
             yield { type: 'step-start', stepNumber };
 
-            for await (const chunk of stream as AsyncGenerator<any>) {
+            for await (const chunk of stream as unknown as AsyncGenerator<any>) {
               if (options?.abortSignal?.aborted) return;
               const choice = chunk?.choices?.[0];
               if (!choice) continue;
