@@ -1070,43 +1070,87 @@ export function getToolWrapWidth(maxWidth: number, paragraphIndex: number): numb
   return Math.max(1, maxWidth - getToolParagraphIndent(paragraphIndex));
 }
 
-export function formatErrorMessage(errorType: 'API' | 'Mosaic' | 'Tool', errorMessage: string): string {
-  debugLog(`[${errorType} Error] ${errorMessage}`);
+export interface ErrorFormatContext {
+  source?: 'provider' | 'runtime' | 'backend' | 'tool';
+  provider?: string;
+  model?: string;
+}
+
+function normalizeErrorDetail(errorMessage: string): string {
+  const normalized = String(errorMessage || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 260) return normalized;
+  return `${normalized.slice(0, 257)}...`;
+}
+
+function normalizeProviderLabel(provider?: string): string | null {
+  const value = String(provider || '').trim();
+  if (!value) return null;
+  return value;
+}
+
+function buildErrorScopeLabel(errorType: 'API' | 'Mosaic' | 'Tool', context?: ErrorFormatContext): string {
+  if (errorType === 'API') {
+    const provider = normalizeProviderLabel(context?.provider);
+    const model = String(context?.model || '').trim();
+    if (provider && model) return `Provider: ${provider} (${model})`;
+    if (provider) return `Provider: ${provider}`;
+    if (model) return `Provider model: ${model}`;
+    return 'Provider';
+  }
+
+  if (errorType === 'Mosaic') {
+    if (context?.source === 'backend') return 'Mosaic backend';
+    if (context?.source === 'runtime') return 'Mosaic runtime';
+    return 'Mosaic';
+  }
+
+  return 'Tool';
+}
+
+export function formatErrorMessage(
+  errorType: 'API' | 'Mosaic' | 'Tool',
+  errorMessage: string,
+  context?: ErrorFormatContext
+): string {
+  const detail = normalizeErrorDetail(errorMessage);
+  const scope = buildErrorScopeLabel(errorType, context);
+  debugLog(`[${scope} Error] ${detail}`);
 
   if (errorType === 'API') {
-    const lowerMessage = errorMessage.toLowerCase();
+    const lowerMessage = detail.toLowerCase();
 
     if (lowerMessage.includes('tried to call unavailable tool') || lowerMessage.includes('unknown tool')) {
-      const toolMatch = errorMessage.match(/(?:unavailable tool|unknown tool)\s*[:\-]?\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?/i)
-        ?? errorMessage.match(/tool\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?\s*(?:is not available|not available)/i);
+      const toolMatch = detail.match(/(?:unavailable tool|unknown tool)\s*[:\-]?\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?/i)
+        ?? detail.match(/tool\s*['\"]?([a-zA-Z0-9_\-]+)['\"]?\s*(?:is not available|not available)/i);
       const toolName = toolMatch?.[1];
-      const detail = toolName ? `\nTool: ${toolName}` : '';
-      return `${errorType} Error\nThe model tried to use a tool that is not available.${detail}\nPlease try again.`;
+      const lines = [scope, 'The model tried to call a tool that is not available.'];
+      if (toolName) lines.push(`Tool: ${toolName}`);
+      lines.push('Please retry the request.');
+      return lines.join('\n');
     }
 
     if (lowerMessage.includes('rate limit') || lowerMessage.includes('429')) {
-      return `${errorType} Error\nRate limit exceeded. Please wait a moment and try again.`;
+      return `${scope}\nRate limit exceeded. Wait a moment and retry.\nDetails: ${detail}`;
     }
 
     if (lowerMessage.includes('unauthorized') || lowerMessage.includes('401') || lowerMessage.includes('invalid api key')) {
-      return `${errorType} Error\nAuthentication failed. Please check your API key configuration.`;
+      return `${scope}\nAuthentication failed. Check your API key and model permissions.\nDetails: ${detail}`;
     }
 
     if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
-      return `${errorType} Error\nRequest timed out. Please try again.`;
+      return `${scope}\nThe request timed out. Retry or reduce request size.\nDetails: ${detail}`;
     }
 
     if (lowerMessage.includes('network') || lowerMessage.includes('connection') || lowerMessage.includes('econnrefused')) {
-      return `${errorType} Error\nNetwork error. Please check your internet connection.`;
+      return `${scope}\nNetwork connection failed while contacting the provider.\nDetails: ${detail}`;
     }
 
     if (lowerMessage.includes('context length') || lowerMessage.includes('too long') || lowerMessage.includes('max tokens')) {
-      return `${errorType} Error\nMessage too long for the model. Try using /compact to reduce context size.`;
+      return `${scope}\nContext window exceeded. Run /compact or reduce prompt size.\nDetails: ${detail}`;
     }
 
-    const shortMessage = errorMessage.length > 100 ? errorMessage.substring(0, 100) + '...' : errorMessage;
-    return `${errorType} Error\n${shortMessage}`;
+    return `${scope}\nProvider request failed.\nDetails: ${detail}`;
   }
 
-  return `${errorType} Error\n${errorMessage}`;
+  return `${scope}\n${detail}`;
 }
