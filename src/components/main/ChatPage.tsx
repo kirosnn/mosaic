@@ -536,8 +536,9 @@ export function ChatPage({
           const codeBackground = null;
           const isUserMessageLine = item.role === "user" && Boolean(item.messageId) && !item.isSpacer;
           const isUserHover = isUserMessageLine && hoveredUserMessageId === item.messageId;
-          const hasMessageBackground = (item.isPadding && !isToolItem)
-            || ((item.role === "user" && item.content) || showSlashBackground || showErrorBar);
+          const isErrorMessageRow = item.role === "assistant" && item.isError;
+          const hasMessageBackground = (item.isPadding && !isToolItem && item.role !== "assistant" && !isErrorMessageRow)
+            || ((item.role === "user" && item.content) || showSlashBackground);
           const hoverBackground = isUserHover ? "#262626" : null;
           const runningBackground = isRunningTool || item.isCompactTool
             ? "transparent"
@@ -571,7 +572,7 @@ export function ChatPage({
               width="100%"
               backgroundColor={rowBackground}
               paddingLeft={leftPadding}
-              paddingRight={((item.role === "user" && item.content) || showSlashBackground || showErrorBar) ? 1 : 0}
+              paddingRight={((item.role === "user" && item.content) || showSlashBackground) ? 1 : 0}
               onMouseOver={handleUserMouseOver}
               onMouseOut={handleUserMouseOut}
               onMouseDown={handleUserMouseDown}
@@ -656,7 +657,12 @@ export function ChatPage({
                 renderSlashText(item.content || ' ', item.indent || 0)
               ) : item.segments && item.segments.length > 0 ? (
                 <box flexDirection="row">
-                  {item.segments.map((segment, segIndex) => renderMarkdownSegment(segment, segIndex))}
+                  {item.segments.map((segment, segIndex) => {
+                    if (item.role === "assistant" && item.isError && segment.type === "code") {
+                      return <text key={segIndex} fg="#ff3838">{`${segment.content}`}</text>;
+                    }
+                    return renderMarkdownSegment(segment, segIndex);
+                  })}
                 </box>
               ) : (
                 <text fg="white">{item.content || ' '}</text>
