@@ -332,7 +332,26 @@ export function ThinkingIndicator(props: ThinkingIndicatorProps) {
 }
 
 export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
-    if (!shouldShowThinkingIndicator(props)) return null;
+    const showIndicator = shouldShowThinkingIndicator(props);
+    const [nextShimmerPos, setNextShimmerPos] = useState(-2);
+    const nextLabel = "Next :";
+
+    useEffect(() => {
+        if (!showIndicator || !props.nextStep) {
+            return;
+        }
+
+        const interval = setInterval(() => {
+            setNextShimmerPos((prev) => {
+                const limit = nextLabel.length + 8;
+                return prev >= limit ? -2 : prev + 1;
+            });
+        }, 80);
+
+        return () => clearInterval(interval);
+    }, [showIndicator, props.nextStep, nextLabel.length]);
+
+    if (!showIndicator) return null;
 
     return (
         <box flexDirection="column" width="100%">
@@ -340,9 +359,14 @@ export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
             {props.nextStep ? (
                 <box flexDirection="row" width="100%" paddingLeft={2}>
                     <text fg="#ffca38">{"▪ "}</text>
-                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>
-                        Next:
-                    </text>
+                    {nextLabel.split("").map((char, index) => {
+                        const inShimmer = index === nextShimmerPos || index === nextShimmerPos - 1;
+                        return (
+                            <text key={index} fg="#ffca38" attributes={inShimmer ? TextAttributes.BOLD : TextAttributes.DIM}>
+                                {char}
+                            </text>
+                        );
+                    })}
                     <text> </text>
                     <text fg="white" attributes={TextAttributes.DIM}>
                         {props.nextStep}
