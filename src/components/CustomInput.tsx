@@ -389,6 +389,10 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       return
     }
 
+    if (key.name === 'escape' || key.sequence === '\x1b') {
+      return
+    }
+
     if ((key.name === 'z' && key.ctrl) || key.sequence === '\x1a') {
       const lastPaste = lastPasteUndoRef.current
       if (lastPaste && valueRef.current === lastPaste.nextValue) {
