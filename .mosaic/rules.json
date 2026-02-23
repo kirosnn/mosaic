@@ -17,7 +17,9 @@
       "Get-Item .git\\MERGE_HEAD, *",
       "Write-Output MERGE_HEAD=$(Test-Path .git\\MERGE_HEAD); *",
       "if ((Test-Path *",
-      "git branch *"
+      "git branch *",
+      "Get-Location; git *",
+      "bun run lint; *"
     ]
   }
 }
