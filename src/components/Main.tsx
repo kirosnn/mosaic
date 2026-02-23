@@ -743,7 +743,6 @@ Analyze the output and continue. Do not run the same command again unless I expl
       id: createId(),
       role: "user",
       content: composedContent,
-      displayContent: meta?.isPaste ? '[Pasted text]' : undefined,
       images: imagesForMessage.length > 0 ? imagesForMessage : undefined,
     };
 
