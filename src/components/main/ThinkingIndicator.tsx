@@ -360,9 +360,8 @@ export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
                 <box flexDirection="row" width="100%" paddingLeft={2}>
                     <text fg="#ffca38">{"▪ "}</text>
                     {nextLabel.split("").map((char, index) => {
-                        const inShimmer = index === nextShimmerPos || index === nextShimmerPos - 1;
                         return (
-                            <text key={index} fg="#ffca38" attributes={inShimmer ? TextAttributes.BOLD : TextAttributes.DIM}>
+                            <text key={index} fg="#ffca38" attributes={TextAttributes.BOLD}>
                                 {char}
                             </text>
                         );
