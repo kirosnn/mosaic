@@ -492,7 +492,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (isProcessing) return;
 
     setChatError(null);
-    const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent);
+    const hasPastedContent = Boolean(meta?.isPaste && meta.pastedContent && value.includes(meta.pastedContent));
     const imagesForMessage = options?.images ?? (imagesSupported ? pendingImages : []);
     const hasImages = imagesForMessage.length > 0;
     if (!value.trim() && !hasPastedContent && !hasImages) return;
@@ -732,9 +732,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
       }
     }
 
-    const composedContent = hasPastedContent
-      ? `${meta!.pastedContent!}${value.trim() ? `\n\n${value}` : ''}`
-      : value;
+    const composedContent = value;
     debugLog(`[ui] input type=user chars=${composedContent.length} pasted=${hasPastedContent} images=${imagesForMessage.length} preview="${toLogPreview(composedContent, 2000)}"`);
 
     addInputToHistory(value.trim() || (hasPastedContent ? '[Pasted text]' : (hasImages ? '[Image]' : value)));
