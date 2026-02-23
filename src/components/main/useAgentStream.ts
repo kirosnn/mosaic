@@ -416,17 +416,7 @@ export async function runAgentStream(
     abortNotified = true;
     debugLog(`[agent] stream abort conversationId=${conversationId}`);
     if (disposedRef.current) return;
-    setMessages((prev: Message[]) => {
-      const newMessages = [...prev];
-      newMessages.push({
-        id: createId(),
-        role: "tool",
-        toolName: "abort",
-        success: false,
-        content: abortMessage
-      });
-      return newMessages;
-    });
+    setChatError(abortMessage);
   };
 
   conversationSteps.push({

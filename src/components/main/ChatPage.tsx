@@ -369,16 +369,14 @@ export function ChatPage({
 
   const planProgress = getPlanProgress(messages);
   const extraInputLines = pendingImages.length > 0 ? 1 : 0;
-  const wrappedErrorLines = chatError ? wrapText(chatError, Math.max(10, terminalWidth - 8)) : [];
-  const errorBannerLines = wrappedErrorLines.length;
-  const inputBottomOffset = 1 + errorBannerLines;
+  const inputBottomOffset = 1;
   const inputBarBaseLines = getInputBarBaseLines() + extraInputLines;
   const bottomReservedLines = getBottomReservedLinesForInputBar({
     isProcessing,
     hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
     inProgressStep: planProgress.inProgressStep,
     nextStep: planProgress.nextStep,
-  }) + extraInputLines + errorBannerLines;
+  }) + extraInputLines;
   const viewportHeight = Math.max(5, terminalHeight - bottomReservedLines);
   const isUserModalOpen = Boolean(userMessageModal);
   const modalWidth = Math.min(70, Math.max(28, Math.floor(terminalWidth * 0.6)));
@@ -586,7 +584,7 @@ export function ChatPage({
               )}
 
               {showErrorBar && (
-                <text fg="#ff3838">▣ </text>
+                <text fg="#ff3838">■ </text>
               )}
               {item.type === 'tool_compact' ? (
                 (() => {
@@ -685,7 +683,7 @@ export function ChatPage({
       {reviewMenu && (
         <box
           position="absolute"
-          bottom={inputBarBaseLines + 1 + errorBannerLines}
+          bottom={inputBarBaseLines + 1}
           left={0}
           right={0}
           flexDirection="column"
@@ -733,24 +731,10 @@ export function ChatPage({
       </box>
 
       <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
-        <box flexDirection="row" gap={1}>
-          <text fg="#ffca38">{requireApprovals ? '' : '⏵⏵ auto-accept edits on'}</text>
-        </box>
       </box>
 
-      {wrappedErrorLines.length > 0 && (
-        <box position="absolute" bottom={1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
-          {wrappedErrorLines.map((line, index) => (
-            <box key={`chat-error-line-${index}`} flexDirection="row">
-              <text fg="#ff3838">{index === 0 ? '▣ ' : '  '}</text>
-              <text fg="white">{line || ' '}</text>
-            </box>
-          ))}
-        </box>
-      )}
-
       {!reviewMenu && (
-        <box position="absolute" bottom={inputBarBaseLines + 1 + errorBannerLines} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
           <ThinkingIndicatorBlock
             isProcessing={isProcessing}
             hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}

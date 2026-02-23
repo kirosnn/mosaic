@@ -130,12 +130,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  text-align: center;
   color: var(--text-3);
 }
 
 .editor-empty-state p {
   font-size: 14px;
-  margin-top: 10px;
+  margin: 0;
 }
 
 .editor-empty-icon {
@@ -143,6 +145,14 @@
   height: 60px;
   border: 2px solid var(--editor-empty-icon-border);
   background: var(--editor-empty-icon-bg);
+}
+
+.editor-empty-logo {
+  width: min(120px, 34%);
+  height: auto;
+  opacity: 0.65;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .code-preview-shell {
@@ -170,15 +180,44 @@
   min-width: 100%;
 }
 
+.code-preview-plain {
+  margin: 0;
+  padding: 16px;
+  width: 100%;
+  min-height: 100%;
+  overflow: auto;
+  white-space: pre;
+  background: transparent;
+  color: var(--editor-code-text);
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .code-preview-line {
   display: block;
   width: 100%;
   min-height: 1.5em;
   transition: background-color 120ms ease;
+  cursor: pointer;
 }
 
 .code-preview-line:hover {
   background: var(--tree-row-hover-bg);
+}
+
+.code-preview-line.code-preview-line-highlighted,
+.code-preview-line.code-preview-line-highlighted:hover {
+  background: #ffd45a;
+}
+
+.code-preview-line.code-preview-line-highlighted,
+.code-preview-line.code-preview-line-highlighted span {
+  color: #1f2328 !important;
+}
+
+.code-preview-line.code-preview-line-highlighted .react-syntax-highlighter-line-number {
+  color: #5f4d13 !important;
 }
 
 .code-preview-highlighter .react-syntax-highlighter-line-number {
@@ -267,14 +306,21 @@
 
 .editor-explorer-content {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   min-height: 0;
-  padding-top: 8px;
+  padding-top: 0;
 }
 
 .editor-tree {
   font-size: 13px;
   color: var(--text-2);
+  min-height: 0;
+  height: 100%;
+}
+
+.file-tree-viewport {
+  height: 100%;
+  overflow: auto;
   min-height: 0;
 }
 
@@ -289,8 +335,7 @@
 }
 
 .file-tree-list {
-  display: flex;
-  flex-direction: column;
+  position: relative;
   font-size: 11px;
 }
 
@@ -300,6 +345,12 @@
   height: 20px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.file-tree-row-virtual {
+  position: absolute;
+  left: 0;
+  right: 0;
 }
 
 .file-tree-row:hover {

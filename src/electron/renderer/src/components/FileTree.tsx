@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import path from "node:path";
 import {
   ChevronRight,
@@ -103,6 +103,27 @@ type BrandToken =
   | "yaml"
   | "yarn";
 
+type FileIconDescriptor =
+  | { kind: "brand"; token: BrandToken }
+  | { kind: "image" }
+  | { kind: "video" }
+  | { kind: "default" };
+
+interface FlatTreeRow {
+  entry: FsEntry;
+  depth: number;
+  isDirectory: boolean;
+  isOpen: boolean;
+  isSelected: boolean;
+}
+
+interface FileTreeRowProps {
+  row: FlatTreeRow;
+  top: number;
+  onToggleDirectory: (path: string) => void;
+  onOpenFile: (path: string) => void;
+}
+
 const BRAND_ICON_BY_TOKEN: Record<BrandToken, SimpleIcon> = {
   bun: siBun,
   c: siC,
@@ -148,6 +169,10 @@ const BRAND_ICON_BY_TOKEN: Record<BrandToken, SimpleIcon> = {
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".bmp", ".ico", ".avif"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"]);
 const FILE_ICON_SIZE = 12;
+const FILE_TREE_ROW_HEIGHT = 20;
+const FILE_TREE_OVERSCAN_ROWS = 20;
+const FILE_TREE_INDENT_PX = 16;
+const fileIconDescriptorCache = new Map<string, FileIconDescriptor>();
 
 function renderBrandIcon(token: BrandToken): React.ReactNode {
   const icon = BRAND_ICON_BY_TOKEN[token];
@@ -165,103 +190,96 @@ function renderBrandIcon(token: BrandToken): React.ReactNode {
   );
 }
 
-function getFileIcon(fileName: string): React.ReactNode {
-  const lowerName = fileName.toLowerCase();
+function computeFileIconDescriptor(lowerName: string): FileIconDescriptor {
   const ext = path.extname(lowerName);
 
   if (lowerName === ".gitignore" || lowerName === ".gitattributes" || lowerName === ".gitmodules" || lowerName.startsWith(".git")) {
-    return renderBrandIcon("git");
+    return { kind: "brand", token: "git" };
   }
-
   if (lowerName === "package.json" || lowerName === "package-lock.json" || lowerName === "npm-shrinkwrap.json") {
-    return renderBrandIcon("npm");
+    return { kind: "brand", token: "npm" };
   }
-
   if (lowerName === "bun.lock" || lowerName === "bunfig.toml") {
-    return renderBrandIcon("bun");
+    return { kind: "brand", token: "bun" };
   }
-
   if (lowerName === "pnpm-lock.yaml") {
-    return renderBrandIcon("pnpm");
+    return { kind: "brand", token: "pnpm" };
   }
-
   if (lowerName === "yarn.lock") {
-    return renderBrandIcon("yarn");
+    return { kind: "brand", token: "yarn" };
   }
-
   if (lowerName === "dockerfile" || lowerName === "docker-compose.yml" || lowerName === "docker-compose.yaml") {
-    return renderBrandIcon("docker");
+    return { kind: "brand", token: "docker" };
   }
-
   if (lowerName === ".env" || lowerName.startsWith(".env.")) {
-    return renderBrandIcon("dotenv");
+    return { kind: "brand", token: "dotenv" };
   }
 
   switch (ext) {
     case ".ts":
-      return renderBrandIcon("ts");
+      return { kind: "brand", token: "ts" };
     case ".tsx":
-      return renderBrandIcon("react");
+      return { kind: "brand", token: "react" };
     case ".js":
     case ".mjs":
     case ".cjs":
-      return renderBrandIcon("js");
+      return { kind: "brand", token: "js" };
     case ".jsx":
-      return renderBrandIcon("react");
+      return { kind: "brand", token: "react" };
     case ".json":
-      return renderBrandIcon("json");
+      return { kind: "brand", token: "json" };
     case ".css":
-      return renderBrandIcon("css");
+      return { kind: "brand", token: "css" };
     case ".scss":
     case ".sass":
-      return renderBrandIcon("sass");
+      return { kind: "brand", token: "sass" };
     case ".html":
     case ".htm":
-      return renderBrandIcon("html");
+      return { kind: "brand", token: "html" };
     case ".md":
     case ".mdx":
-      return renderBrandIcon("markdown");
+      return { kind: "brand", token: "markdown" };
     case ".py":
-      return renderBrandIcon("python");
+      return { kind: "brand", token: "python" };
     case ".go":
-      return renderBrandIcon("go");
+      return { kind: "brand", token: "go" };
     case ".rs":
-      return renderBrandIcon("rust");
+      return { kind: "brand", token: "rust" };
     case ".php":
-      return renderBrandIcon("php");
+      return { kind: "brand", token: "php" };
     case ".rb":
-      return renderBrandIcon("ruby");
+      return { kind: "brand", token: "ruby" };
     case ".swift":
-      return renderBrandIcon("swift");
+      return { kind: "brand", token: "swift" };
     case ".kt":
     case ".kts":
-      return renderBrandIcon("kotlin");
+      return { kind: "brand", token: "kotlin" };
     case ".cs":
-      return renderBrandIcon("csharp");
+      return { kind: "brand", token: "csharp" };
     case ".java":
-      return renderBrandIcon("java");
+      return { kind: "brand", token: "java" };
     case ".c":
     case ".h":
-      return renderBrandIcon("c");
+      return { kind: "brand", token: "c" };
     case ".cpp":
     case ".cxx":
     case ".cc":
     case ".hpp":
     case ".hxx":
     case ".hh":
-      return renderBrandIcon("cpp");
+      return { kind: "brand", token: "cpp" };
     case ".yml":
     case ".yaml":
-      return renderBrandIcon("yaml");
+      return { kind: "brand", token: "yaml" };
     case ".toml":
-      return renderBrandIcon("toml");
+      return { kind: "brand", token: "toml" };
     case ".graphql":
     case ".gql":
-      return renderBrandIcon("graphql");
+      return { kind: "brand", token: "graphql" };
     case ".vue":
-      return renderBrandIcon("vue");
+      return { kind: "brand", token: "vue" };
     case ".svelte":
-      return renderBrandIcon("svelte");
+      return { kind: "brand", token: "svelte" };
     case ".sh":
     case ".zsh":
     case ".bash":
@@ -269,38 +287,127 @@ function getFileIcon(fileName: string): React.ReactNode {
     case ".ps1":
     case ".psm1":
     case ".psd1":
-      return renderBrandIcon("shell");
+      return { kind: "brand", token: "shell" };
     case ".lua":
-      return renderBrandIcon("lua");
+      return { kind: "brand", token: "lua" };
     case ".pl":
     case ".pm":
-      return renderBrandIcon("perl");
+      return { kind: "brand", token: "perl" };
     case ".r":
-      return renderBrandIcon("r");
+      return { kind: "brand", token: "r" };
     case ".dart":
-      return renderBrandIcon("dart");
+      return { kind: "brand", token: "dart" };
     case ".ex":
     case ".exs":
-      return renderBrandIcon("elixir");
+      return { kind: "brand", token: "elixir" };
     case ".erl":
     case ".hrl":
-      return renderBrandIcon("erlang");
+      return { kind: "brand", token: "erlang" };
     case ".hs":
-      return renderBrandIcon("haskell");
+      return { kind: "brand", token: "haskell" };
     default:
       break;
   }
 
   if (IMAGE_EXTENSIONS.has(ext)) {
+    return { kind: "image" };
+  }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { kind: "video" };
+  }
+  return { kind: "default" };
+}
+
+function getFileIconDescriptor(fileName: string): FileIconDescriptor {
+  const key = fileName.toLowerCase();
+  const cached = fileIconDescriptorCache.get(key);
+  if (cached) return cached;
+  const next = computeFileIconDescriptor(key);
+  fileIconDescriptorCache.set(key, next);
+  return next;
+}
+
+function renderFileIcon(fileName: string): React.ReactNode {
+  const descriptor = getFileIconDescriptor(fileName);
+  if (descriptor.kind === "brand") {
+    return renderBrandIcon(descriptor.token);
+  }
+  if (descriptor.kind === "image") {
     return <ImageIcon size={FILE_ICON_SIZE} className="file-icon image" />;
   }
-
-  if (VIDEO_EXTENSIONS.has(ext)) {
+  if (descriptor.kind === "video") {
     return <Film size={FILE_ICON_SIZE} className="file-icon video" />;
   }
-
   return <File size={FILE_ICON_SIZE} className="file-icon default" />;
 }
+
+function collectVisibleRows(
+  parentPath: string,
+  depth: number,
+  directoryCache: Record<string, FsEntry[]>,
+  openDirectories: Set<string>,
+  currentFile: string,
+  out: FlatTreeRow[],
+): void {
+  const entries = directoryCache[parentPath] || [];
+  for (const entry of entries) {
+    const entryPath = entry.relativePath;
+    const isDirectory = entry.type === "directory";
+    const isOpen = isDirectory ? openDirectories.has(entryPath) : false;
+    out.push({
+      entry,
+      depth,
+      isDirectory,
+      isOpen,
+      isSelected: currentFile === entryPath,
+    });
+    if (isDirectory && isOpen) {
+      collectVisibleRows(entryPath, depth + 1, directoryCache, openDirectories, currentFile, out);
+    }
+  }
+}
+
+const FileTreeRow = memo(function FileTreeRow(props: FileTreeRowProps) {
+  const entryPath = props.row.entry.relativePath;
+  return (
+    <div
+      className={`file-tree-row file-tree-row-virtual ${props.row.isSelected ? "selected" : ""}`}
+      style={{
+        transform: `translateY(${props.top}px)`,
+        paddingLeft: `${props.row.depth * FILE_TREE_INDENT_PX}px`,
+      }}
+      onClick={() => {
+        if (props.row.isDirectory) {
+          props.onToggleDirectory(entryPath);
+        } else {
+          props.onOpenFile(entryPath);
+        }
+      }}
+    >
+      <span className="file-icon-container">
+        {props.row.isDirectory ? (
+          props.row.isOpen ? (
+            <ChevronDown size={FILE_ICON_SIZE} className="tree-arrow" />
+          ) : (
+            <ChevronRight size={FILE_ICON_SIZE} className="tree-arrow" />
+          )
+        ) : (
+          <span className="tree-spacer" />
+        )}
+      </span>
+
+      <span className="file-type-icon">
+        {props.row.isDirectory ? (
+          props.row.isOpen ? <FolderOpen size={FILE_ICON_SIZE} className="file-icon folder-icon" /> : <Folder size={FILE_ICON_SIZE} className="file-icon folder-icon" />
+        ) : (
+          renderFileIcon(props.row.entry.name)
+        )}
+      </span>
+
+      <span className="file-name">{props.row.entry.name}</span>
+    </div>
+  );
+});
 
 export function FileTree({
   parentPath,
@@ -310,77 +417,95 @@ export function FileTree({
   onToggleDirectory,
   onOpenFile,
 }: FileTreeProps) {
-  const entries = directoryCache[parentPath] || [];
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const scrollFrameRef = useRef<number | null>(null);
 
-  const sortedEntries = [...entries].sort((a, b) => {
-    const aIsDirectory = a.type === "directory";
-    const bIsDirectory = b.type === "directory";
-    if (aIsDirectory === bIsDirectory) {
-      return a.name.localeCompare(b.name);
+  const rows = useMemo(() => {
+    const next: FlatTreeRow[] = [];
+    collectVisibleRows(parentPath, 0, directoryCache, openDirectories, currentFile, next);
+    return next;
+  }, [parentPath, directoryCache, openDirectories, currentFile]);
+
+  const totalHeight = rows.length * FILE_TREE_ROW_HEIGHT;
+
+  const refreshViewport = useCallback(() => {
+    const node = viewportRef.current;
+    if (!node) return;
+    const nextTop = node.scrollTop;
+    const nextHeight = node.clientHeight;
+    setScrollTop((prev) => (Math.abs(prev - nextTop) < 1 ? prev : nextTop));
+    setViewportHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+  }, []);
+
+  const onScroll = useCallback(() => {
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      refreshViewport();
+    });
+  }, [refreshViewport]);
+
+  useEffect(() => {
+    refreshViewport();
+  }, [refreshViewport]);
+
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      refreshViewport();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [refreshViewport]);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
     }
-    return aIsDirectory ? -1 : 1;
-  });
+  }, []);
+
+  const visibleRange = useMemo(() => {
+    if (rows.length === 0) return { start: 0, end: 0 };
+    if (viewportHeight <= 0) {
+      return {
+        start: Math.max(0, rows.length - 100),
+        end: rows.length,
+      };
+    }
+    const start = Math.max(0, Math.floor(scrollTop / FILE_TREE_ROW_HEIGHT) - FILE_TREE_OVERSCAN_ROWS);
+    const end = Math.min(
+      rows.length,
+      Math.ceil((scrollTop + viewportHeight) / FILE_TREE_ROW_HEIGHT) + FILE_TREE_OVERSCAN_ROWS,
+    );
+    return { start, end };
+  }, [rows.length, scrollTop, viewportHeight]);
+
+  const visibleRows = useMemo(
+    () => rows.slice(visibleRange.start, visibleRange.end),
+    [rows, visibleRange.end, visibleRange.start],
+  );
 
   return (
-    <div className="file-tree-list">
-      {sortedEntries.map((entry) => {
-        const entryPath = entry.relativePath;
-        const isDirectory = entry.type === "directory";
-        const isOpen = isDirectory ? openDirectories.has(entryPath) : false;
-        const isSelected = currentFile === entryPath;
-
-        return (
-          <div key={entryPath || entry.name} className="file-tree-item-container">
-            <div
-              className={`file-tree-row ${isSelected ? "selected" : ""}`}
-              onClick={() => {
-                if (isDirectory) {
-                  onToggleDirectory(entryPath);
-                } else {
-                  onOpenFile(entryPath);
-                }
-              }}
-            >
-              <span className="file-tree-indent-guide" />
-
-              <span className="file-icon-container">
-                {isDirectory ? (
-                  isOpen ? (
-                    <ChevronDown size={FILE_ICON_SIZE} className="tree-arrow" />
-                  ) : (
-                    <ChevronRight size={FILE_ICON_SIZE} className="tree-arrow" />
-                  )
-                ) : (
-                  <span className="tree-spacer" />
-                )}
-              </span>
-
-              <span className="file-type-icon">
-                {isDirectory ? (
-                  isOpen ? <FolderOpen size={FILE_ICON_SIZE} className="file-icon folder-icon" /> : <Folder size={FILE_ICON_SIZE} className="file-icon folder-icon" />
-                ) : (
-                  getFileIcon(entry.name)
-                )}
-              </span>
-
-              <span className="file-name">{entry.name}</span>
-            </div>
-
-            {isDirectory && isOpen && (
-              <div className="file-tree-children">
-                <FileTree
-                  parentPath={entryPath}
-                  directoryCache={directoryCache}
-                  openDirectories={openDirectories}
-                  currentFile={currentFile}
-                  onToggleDirectory={onToggleDirectory}
-                  onOpenFile={onOpenFile}
-                />
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div className="file-tree-viewport" ref={viewportRef} onScroll={onScroll}>
+      <div className="file-tree-list file-tree-virtual" style={{ height: `${totalHeight}px` }}>
+        {visibleRows.map((row, index) => {
+          const absoluteIndex = visibleRange.start + index;
+          const top = absoluteIndex * FILE_TREE_ROW_HEIGHT;
+          return (
+            <FileTreeRow
+              key={row.entry.relativePath || row.entry.name}
+              row={row}
+              top={top}
+              onToggleDirectory={onToggleDirectory}
+              onOpenFile={onOpenFile}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

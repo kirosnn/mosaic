@@ -212,7 +212,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
       : null;
     const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
-    const shouldPadMessage = (messageRole === 'user' || messageRole === 'slash')
+    const shouldPadMessage = ((messageRole === 'user' || messageRole === 'slash') || (messageRole === 'assistant' && message.isError))
       && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
       && !compactTool;
 

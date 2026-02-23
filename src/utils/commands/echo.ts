@@ -24,10 +24,10 @@ export const echoCommand: Command = {
           content: 'Error: /echo error requires a message. Usage: /echo error <message>'
         };
       }
-      const banner = `Test error\n${text}`;
+      const banner = `echo error ${text}`;
       return {
         success: false,
-        content: `Test error: ${text}`,
+        content: '',
         errorBanner: banner,
         shouldAddToHistory: false
       };

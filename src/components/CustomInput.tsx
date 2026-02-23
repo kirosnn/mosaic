@@ -32,6 +32,8 @@ interface SlashCompletionItem {
   kind: 'command' | 'skill'
 }
 
+const ENABLE_TUI_COMPLETIONS = false
+
 function parseSlashInput(input: string): { prefix: string; query: string; suffix: string } | null {
   const match = input.match(/^(\s*\/)([^\s]*)([\s\S]*)$/)
   if (!match) return null
@@ -76,7 +78,7 @@ function buildSlashCompletions(input: string): SlashCompletionItem[] {
       if (a.kind !== b.kind) return a.kind === 'command' ? -1 : 1
       return a.token.localeCompare(b.token)
     })
-    .slice(0, 6)
+    .slice(0, 30)
     .map(({ token, kind }) => ({ token, kind }))
 }
 
@@ -102,6 +104,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const [currentInput, setCurrentInput] = useState('')
   const [inputHistory, setInputHistory] = useState<string[]>([])
   const [completionIndex, setCompletionIndex] = useState(0)
+  const [hoveredCompletionToken, setHoveredCompletionToken] = useState<string | null>(null)
 
   const pasteFlagRef = useRef(false)
   const pastedContentRef = useRef('')
@@ -116,9 +119,10 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const selectionStartRef = useRef<number | null>(selectionStart)
   const selectionEndRef = useRef<number | null>(selectionEnd)
   const initialValueRef = useRef(initialValue ?? '')
+  const completionScrollboxRef = useRef<any>(null)
 
   const renderer = useRenderer()
-  const completions = buildSlashCompletions(value)
+  const completions = ENABLE_TUI_COMPLETIONS ? buildSlashCompletions(value) : []
   const completionKey = completions.map((item) => item.token).join('|')
 
   useEffect(() => {
@@ -127,7 +131,15 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
 
   useEffect(() => {
     setCompletionIndex(0)
+    setHoveredCompletionToken(null)
   }, [completionKey])
+
+  useEffect(() => {
+    if (completionIndex < 0 || completionIndex >= completions.length) return
+    const scrollbox = completionScrollboxRef.current
+    if (!scrollbox || typeof scrollbox.scrollTo !== 'function') return
+    scrollbox.scrollTo(completionIndex)
+  }, [completionIndex, completions.length])
 
   useEffect(() => {
     if (initialValue === undefined) return
@@ -448,10 +460,6 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setSelectionEnd(null)
         setHistoryIndex(-1)
         desiredCursorColRef.current = null
-        setCompletionIndex((prev) => {
-          if (total <= 1) return 0
-          return prev >= total - 1 ? 0 : prev + 1
-        })
       }
       return
     }
@@ -513,6 +521,13 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setValue(prev => prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1))
       }
     } else if (key.name === 'up') {
+      if (completions.length > 0) {
+        setCompletionIndex((prev) => {
+          if (completions.length <= 1) return 0
+          return prev <= 0 ? completions.length - 1 : prev - 1
+        })
+        return
+      }
       const lineWidth = Math.max(10, terminalWidth - 4)
       const { lineLengths, cursorLine: currentCursorLine, cursorCol: currentCursorCol, lineStarts } = wrapTextWithCursor(value, cursorPosition, lineWidth)
       if (currentCursorLine > 0) {
@@ -552,6 +567,13 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
         setSelectionEnd(null)
       }
     } else if (key.name === 'down') {
+      if (completions.length > 0) {
+        setCompletionIndex((prev) => {
+          if (completions.length <= 1) return 0
+          return prev >= completions.length - 1 ? 0 : prev + 1
+        })
+        return
+      }
       const lineWidth = Math.max(10, terminalWidth - 4)
       const { lineLengths, cursorLine: currentCursorLine, cursorCol: currentCursorCol, lineStarts } = wrapTextWithCursor(value, cursorPosition, lineWidth)
       if (currentCursorLine < lineStarts.length - 1) {
@@ -747,13 +769,34 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
           <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
             <text attributes={TextAttributes.BOLD}>Completions</text>
             <box flexDirection="row">
-              <text fg="white">tab </text>
-              <text attributes={TextAttributes.DIM}>next</text>
+              <text fg="white">↑↓ </text>
+              <text attributes={TextAttributes.DIM}>select</text>
+              <text fg="white">  tab </text>
+              <text attributes={TextAttributes.DIM}>apply</text>
             </box>
           </box>
-          <box flexDirection="column" width="100%">
+          <scrollbox
+            ref={completionScrollboxRef}
+            flexDirection="column"
+            width="100%"
+            height={Math.min(8, Math.max(3, completions.length))}
+            verticalScrollbarOptions={{
+              showArrows: false,
+              trackOptions: {
+                backgroundColor: "#1f1f1f",
+                foregroundColor: "#383838",
+              },
+            }}
+            horizontalScrollbarOptions={{
+              showArrows: false,
+              trackOptions: {
+                backgroundColor: "#141414",
+                foregroundColor: "#141414",
+              },
+            }}
+          >
             {completions.map((item, index) => {
-              const active = index === completionIndex
+              const active = index === completionIndex || hoveredCompletionToken === item.token
               return (
                 <box
                   key={`completion-${item.token}-${index}`}
@@ -762,13 +805,30 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
                   backgroundColor={active ? "#2a2a2a" : "transparent"}
                   paddingLeft={1}
                   paddingRight={1}
+                  onMouseOver={() => {
+                    setHoveredCompletionToken(item.token)
+                    setCompletionIndex(index)
+                  }}
+                  onMouseOut={() => {
+                    setHoveredCompletionToken((prev) => (prev === item.token ? null : prev))
+                  }}
+                  onMouseDown={(event: any) => {
+                    event?.stopPropagation?.()
+                    const nextValue = applySlashCompletion(valueRef.current, item.token)
+                    setValue(nextValue)
+                    setCursorPosition(nextValue.length)
+                    setSelectionStart(null)
+                    setSelectionEnd(null)
+                    setHistoryIndex(-1)
+                    desiredCursorColRef.current = null
+                  }}
                 >
                   <text fg="#ffca38">{'\u203A'} </text>
                   <text>{`/${item.token}`}</text>
                 </box>
               )
             })}
-          </box>
+          </scrollbox>
         </box>
       )}
     </box>

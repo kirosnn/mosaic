@@ -19,6 +19,9 @@ export interface WorkspacePickResponse extends WorkspaceResponse {
 export interface ReadFileResponse {
   relativePath: string;
   content: string;
+  truncated?: boolean;
+  totalBytes?: number;
+  previewBytes?: number;
 }
 
 export interface EditorStatus {
@@ -132,7 +135,7 @@ export interface DesktopApi {
   setWindowTheme: (theme: Theme) => void;
   getPreferences: () => Promise<UserPreferences>;
   setPreferences: (patch: UserPreferencesPatch) => Promise<UserPreferences>;
-  getUiConstants: () => Promise<{ topbarHeight: number }>;
+  getUiConstants: () => Promise<{ topbarHeight: number; isDev?: boolean }>;
   getWorkspace: () => Promise<WorkspaceResponse>;
   pickWorkspace: () => Promise<WorkspacePickResponse>;
   readDir: (relativePath: string) => Promise<FsEntry[]>;

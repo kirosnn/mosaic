@@ -42,7 +42,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [currentTokens, setCurrentTokens] = useState(0);
   const [tokenBreakdown, setTokenBreakdown] = useState<TokenBreakdown>({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
-  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatError, setChatErrorState] = useState<string | null>(null);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24);
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
@@ -91,6 +91,20 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (normalized.length <= max) return normalized;
     return `${normalized.slice(0, Math.max(0, max - 3))}...`;
   };
+
+  function setChatError(value: string | null) {
+    setChatErrorState(value);
+    if (!value) return;
+    const text = value.trim();
+    if (!text) return;
+    const message: Message = {
+      id: createId(),
+      role: "assistant",
+      content: text,
+      isError: true,
+    };
+    setMessages((prev: Message[]) => [...prev, message]);
+  }
 
   useEffect(() => {
     initializeCommands();
@@ -599,7 +613,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
         baseMessages,
         userMessage: userMessageForAgent,
         conversationHistory: convHistory,
-        abortMessage: "Generation aborted. What should Mosaic do instead ?",
+        abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
         userStepContent: composedShellContent,
         autoCompact: true,
       }, getStreamCallbacks());
@@ -693,7 +707,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
             baseMessages,
             userMessage,
             conversationHistory: convHistory,
-            abortMessage: "Request interrupted by user. \n\u21AA What should Mosaic do instead?",
+            abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
             userStepContent: result.content,
             autoCompact: false,
           }, getStreamCallbacks());
@@ -747,7 +761,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
       baseMessages,
       userMessage,
       conversationHistory: convHistory,
-      abortMessage: "Generation aborted. What should Mosaic do instead ?",
+      abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
       userStepContent: composedContent,
       userStepImages: imagesForMessage.length > 0 ? imagesForMessage : undefined,
       autoCompact: true,

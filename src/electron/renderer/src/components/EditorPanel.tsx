@@ -1,9 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { X, Info } from "lucide-react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneLight, vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { getMediaKind } from "../mediaPreview";
 import type { FsEntry } from "../types";
 import { FileTree } from "./FileTree";
@@ -74,6 +72,14 @@ const LANGUAGE_BY_FILENAME: Record<string, string> = {
   ".gitignore": "git",
   ".gitattributes": "git",
 };
+const MAX_HIGHLIGHT_BYTES = 320 * 1024;
+const MAX_HIGHLIGHT_LINES = 6000;
+
+interface SyntaxBundle {
+  component: React.ComponentType<any>;
+  lightStyle: Record<string, unknown>;
+  darkStyle: Record<string, unknown>;
+}
 
 function getCodeLanguage(filePath: string): string {
   if (!filePath) return "text";
@@ -86,23 +92,37 @@ function getCodeLanguage(filePath: string): string {
   return LANGUAGE_BY_EXTENSION[ext] ?? "text";
 }
 
+export interface HighlightedCodeSelection {
+  lineNumbers: number[];
+}
+
 interface EditorPanelProps {
   currentFile: string;
   editorValue: string;
+  logoSrc: string;
   workspaceRoot: string;
   directoryCache: Record<string, FsEntry[]>;
   openDirectories: Set<string>;
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onCloseFile: () => void;
+  onHighlightedCodeChange: (selection: HighlightedCodeSelection) => void;
 }
 
-export function EditorPanel(props: EditorPanelProps) {
+function EditorPanelComponent(props: EditorPanelProps) {
   const mediaKind = useMemo(() => getMediaKind(props.currentFile), [props.currentFile]);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [syntaxBundle, setSyntaxBundle] = useState<SyntaxBundle | null>(null);
+  const [syntaxLoadFailed, setSyntaxLoadFailed] = useState(false);
+  const highlightedLinesRef = useRef<Set<number>>(new Set());
   const codeLanguage = useMemo(() => getCodeLanguage(props.currentFile), [props.currentFile]);
   const activeTheme = document.documentElement.getAttribute("data-theme");
-  const syntaxTheme = activeTheme === "light" ? oneLight : vscDarkPlus;
+  const syntaxTheme = activeTheme === "light" ? syntaxBundle?.lightStyle : syntaxBundle?.darkStyle;
+
+  useEffect(() => {
+    highlightedLinesRef.current = new Set();
+    props.onHighlightedCodeChange({ lineNumbers: [] });
+  }, [props.currentFile, props.onHighlightedCodeChange]);
 
   const mediaSrc = useMemo(() => {
     if (!props.workspaceRoot || !props.currentFile || !mediaKind) return "";
@@ -115,6 +135,56 @@ export function EditorPanel(props: EditorPanelProps) {
 
   const displayText = props.editorValue ? props.editorValue : "";
   const highlightedSource = displayText.length > 0 ? displayText : " ";
+  const plainTextFallback = useMemo(() => {
+    const lineCount = displayText ? displayText.split(/\r?\n/).length : 0;
+    const byteLength = new TextEncoder().encode(displayText).length;
+    return byteLength > MAX_HIGHLIGHT_BYTES || lineCount > MAX_HIGHLIGHT_LINES;
+  }, [displayText]);
+  const needsSyntaxHighlighter = Boolean(props.currentFile) && !mediaKind && !plainTextFallback;
+
+  useEffect(() => {
+    if (!needsSyntaxHighlighter || syntaxBundle || syntaxLoadFailed) return;
+    let cancelled = false;
+
+    void Promise.all([
+      import("react-syntax-highlighter"),
+      import("react-syntax-highlighter/dist/cjs/styles/prism"),
+    ])
+      .then(([highlighterModule, stylesModule]) => {
+        if (cancelled) return;
+
+        const component =
+          (highlighterModule as { Prism?: unknown }).Prism ||
+          (highlighterModule as { default?: { Prism?: unknown } }).default?.Prism ||
+          (highlighterModule as { default?: unknown }).default;
+        const lightStyle =
+          (stylesModule as { oneLight?: Record<string, unknown> }).oneLight ||
+          (stylesModule as { default?: { oneLight?: Record<string, unknown> } }).default?.oneLight;
+        const darkStyle =
+          (stylesModule as { vscDarkPlus?: Record<string, unknown> }).vscDarkPlus ||
+          (stylesModule as { default?: { vscDarkPlus?: Record<string, unknown> } }).default?.vscDarkPlus;
+
+        if (typeof component !== "function" || !lightStyle || !darkStyle) {
+          setSyntaxLoadFailed(true);
+          return;
+        }
+
+        setSyntaxBundle({
+          component: component as React.ComponentType<any>,
+          lightStyle,
+          darkStyle,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSyntaxLoadFailed(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [needsSyntaxHighlighter, syntaxBundle, syntaxLoadFailed]);
 
   const fileName = props.currentFile ? path.basename(props.currentFile) : "";
 
@@ -155,43 +225,69 @@ export function EditorPanel(props: EditorPanelProps) {
               </div>
             ) : props.currentFile ? (
               <div className="code-preview-shell">
-                {React.createElement(
-                  SyntaxHighlighter as any,
-                  {
-                    className: "code-preview-highlighter",
-                    language: codeLanguage,
-                    style: syntaxTheme,
-                    showLineNumbers: true,
-                    wrapLongLines: false,
-                    wrapLines: true,
-                    lineProps: () => ({ className: "code-preview-line" }),
-                    customStyle: {
-                      margin: 0,
-                      padding: "16px",
-                      minHeight: "100%",
-                      whiteSpace: "pre",
-                      background: "transparent",
-                      fontFamily: "\"JetBrains Mono\", \"Consolas\", monospace",
-                      fontSize: "13px",
-                      lineHeight: "1.5",
-                    },
-                    lineNumberStyle: {
-                      minWidth: "38px",
-                      marginRight: "12px",
-                      textAlign: "right",
-                      color: "var(--editor-gutter-text)",
-                      userSelect: "none",
-                    },
-                    codeTagProps: {
-                      style: {
+                {plainTextFallback || !syntaxBundle || !syntaxTheme ? (
+                  <pre className="code-preview-plain">{displayText || " "}</pre>
+                ) : (
+                  React.createElement(
+                    syntaxBundle.component as any,
+                    {
+                      className: "code-preview-highlighter",
+                      language: codeLanguage,
+                      style: syntaxTheme,
+                      showLineNumbers: true,
+                      wrapLongLines: false,
+                      wrapLines: true,
+                      lineProps: (lineNumber: number) => ({
+                        className: highlightedLinesRef.current.has(lineNumber)
+                          ? "code-preview-line code-preview-line-highlighted"
+                          : "code-preview-line",
+                        onClick: (event: React.MouseEvent<HTMLElement>) => {
+                          const next = highlightedLinesRef.current;
+                          const isHighlighted = next.has(lineNumber);
+                          if (isHighlighted) {
+                            next.delete(lineNumber);
+                          } else {
+                            next.add(lineNumber);
+                          }
+                          event.currentTarget.classList.toggle("code-preview-line-highlighted", !isHighlighted);
+                          props.onHighlightedCodeChange({
+                            lineNumbers: Array.from(next).sort((a, b) => a - b),
+                          });
+                        },
+                      }),
+                      customStyle: {
+                        margin: 0,
+                        padding: "16px",
+                        minHeight: "100%",
+                        whiteSpace: "pre",
+                        background: "transparent",
                         fontFamily: "\"JetBrains Mono\", \"Consolas\", monospace",
+                        fontSize: "13px",
+                        lineHeight: "1.5",
+                      },
+                      lineNumberStyle: {
+                        minWidth: "38px",
+                        marginRight: "12px",
+                        textAlign: "right",
+                        color: "var(--editor-gutter-text)",
+                        userSelect: "none",
+                      },
+                      codeTagProps: {
+                        style: {
+                          fontFamily: "\"JetBrains Mono\", \"Consolas\", monospace",
+                        },
                       },
                     },
-                  },
-                  highlightedSource
+                    highlightedSource
+                  )
                 )}
               </div>
-            ) : null}
+            ) : (
+              <div className="editor-empty-state">
+                <img className="editor-empty-logo" src={props.logoSrc} alt="Mosaic logo" />
+                <p>No file is open.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -228,3 +324,5 @@ export function EditorPanel(props: EditorPanelProps) {
     </section>
   );
 }
+
+export const EditorPanel = memo(EditorPanelComponent);

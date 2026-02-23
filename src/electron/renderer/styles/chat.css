@@ -10,20 +10,29 @@
   min-height: 0;
   overflow: auto;
   padding: 24px 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 24px;
+}
+
+.chat-log-virtual {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
 }
 
 .chat-item {
   width: 100%;
-  max-width: 600px;
+  max-width: none;
   padding: 16px 20px;
   border-radius: 16px;
   border: none;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.chat-log-row {
+  position: absolute;
+  left: 0;
+  right: 0;
 }
 
 .chat-item.user {
@@ -69,6 +78,10 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
+}
+
+.chat-error-line:hover {
+  cursor: default;
 }
 
 .chat-error-bullet {
@@ -155,23 +168,17 @@
   color: var(--text-1);
 }
 
-.composer {
-  border-top: none;
-  padding: 10px 16px 20px;
-  display: flex;
-  justify-content: center;
-}
-
 .chat-input-wrapper {
   display: flex;
   flex-direction: column;
-  background: var(--chat-user-bg);
   border-radius: 16px;
-  padding: 8px 10px;
-  width: 100%;
-  max-width: 600px;
-  min-height: 80px;
+  padding: 8px 12px;
+  margin: 0 16px 20px;
   border: 1px solid var(--chat-user-border);
+  background: var(--panel-bg);
+  max-width: 600px;
+  align-self: center;
+  width: calc(100% - 32px);
 }
 
 .chat-input {
@@ -187,6 +194,7 @@
   font-size: 13px;
   color: var(--text-1);
   background: var(--transparent);
+  background-color: transparent;
   line-height: 1.5;
   outline: none;
 }

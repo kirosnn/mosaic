@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Profiler, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentPanel } from "./components/AgentPanel";
-import { EditorPanel } from "./components/EditorPanel";
+import { EditorPanel, type HighlightedCodeSelection } from "./components/EditorPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -24,6 +24,80 @@ type PendingToolCall = {
   toolName: string;
   toolArgs: Record<string, unknown>;
 };
+const COMMAND_CATALOG_TTL_MS = 5000;
+const COMMAND_COMPLETION_DEBOUNCE_MS = 70;
+const FS_CHANGE_DEBOUNCE_MS = 140;
+const FS_CHANGE_FULL_REFRESH_TOKEN = "__full__";
+const CHAT_AUTO_SCROLL_NEAR_BOTTOM_PX = 120;
+const PERF_LOG_INTERVAL_MS = 10_000;
+const PERF_SAMPLE_LIMIT = 240;
+
+function createEmptyHighlightedCode(): HighlightedCodeSelection {
+  return {
+    lineNumbers: [],
+  };
+}
+
+function sanitizeHighlightedLineNumbers(lineNumbers: number[], lineCount: number): number[] {
+  if (lineCount <= 0) return [];
+  return Array.from(new Set(lineNumbers))
+    .filter((lineNumber) => Number.isInteger(lineNumber) && lineNumber > 0 && lineNumber <= lineCount)
+    .sort((a, b) => a - b);
+}
+
+function buildPromptWithHighlightedCode(
+  prompt: string,
+  currentFile: string,
+  editorValue: string,
+  highlightedCode: HighlightedCodeSelection,
+): string {
+  const normalizedPrompt = String(prompt || "").trim();
+  if (!normalizedPrompt) return "";
+  if (!currentFile || !editorValue || highlightedCode.lineNumbers.length === 0) return normalizedPrompt;
+
+  const contentLines = editorValue.split(/\r?\n/);
+  const validLines = sanitizeHighlightedLineNumbers(highlightedCode.lineNumbers, contentLines.length);
+  if (validLines.length === 0) return normalizedPrompt;
+
+  const sections: string[] = [];
+  let startLine = validLines[0]!;
+  let endLine = validLines[0]!;
+
+  const pushSection = () => {
+    const label = startLine === endLine ? `Line ${startLine}` : `Lines ${startLine}-${endLine}`;
+    const content = contentLines.slice(startLine - 1, endLine).join("\n");
+    sections.push(`${label}\n\`\`\`\n${content}\n\`\`\``);
+  };
+
+  for (let index = 1; index < validLines.length; index += 1) {
+    const current = validLines[index]!;
+    if (current === endLine + 1) {
+      endLine = current;
+      continue;
+    }
+    pushSection();
+    startLine = current;
+    endLine = current;
+  }
+
+  pushSection();
+
+  return `${normalizedPrompt}\n\nSelected code from ${currentFile}:\n${sections.join("\n\n")}`;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function computePercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * percentile)));
+  return sorted[index] ?? 0;
+}
 
 function shouldShowRunningTool(toolName: string): boolean {
   return toolName === "explore" || toolName.startsWith("mcp__");
@@ -105,17 +179,31 @@ export function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [commandCatalog, setCommandCatalog] = useState<CommandCatalogResponse | null>(null);
+  const [commandCompletions, setCommandCompletions] = useState<CommandCompletionItem[]>([]);
   const [activeRequestId, setActiveRequestId] = useState("");
   const [activeAssistantId, setActiveAssistantId] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [isDevMode, setIsDevMode] = useState(false);
 
   const activeRequestIdRef = useRef("");
   const activeAssistantIdRef = useRef("");
   const pendingToolCallsRef = useRef<Map<string, PendingToolCall>>(new Map());
+  const highlightedCodeRef = useRef<HighlightedCodeSelection>(createEmptyHighlightedCode());
+  const pendingAssistantDeltaRef = useRef("");
+  const assistantDeltaFrameRef = useRef<number | null>(null);
+  const commandCatalogRef = useRef<CommandCatalogResponse | null>(null);
+  const commandCatalogFetchedAtRef = useRef(0);
+  const commandCompletionTimerRef = useRef<number | null>(null);
+  const currentFileRef = useRef("");
+  const pendingFsChangesRef = useRef<Set<string>>(new Set());
+  const fsChangeFlushTimerRef = useRef<number | null>(null);
+  const fsChangeFlushRunningRef = useRef(false);
+  const chatAutoScrollFrameRef = useRef<number | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const preferencesLoadedRef = useRef(false);
+  const perfSamplesRef = useRef<Record<string, number[]>>({});
 
   useEffect(() => {
     directoryCacheRef.current = directoryCache;
@@ -129,24 +217,100 @@ export function App() {
     activeAssistantIdRef.current = activeAssistantId;
   }, [activeAssistantId]);
 
+  useEffect(() => {
+    currentFileRef.current = currentFile;
+  }, [currentFile]);
+
+  useEffect(() => {
+    commandCatalogRef.current = commandCatalog;
+  }, [commandCatalog]);
+
   const chatRunning = useMemo(() => Boolean(activeRequestId), [activeRequestId]);
   const themeLabel = useMemo(() => getThemeLabel(theme), [theme]);
   const logoSrc = useMemo(() => getLogoSrc(theme), [theme]);
-  const commandCompletions = useMemo(
-    () => computeCommandCompletions(chatInput, commandCatalog),
-    [chatInput, commandCatalog],
-  );
 
   const setStatus = useCallback((text: string, error = false) => {
     setEditorStatus({ text, error });
   }, []);
 
-  const refreshCommandCatalog = useCallback(async () => {
+  const recordPerfSample = useCallback((metric: string, durationMs: number) => {
+    if (!isDevMode) return;
+    if (!Number.isFinite(durationMs) || durationMs < 0) return;
+    const bucket = perfSamplesRef.current[metric] ?? [];
+    bucket.push(durationMs);
+    if (bucket.length > PERF_SAMPLE_LIMIT) {
+      bucket.splice(0, bucket.length - PERF_SAMPLE_LIMIT);
+    }
+    perfSamplesRef.current[metric] = bucket;
+  }, [isDevMode]);
+
+  const logPerfSummary = useCallback(() => {
+    if (!isDevMode) return;
+    const entries = Object.entries(perfSamplesRef.current).filter((entry) => entry[1].length > 0);
+    if (entries.length === 0) return;
+    const summary = entries
+      .map(([metric, values]) => {
+        const p50 = computePercentile(values, 0.5);
+        const p95 = computePercentile(values, 0.95);
+        return `${metric} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms n=${values.length}`;
+      })
+      .join(" | ");
+    console.log(`[renderer perf] ${summary}`);
+  }, [isDevMode]);
+
+  useEffect(() => {
+    if (!isDevMode) return;
+    const intervalId = window.setInterval(() => {
+      logPerfSummary();
+    }, PERF_LOG_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isDevMode, logPerfSummary]);
+
+  const clearCommandCompletionTimer = useCallback(() => {
+    if (commandCompletionTimerRef.current !== null) {
+      window.clearTimeout(commandCompletionTimerRef.current);
+      commandCompletionTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    clearCommandCompletionTimer();
+    if (!chatInput.trimStart().startsWith("/")) {
+      setCommandCompletions([]);
+      return clearCommandCompletionTimer;
+    }
+    commandCompletionTimerRef.current = window.setTimeout(() => {
+      commandCompletionTimerRef.current = null;
+      setCommandCompletions(computeCommandCompletions(chatInput, commandCatalog));
+    }, COMMAND_COMPLETION_DEBOUNCE_MS);
+    return clearCommandCompletionTimer;
+  }, [chatInput, commandCatalog, clearCommandCompletionTimer]);
+
+  const handleAgentPanelRender: React.ProfilerOnRenderCallback = useCallback(
+    (_id, _phase, actualDuration) => {
+      recordPerfSample("chat.render", actualDuration);
+    },
+    [recordPerfSample],
+  );
+
+  const refreshCommandCatalog = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && commandCatalogRef.current && now - commandCatalogFetchedAtRef.current < COMMAND_CATALOG_TTL_MS) {
+      return commandCatalogRef.current;
+    }
     try {
       const catalog = await api.getCommandCatalog();
+      commandCatalogFetchedAtRef.current = Date.now();
+      commandCatalogRef.current = catalog;
       setCommandCatalog(catalog);
+      return catalog;
     } catch {
+      commandCatalogFetchedAtRef.current = 0;
+      commandCatalogRef.current = null;
       setCommandCatalog(null);
+      return null;
     }
   }, []);
 
@@ -198,6 +362,9 @@ export function App() {
         if (value) {
           document.documentElement.style.setProperty("--topbar-height", value);
         }
+        if (typeof constants?.isDev === "boolean") {
+          setIsDevMode(constants.isDev);
+        }
       } catch {
       }
     };
@@ -211,49 +378,99 @@ export function App() {
     setDirectoryCache((prev) => ({ ...prev, [normalized]: Array.isArray(entries) ? entries : [] }));
   }, []);
 
-  const refreshTree = useCallback(async () => {
-    setDirectoryCache({});
-    directoryCacheRef.current = {};
-    setOpenDirectories(new Set([""]));
+  const refreshTree = useCallback(async (resetOpenDirectories = false) => {
     const rootEntries = await api.readDir("");
-    setDirectoryCache({ "": rootEntries });
+    setDirectoryCache((prev) => ({ ...prev, "": rootEntries }));
+    if (resetOpenDirectories) {
+      setOpenDirectories(new Set([""]));
+    }
   }, []);
+
+  const refreshLoadedDirectories = useCallback(async () => {
+    const loadedPaths = Object.keys(directoryCacheRef.current);
+    if (loadedPaths.length === 0) {
+      await refreshTree();
+      return;
+    }
+
+    const entriesByPath = await Promise.all(
+      loadedPaths.map(async (relativePath) => {
+        try {
+          const entries = await api.readDir(relativePath);
+          return { relativePath, entries: Array.isArray(entries) ? entries : [] as FsEntry[] };
+        } catch {
+          return { relativePath, entries: [] as FsEntry[] };
+        }
+      })
+    );
+
+    setDirectoryCache((prev) => {
+      const next = { ...prev };
+      for (const entry of entriesByPath) {
+        next[entry.relativePath] = entry.entries;
+      }
+      return next;
+    });
+  }, [refreshTree]);
 
   const openFile = useCallback(async (relativePath: string) => {
     const normalized = normalizeRelative(relativePath);
     if (!normalized) return;
+    const startedAt = performance.now();
     setCurrentFile(normalized);
     setPreviewOpen(true);
     if (getMediaKind(normalized)) {
       setEditorValue("");
       setStatus("File loaded");
+      window.requestAnimationFrame(() => {
+        recordPerfSample("file.open", performance.now() - startedAt);
+      });
       return;
     }
     try {
       const file = await api.readFile(normalized);
       setCurrentFile(normalizeRelative(file.relativePath));
       setEditorValue(file.content);
-      setStatus("File loaded");
+      if (file.truncated) {
+        const previewBytes = typeof file.previewBytes === "number" ? file.previewBytes : file.content.length;
+        const totalBytes = typeof file.totalBytes === "number" ? file.totalBytes : previewBytes;
+        setStatus(`File loaded (preview ${formatBytes(previewBytes)} of ${formatBytes(totalBytes)})`);
+      } else {
+        setStatus("File loaded");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Cannot open file";
       setStatus(message, true);
+    } finally {
+      window.requestAnimationFrame(() => {
+        recordPerfSample("file.open", performance.now() - startedAt);
+      });
     }
-  }, [setStatus]);
+  }, [recordPerfSample, setStatus]);
 
   const closeCurrentFile = useCallback(() => {
     setCurrentFile("");
     setEditorValue("");
+    highlightedCodeRef.current = createEmptyHighlightedCode();
     setStatus("Ready");
   }, [setStatus]);
 
+  const handleHighlightedCodeChange = useCallback((selection: HighlightedCodeSelection) => {
+    highlightedCodeRef.current = selection;
+  }, []);
+
   const toggleDirectory = useCallback(async (relativePath: string) => {
     const normalized = normalizeRelative(relativePath);
+    const startedAt = performance.now();
     const isOpen = openDirectories.has(normalized);
     if (isOpen) {
       setOpenDirectories((prev) => {
         const next = new Set(prev);
         next.delete(normalized);
         return next;
+      });
+      window.requestAnimationFrame(() => {
+        recordPerfSample("explorer.toggle", performance.now() - startedAt);
       });
       return;
     }
@@ -263,9 +480,122 @@ export function App() {
       return next;
     });
     await ensureDirLoaded(normalized);
-  }, [ensureDirLoaded, openDirectories]);
+    window.requestAnimationFrame(() => {
+      recordPerfSample("explorer.toggle", performance.now() - startedAt);
+    });
+  }, [ensureDirLoaded, openDirectories, recordPerfSample]);
+
+  const flushAssistantDelta = useCallback(() => {
+    const chunk = pendingAssistantDeltaRef.current;
+    if (!chunk) return;
+    pendingAssistantDeltaRef.current = "";
+
+    let assistantId = activeAssistantIdRef.current;
+    if (!assistantId) {
+      assistantId = createId("assistant");
+      activeAssistantIdRef.current = assistantId;
+      setActiveAssistantId(assistantId);
+    }
+
+    setChatMessages((prev) => {
+      const index = prev.findIndex((message) => message.id === assistantId);
+      if (index < 0) {
+        return [...prev, { id: assistantId, role: "assistant", content: chunk }];
+      }
+      const next = [...prev];
+      next[index] = { ...next[index]!, content: `${next[index]!.content}${chunk}` };
+      return next;
+    });
+  }, []);
+
+  const scheduleAssistantDeltaFlush = useCallback(() => {
+    if (assistantDeltaFrameRef.current !== null) return;
+    assistantDeltaFrameRef.current = window.requestAnimationFrame(() => {
+      assistantDeltaFrameRef.current = null;
+      flushAssistantDelta();
+    });
+  }, [flushAssistantDelta]);
+
+  const resetAssistantDeltaBuffer = useCallback(() => {
+    pendingAssistantDeltaRef.current = "";
+    if (assistantDeltaFrameRef.current !== null) {
+      window.cancelAnimationFrame(assistantDeltaFrameRef.current);
+      assistantDeltaFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    resetAssistantDeltaBuffer();
+  }, [resetAssistantDeltaBuffer]);
+
+  const clearFsFlushTimer = useCallback(() => {
+    if (fsChangeFlushTimerRef.current !== null) {
+      window.clearTimeout(fsChangeFlushTimerRef.current);
+      fsChangeFlushTimerRef.current = null;
+    }
+  }, []);
+
+  const flushQueuedFsChanges = useCallback(async () => {
+    if (fsChangeFlushRunningRef.current) return;
+    fsChangeFlushRunningRef.current = true;
+    clearFsFlushTimer();
+
+    try {
+      while (pendingFsChangesRef.current.size > 0) {
+        const queuedChanges = Array.from(pendingFsChangesRef.current.values());
+        pendingFsChangesRef.current.clear();
+
+        const fullRefresh = queuedChanges.includes(FS_CHANGE_FULL_REFRESH_TOKEN);
+        const changes = fullRefresh
+          ? []
+          : queuedChanges
+              .map((entry) => normalizeRelative(entry))
+              .filter(Boolean);
+        const catalogTouched = changes.some((entry) => entry.toLowerCase().startsWith(".mosaic/skills/"));
+
+        await refreshLoadedDirectories();
+        if (catalogTouched) {
+          await refreshCommandCatalog(true);
+        }
+
+        const activeFile = currentFileRef.current;
+        if (!activeFile) {
+          setStatus("Workspace refreshed");
+          continue;
+        }
+
+        const shouldReloadCurrent = fullRefresh || changes.some((entry) => {
+          return entry === activeFile || entry.startsWith(`${activeFile}/`) || activeFile.startsWith(`${entry}/`);
+        });
+
+        if (shouldReloadCurrent) {
+          await openFile(activeFile);
+          setStatus("File updated from disk");
+        }
+      }
+    } finally {
+      fsChangeFlushRunningRef.current = false;
+      if (pendingFsChangesRef.current.size > 0 && fsChangeFlushTimerRef.current === null) {
+        fsChangeFlushTimerRef.current = window.setTimeout(() => {
+          fsChangeFlushTimerRef.current = null;
+          void flushQueuedFsChanges();
+        }, FS_CHANGE_DEBOUNCE_MS);
+      }
+    }
+  }, [clearFsFlushTimer, openFile, refreshCommandCatalog, refreshLoadedDirectories, setStatus]);
+
+  const scheduleFsFlush = useCallback(() => {
+    clearFsFlushTimer();
+    fsChangeFlushTimerRef.current = window.setTimeout(() => {
+      fsChangeFlushTimerRef.current = null;
+      void flushQueuedFsChanges();
+    }, FS_CHANGE_DEBOUNCE_MS);
+  }, [clearFsFlushTimer, flushQueuedFsChanges]);
+
+  const INTERRUPTED_MESSAGE = "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.";
 
   const finalizeChatRun = useCallback((statusText: string) => {
+    flushAssistantDelta();
     const assistantId = activeAssistantIdRef.current;
     setChatMessages((prev) => {
       const next = [...prev];
@@ -276,19 +606,22 @@ export function App() {
         }
       }
       if (statusText) {
+        const isError = statusText === INTERRUPTED_MESSAGE;
         next.push({
           id: createId("system"),
           role: "system",
           content: statusText,
+          isError,
         });
       }
       return next;
     });
+    resetAssistantDeltaBuffer();
     pendingToolCallsRef.current.clear();
     setActiveRequestId("");
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
-  }, []);
+  }, [flushAssistantDelta, resetAssistantDeltaBuffer]);
 
   const appendChatMessage = useCallback((message: ChatMessage) => {
     setChatMessages((prev) => [...prev, message]);
@@ -377,23 +710,12 @@ export function App() {
     if (event.type === "text-delta") {
       const chunk = event.content ?? "";
       if (!chunk) return;
-      let assistantId = activeAssistantIdRef.current;
-      if (!assistantId) {
-        assistantId = createId("assistant");
-        activeAssistantIdRef.current = assistantId;
-        setActiveAssistantId(assistantId);
-      }
-      setChatMessages((prev) => {
-        const index = prev.findIndex((message) => message.id === assistantId);
-        if (index < 0) {
-          return [...prev, { id: assistantId, role: "assistant", content: chunk }];
-        }
-        const next = [...prev];
-        next[index] = { ...next[index]!, content: `${next[index]!.content}${chunk}` };
-        return next;
-      });
+      pendingAssistantDeltaRef.current += chunk;
+      scheduleAssistantDeltaFlush();
       return;
     }
+
+    flushAssistantDelta();
 
     if (event.type === "tool-call-end") {
       const toolName = typeof event.toolName === "string" && event.toolName ? event.toolName : "tool";
@@ -472,7 +794,7 @@ export function App() {
         isError: true,
       });
     }
-  }, [appendChatMessage, updateChatMessage]);
+  }, [appendChatMessage, flushAssistantDelta, scheduleAssistantDeltaFlush, updateChatMessage]);
 
   const sendChat = useCallback(async () => {
     if (activeRequestIdRef.current) return;
@@ -485,11 +807,18 @@ export function App() {
       return;
     }
 
+    const promptWithHighlightedCode = buildPromptWithHighlightedCode(
+      prompt,
+      currentFile,
+      editorValue,
+      highlightedCodeRef.current,
+    );
     const history = buildAgentHistory(chatMessages);
     const userMessage: ChatMessage = {
       id: createId("user"),
       role: "user",
-      content: prompt,
+      content: promptWithHighlightedCode,
+      displayContent: prompt,
     };
 
     setChatMessages((prev) => [...prev, userMessage]);
@@ -497,7 +826,7 @@ export function App() {
     setActiveAssistantId("");
 
     try {
-      const response = await api.startChat([...history, { role: "user", content: prompt }]);
+      const response = await api.startChat([...history, { role: "user", content: promptWithHighlightedCode }]);
       setActiveRequestId(response.requestId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start chat";
@@ -509,7 +838,7 @@ export function App() {
       });
       finalizeChatRun("");
     }
-  }, [appendChatMessage, chatInput, chatMessages, executeLocalCommand, finalizeChatRun]);
+  }, [appendChatMessage, chatInput, chatMessages, currentFile, editorValue, executeLocalCommand, finalizeChatRun]);
 
   const stopChat = useCallback(async () => {
     const requestId = activeRequestIdRef.current;
@@ -517,18 +846,19 @@ export function App() {
     try {
       await api.cancelChat(requestId);
     } finally {
-      finalizeChatRun("Generation cancelled.");
+      finalizeChatRun("Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.");
     }
   }, [finalizeChatRun]);
 
   const clearChat = useCallback(() => {
     if (activeRequestIdRef.current) return;
+    resetAssistantDeltaBuffer();
     pendingToolCallsRef.current.clear();
     setChatMessages([]);
     setChatInput("");
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
-  }, []);
+  }, [resetAssistantDeltaBuffer]);
 
   const applyCompletion = useCallback((completion: CommandCompletionItem) => {
     setChatInput((prev) => applyCommandCompletion(prev, completion.token));
@@ -540,7 +870,8 @@ export function App() {
     setWorkspaceRoot(result.workspaceRoot ?? "");
     setCurrentFile("");
     setEditorValue("");
-    await refreshTree();
+    highlightedCodeRef.current = createEmptyHighlightedCode();
+    await refreshTree(true);
     setStatus("Workspace changed");
   }, [refreshTree, setStatus]);
 
@@ -572,8 +903,8 @@ export function App() {
       try {
         const workspace = await api.getWorkspace();
         setWorkspaceRoot(workspace.workspaceRoot ?? "");
-        await refreshTree();
-        await refreshCommandCatalog();
+        await refreshTree(true);
+        await refreshCommandCatalog(true);
         setStatus("Ready");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Initialization failed";
@@ -593,6 +924,7 @@ export function App() {
       }
 
       if (payload.type === "error") {
+        flushAssistantDelta();
         appendChatMessage({
           id: createId("system"),
           role: "system",
@@ -607,53 +939,51 @@ export function App() {
       }
 
       if (payload.type === "done") {
-        finalizeChatRun(payload.cancelled ? "Request stopped." : "");
+        flushAssistantDelta();
       }
     });
     return unsubscribe;
-  }, [appendChatMessage, finalizeChatRun, handleAgentEvent]);
+  }, [appendChatMessage, finalizeChatRun, flushAssistantDelta, handleAgentEvent]);
 
   useEffect(() => {
     const unsubscribe = api.onWorkspaceChanged(async (payload) => {
       setWorkspaceRoot(payload.workspaceRoot ?? "");
       setCurrentFile("");
       setEditorValue("");
-      await refreshTree();
-      await refreshCommandCatalog();
+      highlightedCodeRef.current = createEmptyHighlightedCode();
+      await refreshTree(true);
+      await refreshCommandCatalog(true);
       setStatus("Workspace changed");
     });
     return unsubscribe;
   }, [refreshCommandCatalog, refreshTree, setStatus]);
 
   useEffect(() => {
+    if (currentFile) return;
+    highlightedCodeRef.current = createEmptyHighlightedCode();
+  }, [currentFile]);
+
+  useEffect(() => {
     const unsubscribe = api.onFsChanged(async (payload) => {
       const changes = Array.isArray(payload?.changes) ? payload.changes : [];
-      const catalogTouched = changes.some((entry) => {
-        const normalized = normalizeRelative(entry).toLowerCase();
-        return normalized.startsWith(".mosaic/skills/");
-      });
-      await refreshTree();
-      if (catalogTouched) {
-        await refreshCommandCatalog();
+      if (changes.length === 0) {
+        pendingFsChangesRef.current.add(FS_CHANGE_FULL_REFRESH_TOKEN);
+      } else {
+        for (const entry of changes) {
+          const normalized = normalizeRelative(entry);
+          if (normalized) {
+            pendingFsChangesRef.current.add(normalized);
+          }
+        }
       }
-
-      if (!currentFile) {
-        setStatus("Workspace refreshed");
-        return;
-      }
-
-      const shouldReloadCurrent = changes.length === 0 || changes.some((entry) => {
-        const normalized = normalizeRelative(entry);
-        return normalized === currentFile || normalized.startsWith(`${currentFile}/`) || currentFile.startsWith(`${normalized}/`);
-      });
-
-      if (shouldReloadCurrent) {
-        await openFile(currentFile);
-        setStatus("File updated from disk");
-      }
+      scheduleFsFlush();
     });
-    return unsubscribe;
-  }, [currentFile, openFile, refreshCommandCatalog, refreshTree, setStatus]);
+    return () => {
+      unsubscribe();
+      clearFsFlushTimer();
+      pendingFsChangesRef.current.clear();
+    };
+  }, [clearFsFlushTimer, scheduleFsFlush]);
 
   useEffect(() => {
     const unsubscribe = api.onFsWatchError((payload) => {
@@ -666,8 +996,43 @@ export function App() {
   useEffect(() => {
     const chatLog = chatLogRef.current;
     if (!chatLog) return;
-    chatLog.scrollTop = chatLog.scrollHeight;
+    const distanceFromBottom = chatLog.scrollHeight - (chatLog.scrollTop + chatLog.clientHeight);
+    if (distanceFromBottom > CHAT_AUTO_SCROLL_NEAR_BOTTOM_PX) return;
+
+    if (chatAutoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(chatAutoScrollFrameRef.current);
+    }
+    chatAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
+      chatAutoScrollFrameRef.current = null;
+      const target = chatLogRef.current;
+      if (!target) return;
+      target.scrollTop = target.scrollHeight;
+    });
   }, [chatMessages]);
+
+  useEffect(() => () => {
+    if (chatAutoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(chatAutoScrollFrameRef.current);
+      chatAutoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    clearFsFlushTimer();
+    pendingFsChangesRef.current.clear();
+  }, [clearFsFlushTimer]);
+
+  useEffect(() => () => {
+    clearCommandCompletionTimer();
+  }, [clearCommandCompletionTimer]);
+
+  const handleToggleDirectory = useCallback((path: string) => {
+    void toggleDirectory(path);
+  }, [toggleDirectory]);
+
+  const handleOpenFile = useCallback((path: string) => {
+    void openFile(path);
+  }, [openFile]);
 
   return (
     <div className="shell">
@@ -702,34 +1067,34 @@ export function App() {
             <EditorPanel
               currentFile={currentFile}
               editorValue={editorValue}
+              logoSrc={logoSrc}
               workspaceRoot={workspaceRoot}
               directoryCache={directoryCache}
               openDirectories={openDirectories}
-              onToggleDirectory={(path) => {
-                void toggleDirectory(path);
-              }}
-              onOpenFile={(path) => {
-                void openFile(path);
-              }}
+              onToggleDirectory={handleToggleDirectory}
+              onOpenFile={handleOpenFile}
               onCloseFile={closeCurrentFile}
+              onHighlightedCodeChange={handleHighlightedCodeChange}
             />
           )}
-          <AgentPanel
-            messages={chatMessages}
-            inputValue={chatInput}
-            isRunning={chatRunning}
-            chatLogRef={chatLogRef}
-            commandCompletions={commandCompletions}
-            onInputChange={setChatInput}
-            onApplyCompletion={applyCompletion}
-            onSend={() => {
-              void sendChat();
-            }}
-            onStop={() => {
-              void stopChat();
-            }}
-            onClear={clearChat}
-          />
+          <Profiler id="AgentPanel" onRender={handleAgentPanelRender}>
+            <AgentPanel
+              messages={chatMessages}
+              inputValue={chatInput}
+              isRunning={chatRunning}
+              chatLogRef={chatLogRef}
+              commandCompletions={commandCompletions}
+              onInputChange={setChatInput}
+              onApplyCompletion={applyCompletion}
+              onSend={() => {
+                void sendChat();
+              }}
+              onStop={() => {
+                void stopChat();
+              }}
+              onClear={clearChat}
+            />
+          </Profiler>
         </main>
       </div>
       <SettingsModal
