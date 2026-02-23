@@ -2,10 +2,10 @@
   <img src="docs/logo_white.svg" width="200" alt="Mosaic logo" />
 </p>
 
-<h1 align="center">Mosaic CLI</h1>
+<h1 align="center">Mosaic</h1>
 
 <p align="center">
-  <strong>Terminal-first AI coding agent</strong>
+  <strong>Memory-first AI coding agent</strong>
 </p>
 
 <p align="center">
