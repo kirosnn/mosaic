@@ -51,10 +51,12 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
 
   const Line = ({
     color,
+    hasBackground,
     innerWidth,
     text,
   }: {
     color: string;
+    hasBackground: boolean;
     innerWidth: number;
     text: string;
   }) => {
@@ -62,7 +64,7 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     const totalWidth = innerWidth + 2;
 
     return (
-      <box flexDirection="row" backgroundColor="#111010ff" width={totalWidth}>
+      <box flexDirection="row" backgroundColor={hasBackground ? "#111010ff" : "transparent"} width={totalWidth}>
         <text fg={color}>▎ </text>
         <text fg="white">{content}</text>
       </box>
@@ -81,15 +83,16 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     >
       {notifications.map((notification) => {
         const color = getTypeColor(notification.type);
+        const hasBackground = notification.type !== 'error';
 
         const message = notification.message;
         const innerWidth = Math.max(1, message.length + 2);
 
         return (
           <box key={notification.id} flexDirection="column">
-            <Line color={color} innerWidth={innerWidth} text="" />
-            <Line color={color} innerWidth={innerWidth} text={`${message}  `} />
-            <Line color={color} innerWidth={innerWidth} text="" />
+            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text="" />
+            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text={`${message}  `} />
+            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text="" />
           </box>
         );
       })}
