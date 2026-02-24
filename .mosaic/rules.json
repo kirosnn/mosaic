@@ -24,7 +24,8 @@
       "echo Hello *",
       "git remote *",
       "Test-Path .git/MERGE_HEAD *",
-      "Test-Path .git/rebase-apply; *"
+      "Test-Path .git/rebase-apply; *",
+      "$i=0; Get-Content *"
     ]
   }
 }
