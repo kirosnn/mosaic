@@ -232,3 +232,6 @@ Mosaic follows a **modular, tool-driven architecture** with the following key co
 - **User Approval**: Always show a preview of changes before applying them.
 - **Error Handling**: Provide clear, actionable error messages to users.
 - **Performance**: Optimize for terminal responsiveness (e.g., avoid long-running operations).
+
+
+**All tests you have to do, do it in the `tests` dir.**
