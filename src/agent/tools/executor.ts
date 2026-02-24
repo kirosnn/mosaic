@@ -9,14 +9,13 @@ import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import { debugLog } from '../../utils/debug';
 import { addPendingChange, clearPendingChanges, hasPendingChanges, isInReviewMode, startReview } from '../../utils/pendingChangesBridge';
-import { tokenizeCommand } from '../../utils/commandPattern';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 
 const execAsync = promisify(exec);
 
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36';
 const DEFAULT_FETCH_MAX_LENGTH = 10000;
 const DEFAULT_FETCH_TIMEOUT = 30000;
 
@@ -80,73 +79,6 @@ const DANGEROUS_BASH_PATTERNS = [
 ];
 
 const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
-const ASSIGNMENT_TOKEN_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
-const POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS = new Set([
-  'node',
-  'deno',
-  'python',
-  'python3',
-  'ruby',
-  'php',
-  'perl',
-  'bash',
-  'sh',
-  'zsh',
-  'pwsh',
-  'powershell',
-  'cmd',
-  'npm',
-  'npx',
-  'yarn',
-  'pnpm',
-  'bun',
-  'tsc',
-  'eslint',
-  'prettier',
-  'jest',
-  'vitest',
-  'mocha',
-  'cargo',
-  'rustc',
-  'go',
-  'java',
-  'javac',
-  'dotnet',
-  'wget',
-]);
-
-function normalizeCommandName(token: string): string {
-  const lower = token.toLowerCase();
-  const slashIndex = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
-  const basename = slashIndex >= 0 ? lower.slice(slashIndex + 1) : lower;
-  return basename.endsWith('.exe') ? basename.slice(0, -4) : basename;
-}
-
-function getInvokedCommandName(command: string): string {
-  const tokens = tokenizeCommand(command);
-  if (tokens.length === 0) return '';
-  let commandIndex = 0;
-  while (commandIndex < tokens.length && ASSIGNMENT_TOKEN_PATTERN.test(tokens[commandIndex] ?? '')) {
-    commandIndex++;
-  }
-  if (commandIndex >= tokens.length) return '';
-  return normalizeCommandName(tokens[commandIndex] ?? '');
-}
-
-function hasPotentiallyMutatingSafeBashSegment(command: string): boolean {
-  const parsed = splitTopLevelBashSegments(command);
-  if (parsed.hasUnsupportedSyntax || parsed.segments.length === 0) {
-    const commandName = getInvokedCommandName(command);
-    return commandName ? POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS.has(commandName) : false;
-  }
-  for (const segment of parsed.segments) {
-    const commandName = getInvokedCommandName(segment);
-    if (commandName && POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS.has(commandName)) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
@@ -623,7 +555,6 @@ function shouldTrackBashFileChanges(command: string): boolean {
   if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
   if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
   if (BASH_REDIRECTION_PATTERN.test(trimmed)) return true;
-  if (hasPotentiallyMutatingSafeBashSegment(trimmed)) return true;
   if (isReadOnlyBashCommandChain(trimmed)) return false;
 
   return !isSafeBashCommand(trimmed);
@@ -2174,3 +2105,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
     };
   }
 }
+
+export const __test__ = {
+  shouldTrackBashFileChanges,
+};
