@@ -433,6 +433,7 @@ export function ChatPage({
   const defaultInputPlaceholder = `Ask anything... (${CHAT_INPUT_HINTS[chatInputHintIndex] || "implement {feature}"})`;
 
   const allItems = buildChatItems({ messages, maxWidth, viewportHeight, questionRequest, approvalRequest });
+  const hasApprovalPanel = Boolean(approvalRequest);
 
   const totalVisualLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
   const maxScrollOffset = Math.max(0, totalVisualLines - viewportHeight);
@@ -450,6 +451,24 @@ export function ChatPage({
     prevScrollOffsetRef.current = scrollOffset;
   }, [scrollYPosition, scrollOffset]);
 
+  if (reviewPanel) {
+    return (
+      <box flexDirection="column" width="100%" height="100%" position="relative">
+        <box
+          position="absolute"
+          top={0}
+          bottom={0}
+          left={0}
+          right={0}
+          flexDirection="column"
+          zIndex={30}
+        >
+          {reviewPanel}
+        </box>
+      </box>
+    );
+  }
+
   return (
     <box flexDirection="column" width="100%" height="100%" position="relative">
       <scrollbox
@@ -460,8 +479,8 @@ export function ChatPage({
         viewportCulling
         width="100%"
         height={viewportHeight}
-        paddingLeft={1}
-        paddingRight={1}
+        paddingLeft={hasApprovalPanel ? 0 : 1}
+        paddingRight={hasApprovalPanel ? 0 : 1}
         paddingTop={1}
       >
         {allItems.map((item) => {
@@ -495,7 +514,6 @@ export function ChatPage({
                     }
                     respondApproval(approved, customResponse);
                   }}
-                  maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
             );
@@ -591,10 +609,10 @@ export function ChatPage({
                 (() => {
                   const isRunning = Boolean(item.isRunning);
                   const blinkOn = timerTick % 2 === 0;
-                  const isReview = item.toolName === 'review';
+                  const resolvedSuccess = item.success !== false;
                   const arrowColor = isRunning
                     ? (blinkOn ? 'white' : '#808080')
-                    : isReview ? '#44aa88' : (item.success ? '#44aa88' : '#ff3838');
+                    : (resolvedSuccess ? '#44aa88' : '#ff3838');
                   const label = item.compactLabel || '';
                   const result = item.compactResult || '';
                   return (
@@ -671,20 +689,6 @@ export function ChatPage({
           );
         })}
       </scrollbox>
-
-      {reviewPanel && (
-        <box
-          position="absolute"
-          top={0}
-          bottom={0}
-          left={0}
-          right={0}
-          flexDirection="column"
-          zIndex={15}
-        >
-          {reviewPanel}
-        </box>
-      )}
 
       {reviewMenu && (
         <box
