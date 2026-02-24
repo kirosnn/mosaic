@@ -11,7 +11,7 @@ import { getDefaultContextBudget } from "../../utils/tokenEstimator";
 import { getModelsDevContextLimit } from "../../utils/models";
 import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
 import { debugLog } from "../../utils/debug";
-import { hasPendingChanges, clearPendingChanges, startReview } from "../../utils/pendingChangesBridge";
+import { hasPendingChanges, cancelReview, isInReviewMode, startReview } from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
 
 const MAX_CONTINUATIONS = 3;
@@ -411,12 +411,60 @@ export async function runAgentStream(
   const abortController = new AbortController();
   abortControllerRef.current = abortController;
   let abortNotified = false;
+  let totalReviewedKept = 0;
+  let totalReviewedReverted = 0;
   const notifyAbort = () => {
     if (abortNotified) return;
     abortNotified = true;
     debugLog(`[agent] stream abort conversationId=${conversationId}`);
     if (disposedRef.current) return;
     setChatError(abortMessage);
+  };
+
+  const processPendingReviews = async () => {
+    if (!hasPendingChanges() || isInReviewMode()) {
+      return;
+    }
+
+    const cancelOnAbort = () => {
+      cancelReview();
+    };
+    abortController.signal.addEventListener('abort', cancelOnAbort, { once: true });
+
+    try {
+      const results = await startReview();
+      if (!results.length) {
+        return;
+      }
+
+      let keptCount = 0;
+      let revertedCount = 0;
+      for (let i = 0; i < results.length; i++) {
+        if (results[i]) {
+          keptCount++;
+        } else {
+          revertedCount++;
+        }
+      }
+
+      totalReviewedKept += keptCount;
+      totalReviewedReverted += revertedCount;
+
+      if (keptCount > 0 || revertedCount > 0) {
+        const reviewSuccess = revertedCount === 0;
+        setMessages((prev: Message[]) => [...prev, {
+          id: createId(),
+          role: "tool",
+          toolName: "review",
+          content: reviewSuccess
+            ? `Review complete: ${keptCount} kept, ${revertedCount} denied`
+            : `Review rejected: ${keptCount} kept, ${revertedCount} denied`,
+          success: reviewSuccess,
+        }]);
+      }
+    } finally {
+      abortController.signal.removeEventListener('abort', cancelOnAbort);
+    }
   };
 
   conversationSteps.push({
@@ -698,6 +746,8 @@ export async function runAgentStream(
           });
           return newMessages;
         });
+
+        await processPendingReviews();
 
         assistantChunk = '';
         thinkingChunk = '';
@@ -1038,6 +1088,8 @@ export async function runAgentStream(
             return newMessages;
           });
 
+          await processPendingReviews();
+
           assistantChunk = '';
           thinkingChunk = '';
           assistantMessageId = null;
@@ -1219,36 +1271,15 @@ export async function runAgentStream(
       }
 
       if (hasPendingChanges()) {
-        startReview().then((results) => {
-          let revertedCount = 0;
-          let keptCount = 0;
-
-          for (let i = 0; i < results.length; i++) {
-            if (results[i]) {
-              keptCount++;
-            } else {
-              revertedCount++;
-            }
-          }
-
-          if (revertedCount > 0 || keptCount > 0) {
-            setMessages((prev: Message[]) => [...prev, {
-              id: createId(),
-              role: "tool",
-              toolName: "review",
-              content: `Review complete: ${keptCount} kept, ${revertedCount} reverted`,
-              success: true,
-            }]);
-          }
-
-          clearPendingChanges();
-          setIsProcessing(false);
-          setProcessingStartTime(null);
-        });
-      } else {
-        setIsProcessing(false);
-        setProcessingStartTime(null);
+        await processPendingReviews();
       }
+
+      if (totalReviewedKept > 0 || totalReviewedReverted > 0) {
+        debugLog(`[review] stream summary kept=${totalReviewedKept} reverted=${totalReviewedReverted}`);
+      }
+
+      setIsProcessing(false);
+      setProcessingStartTime(null);
     }
   }
 }
