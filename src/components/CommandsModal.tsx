@@ -32,7 +32,25 @@ export function CommandModal() {
           </box>
 
           <box flexDirection="column" width="100%" flexGrow={1} overflow="hidden">
-            <box flexDirection="column" width="100%" overflow="scroll">
+            <scrollbox
+              flexDirection="column"
+              width="100%"
+              flexGrow={1}
+              verticalScrollbarOptions={{
+                showArrows: false,
+                trackOptions: {
+                  backgroundColor: "#141414",
+                  foregroundColor: "#141414",
+                },
+              }}
+              horizontalScrollbarOptions={{
+                showArrows: false,
+                trackOptions: {
+                  backgroundColor: "#141414",
+                  foregroundColor: "#141414",
+                },
+              }}
+            >
               {commands.length === 0 ? (
                 <box flexDirection="row" width="100%" marginBottom={1}>
                   <text attributes={TextAttributes.DIM}>No commands available</text>
@@ -71,7 +89,7 @@ export function CommandModal() {
                   </box>
                 ))
               )}
-            </box>
+            </scrollbox>
           </box>
         </box>
       </box>
