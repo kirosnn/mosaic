@@ -418,8 +418,14 @@ export async function runAgentStream(
     abortNotified = true;
     debugLog(`[agent] stream abort conversationId=${conversationId}`);
     if (disposedRef.current) return;
+    setIsProcessing(false);
+    setProcessingStartTime(null);
     setChatError(abortMessage);
   };
+  const handleAbortSignal = () => {
+    notifyAbort();
+  };
+  abortController.signal.addEventListener('abort', handleAbortSignal, { once: true });
 
   const processPendingReviews = async () => {
     if (!hasPendingChanges() || isInReviewMode()) {
@@ -1249,6 +1255,7 @@ export async function runAgentStream(
     });
     setChatError(errorContent);
   } finally {
+    abortController.signal.removeEventListener('abort', handleAbortSignal);
     if (abortControllerRef.current === abortController) {
       abortControllerRef.current = null;
     }
@@ -1270,7 +1277,7 @@ export async function runAgentStream(
         });
       }
 
-      if (hasPendingChanges()) {
+      if (!abortController.signal.aborted && hasPendingChanges()) {
         await processPendingReviews();
       }
 
