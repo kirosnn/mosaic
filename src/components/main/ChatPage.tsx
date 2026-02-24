@@ -327,6 +327,9 @@ export function ChatPage({
     if (sb?.verticalScrollBar) {
       sb.verticalScrollBar.visible = false;
     }
+    if (sb?.horizontalScrollBar) {
+      sb.horizontalScrollBar.visible = false;
+    }
   }, []);
 
   useEffect(() => {
@@ -482,6 +485,20 @@ export function ChatPage({
         paddingLeft={hasApprovalPanel ? 0 : 1}
         paddingRight={hasApprovalPanel ? 0 : 1}
         paddingTop={1}
+        verticalScrollbarOptions={{
+          showArrows: false,
+          trackOptions: {
+            backgroundColor: "#111111",
+            foregroundColor: "#111111",
+          },
+        }}
+        horizontalScrollbarOptions={{
+          showArrows: false,
+          trackOptions: {
+            backgroundColor: "#111111",
+            foregroundColor: "#111111",
+          },
+        }}
       >
         {allItems.map((item) => {
           if (item.type === 'question') {
