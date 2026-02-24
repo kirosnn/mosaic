@@ -140,6 +140,20 @@ export function ReviewPanel({ change, progress, onKeep, onRevert, onAcceptAll }:
                     paddingLeft={0}
                     paddingRight={0}
                     paddingTop={0}
+                    verticalScrollbarOptions={{
+                        showArrows: false,
+                        trackOptions: {
+                            backgroundColor: "#111111",
+                            foregroundColor: "#111111",
+                        },
+                    }}
+                    horizontalScrollbarOptions={{
+                        showArrows: false,
+                        trackOptions: {
+                            backgroundColor: "#111111",
+                            foregroundColor: "#111111",
+                        },
+                    }}
                 >
                     {renderDiffBlock(visibleContent, `review-diff-${change.id}`, {
                         height: totalPreviewLines,
