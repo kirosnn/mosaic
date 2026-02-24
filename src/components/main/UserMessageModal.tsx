@@ -110,7 +110,25 @@ export function UserMessageModal({
                 </box>
               </box>
             ) : (
-              <box flexDirection="column" width="100%" overflow="scroll">
+              <scrollbox
+                flexDirection="column"
+                width="100%"
+                flexGrow={1}
+                verticalScrollbarOptions={{
+                  showArrows: false,
+                  trackOptions: {
+                    backgroundColor: "#141414",
+                    foregroundColor: "#141414",
+                  },
+                }}
+                horizontalScrollbarOptions={{
+                  showArrows: false,
+                  trackOptions: {
+                    backgroundColor: "#141414",
+                    foregroundColor: "#141414",
+                  },
+                }}
+              >
                 {modalActions.map((action) => {
                   const isHovered = hoveredActionId === action.id;
                   return (
@@ -133,7 +151,7 @@ export function UserMessageModal({
                     </box>
                   );
                 })}
-              </box>
+              </scrollbox>
             )}
           </box>
         </box>
