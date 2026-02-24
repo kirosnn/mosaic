@@ -4,6 +4,7 @@ import { EditorPanel, type HighlightedCodeSelection } from "./components/EditorP
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { UsagePanel } from "./components/UsagePanel";
 import { getLogoSrc, getThemeLabel } from "./constants";
 import { getMediaKind } from "./mediaPreview";
 import { applyCommandCompletion, computeCommandCompletions, type CommandCompletionItem } from "./commandCompletion";
@@ -12,9 +13,12 @@ import type {
   ChatMessage,
   CommandCatalogResponse,
   DesktopCommandContext,
+  DesktopConversationHistory,
+  DesktopConversationStep,
   EditorStatus,
   FsEntry,
   Theme,
+  UsageReport,
 } from "./types";
 import { buildAgentHistory, createId, normalizeRelative, stringifyValue, summarizeArgs } from "./utils";
 
@@ -160,6 +164,293 @@ function formatDesktopError(errorMessage: string, context?: DesktopErrorContext)
   return `${scope}\n${detail}`;
 }
 
+interface ConversationHistoryItem {
+  id: string;
+  title: string;
+  updatedAt: number;
+  messageCount: number;
+  workspaceRoot: string | null;
+  messages: ChatMessage[];
+}
+
+interface RecentWorkspaceItem {
+  path: string;
+  updatedAt: number;
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(0, max - 3))}...`;
+}
+
+function getMessageDisplayContent(message: ChatMessage): string {
+  if (message.role === "user") {
+    return collapseWhitespace(message.displayContent || message.content);
+  }
+  return collapseWhitespace(message.content);
+}
+
+function hasConversationContent(messages: ChatMessage[]): boolean {
+  return messages.some((message) => Boolean(getMessageDisplayContent(message)));
+}
+
+function buildDefaultConversationTitle(timestamp = Date.now()): string {
+  void timestamp;
+  return "New chat";
+}
+
+function formatDisplayPath(workspaceRoot: string, currentFile: string): string {
+  const homePath = String(process.env.USERPROFILE || process.env.HOME || "").replace(/\\/g, "/");
+  const normalizedWorkspace = String(workspaceRoot || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedFile = String(currentFile || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const fullPath = normalizedFile ? `${normalizedWorkspace}/${normalizedFile}` : normalizedWorkspace;
+  if (!fullPath) return "~";
+
+  let pathForDisplay = fullPath;
+  if (homePath) {
+    const lowerPath = fullPath.toLowerCase();
+    const lowerHome = homePath.toLowerCase();
+    if (lowerPath === lowerHome || lowerPath.startsWith(`${lowerHome}/`)) {
+      pathForDisplay = `~${fullPath.slice(homePath.length)}`;
+    }
+  }
+
+  const isHome = pathForDisplay.startsWith("~");
+  const startsWithSlash = pathForDisplay.startsWith("/");
+  const segments = pathForDisplay.split("/").filter(Boolean);
+  let prefix = "";
+  let bodySegments = segments;
+
+  if (isHome) {
+    prefix = "~";
+  } else if (segments[0] && /^[A-Za-z]:$/.test(segments[0])) {
+    prefix = segments[0];
+    bodySegments = segments.slice(1);
+  } else if (startsWithSlash) {
+    prefix = "/";
+  }
+
+  const tail = bodySegments.slice(-3);
+  if (tail.length === 0) {
+    return prefix || "~";
+  }
+  if (!prefix) {
+    return tail.join("/");
+  }
+  if (prefix === "/") {
+    return `/${tail.join("/")}`;
+  }
+  return `${prefix}/${tail.join("/")}`;
+}
+
+function getParentPath(relativePath: string): string {
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized) return "";
+  const index = normalized.lastIndexOf("/");
+  if (index < 0) return "";
+  return normalized.slice(0, index);
+}
+
+function getBaseName(relativePath: string): string {
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized) return "";
+  const index = normalized.lastIndexOf("/");
+  if (index < 0) return normalized;
+  return normalized.slice(index + 1);
+}
+
+function getTimestampFromMessageId(messageId: string, fallbackTimestamp: number): number {
+  const parts = String(messageId || "").split("-");
+  const candidate = Number(parts[1]);
+  if (Number.isFinite(candidate) && candidate > 0) {
+    return Math.floor(candidate);
+  }
+  return fallbackTimestamp;
+}
+
+function toHistorySteps(messages: ChatMessage[]): DesktopConversationStep[] {
+  const now = Date.now();
+  const steps: DesktopConversationStep[] = [];
+  let sequence = 0;
+
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant" && message.role !== "tool" && message.role !== "system" && message.role !== "error") {
+      continue;
+    }
+    const content = String(message.content || "");
+    if (!content.trim() && message.role !== "tool") {
+      continue;
+    }
+    const stepType = message.role === "error" ? "system" : message.role;
+    const timestamp = getTimestampFromMessageId(message.id, now + sequence);
+    const step: DesktopConversationStep = {
+      type: stepType,
+      content,
+      timestamp,
+    };
+    if (message.role === "user" && typeof message.displayContent === "string" && message.displayContent.trim()) {
+      step.displayContent = message.displayContent;
+    }
+    if (message.role === "tool") {
+      if (typeof message.toolName === "string") {
+        step.toolName = message.toolName;
+      }
+      if (message.toolArgs && typeof message.toolArgs === "object") {
+        step.toolArgs = message.toolArgs;
+      }
+      if (Object.prototype.hasOwnProperty.call(message, "toolResult")) {
+        step.toolResult = message.toolResult;
+      }
+      if (typeof message.success === "boolean") {
+        step.success = message.success;
+      }
+    }
+    if (message.role === "error" || (message.role === "system" && message.isError === true)) {
+      step.success = false;
+    }
+    steps.push(step);
+    sequence += 1;
+  }
+
+  return steps;
+}
+
+function toChatMessages(steps: DesktopConversationStep[]): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    if (!step || (step.type !== "user" && step.type !== "assistant" && step.type !== "tool" && step.type !== "system")) {
+      continue;
+    }
+    const timestamp = Number.isFinite(Number(step.timestamp)) ? Number(step.timestamp) : Date.now() + index;
+    const id = `${step.type}-${Math.floor(timestamp)}-${index}`;
+    if (step.type === "user") {
+      const content = String(step.content || "");
+      const displayContent = typeof step.displayContent === "string" && step.displayContent.trim()
+        ? String(step.displayContent)
+        : content;
+      messages.push({
+        id,
+        role: "user",
+        content,
+        displayContent,
+      });
+      continue;
+    }
+    if (step.type === "assistant") {
+      messages.push({
+        id,
+        role: "assistant",
+        content: String(step.content || ""),
+      });
+      continue;
+    }
+    if (step.type === "tool") {
+      messages.push({
+        id,
+        role: "tool",
+        content: String(step.content || ""),
+        running: false,
+        toolName: typeof step.toolName === "string" ? step.toolName : undefined,
+        toolArgs: step.toolArgs && typeof step.toolArgs === "object" ? step.toolArgs : undefined,
+        toolResult: step.toolResult,
+        success: typeof step.success === "boolean" ? step.success : undefined,
+      });
+      continue;
+    }
+    const isError = step.success === false;
+    messages.push({
+      id,
+      role: isError ? "error" : "system",
+      content: String(step.content || ""),
+      isError,
+    });
+  }
+  return messages;
+}
+
+function resolveConversationTitle(conversation: DesktopConversationHistory, fallbackTimestamp: number): string {
+  const fallbackTitle = buildDefaultConversationTitle(fallbackTimestamp);
+  const normalizedTitle = collapseWhitespace(typeof conversation.title === "string" ? conversation.title : "");
+  if (!normalizedTitle) return fallbackTitle;
+  if (conversation.titleEdited === true) return normalizedTitle;
+
+  const firstUserStep = Array.isArray(conversation.steps)
+    ? conversation.steps.find((step) => step?.type === "user")
+    : undefined;
+  const firstUserLabel = collapseWhitespace(
+    String(firstUserStep?.displayContent || firstUserStep?.content || ""),
+  );
+  if (firstUserLabel && normalizedTitle === firstUserLabel) {
+    return fallbackTitle;
+  }
+  return normalizedTitle;
+}
+
+function toConversationHistoryItem(conversation: DesktopConversationHistory): ConversationHistoryItem {
+  const messages = toChatMessages(conversation.steps || []);
+  const timestamp = Number.isFinite(Number(conversation.timestamp)) ? Number(conversation.timestamp) : Date.now();
+  const workspaceValue = typeof conversation.workspace === "string" ? conversation.workspace.trim() : "";
+  return {
+    id: conversation.id,
+    title: resolveConversationTitle(conversation, timestamp),
+    updatedAt: timestamp,
+    messageCount: messages.length,
+    workspaceRoot: workspaceValue || null,
+    messages,
+  };
+}
+
+function serializeComparableValue(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function areHistoryStepsEquivalent(left: DesktopConversationStep[], right: DesktopConversationStep[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (!a || !b) return false;
+    if (a.type !== b.type) return false;
+    if (String(a.content || "") !== String(b.content || "")) return false;
+    if (String(a.displayContent || "") !== String(b.displayContent || "")) return false;
+    if (String(a.toolName || "") !== String(b.toolName || "")) return false;
+    if (serializeComparableValue(a.toolArgs) !== serializeComparableValue(b.toolArgs)) return false;
+    if (serializeComparableValue(a.toolResult) !== serializeComparableValue(b.toolResult)) return false;
+    if ((typeof a.success === "boolean" ? a.success : null) !== (typeof b.success === "boolean" ? b.success : null)) return false;
+  }
+  return true;
+}
+
+function areConversationMessagesEquivalent(left: ChatMessage[], right: ChatMessage[]): boolean {
+  const leftSteps = toHistorySteps(left);
+  const rightSteps = toHistorySteps(right);
+  return areHistoryStepsEquivalent(leftSteps, rightSteps);
+}
+
+function areFsEntriesEquivalent(left: FsEntry[] | undefined, right: FsEntry[] | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftEntry = left[index];
+    const rightEntry = right[index];
+    if (!leftEntry || !rightEntry) return false;
+    if (leftEntry.name !== rightEntry.name) return false;
+    if (leftEntry.relativePath !== rightEntry.relativePath) return false;
+    if (leftEntry.type !== rightEntry.type) return false;
+  }
+  return true;
+}
+
 export function App() {
   const [theme, setTheme] = useState<Theme>("dark");
   const platform = useMemo(() => {
@@ -171,17 +462,24 @@ export function App() {
   const [directoryCache, setDirectoryCache] = useState<Record<string, FsEntry[]>>({});
   const directoryCacheRef = useRef<Record<string, FsEntry[]>>({});
   const [openDirectories, setOpenDirectories] = useState<Set<string>>(new Set([""]));
+  const openDirectoriesRef = useRef<Set<string>>(new Set([""]));
 
   const [currentFile, setCurrentFile] = useState("");
   const [editorValue, setEditorValue] = useState("");
   const [editorStatus, setEditorStatus] = useState<EditorStatus>({ text: "Ready", error: false });
 
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [conversationHistory, setConversationHistory] = useState<ConversationHistoryItem[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [commandCatalog, setCommandCatalog] = useState<CommandCatalogResponse | null>(null);
   const [commandCompletions, setCommandCompletions] = useState<CommandCompletionItem[]>([]);
   const [activeRequestId, setActiveRequestId] = useState("");
   const [activeAssistantId, setActiveAssistantId] = useState("");
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageReport, setUsageReport] = useState<UsageReport | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -202,12 +500,17 @@ export function App() {
   const fsChangeFlushRunningRef = useRef(false);
   const chatAutoScrollFrameRef = useRef<number | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const conversationHistoryRef = useRef<ConversationHistoryItem[]>([]);
   const preferencesLoadedRef = useRef(false);
   const perfSamplesRef = useRef<Record<string, number[]>>({});
 
   useEffect(() => {
     directoryCacheRef.current = directoryCache;
   }, [directoryCache]);
+
+  useEffect(() => {
+    openDirectoriesRef.current = openDirectories;
+  }, [openDirectories]);
 
   useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
@@ -225,13 +528,144 @@ export function App() {
     commandCatalogRef.current = commandCatalog;
   }, [commandCatalog]);
 
+  useEffect(() => {
+    conversationHistoryRef.current = conversationHistory;
+  }, [conversationHistory]);
+
   const chatRunning = useMemo(() => Boolean(activeRequestId), [activeRequestId]);
+  const hasActiveConversation = useMemo(() => Boolean(activeConversationId), [activeConversationId]);
+  const canOpenPreview = hasActiveConversation;
+  const effectivePreviewOpen = previewOpen && canOpenPreview;
   const themeLabel = useMemo(() => getThemeLabel(theme), [theme]);
   const logoSrc = useMemo(() => getLogoSrc(theme), [theme]);
+  const activeConversationTitle = useMemo(() => {
+    const current = conversationHistory.find((entry) => entry.id === activeConversationId);
+    if (current?.title && collapseWhitespace(current.title)) {
+      return collapseWhitespace(current.title);
+    }
+    return buildDefaultConversationTitle(Date.now());
+  }, [activeConversationId, conversationHistory]);
+  const topbarPath = useMemo(() => formatDisplayPath(workspaceRoot, currentFile), [workspaceRoot, currentFile]);
+  const sidebarConversations = useMemo(() => {
+    if (!activeConversationId) {
+      return conversationHistory.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        messageCount: entry.messageCount,
+        updatedAt: entry.updatedAt,
+      }));
+    }
+    const activeEntryFromHistory = conversationHistory.find((entry) => entry.id === activeConversationId);
+    const activeEntry = {
+      id: activeConversationId,
+      title: activeConversationTitle,
+      messageCount: chatMessages.length,
+      updatedAt: activeEntryFromHistory?.updatedAt ?? Date.now(),
+    };
+    const others = conversationHistory
+      .filter((entry) => entry.id !== activeConversationId)
+      .map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        messageCount: entry.messageCount,
+        updatedAt: entry.updatedAt,
+      }));
+    return [activeEntry, ...others];
+  }, [activeConversationId, activeConversationTitle, chatMessages.length, conversationHistory]);
+  const recentWorkspaces = useMemo<RecentWorkspaceItem[]>(() => {
+    const seen = new Set<string>();
+    const sorted = [...conversationHistory].sort((a, b) => b.updatedAt - a.updatedAt);
+    const recent: RecentWorkspaceItem[] = [];
+
+    for (const entry of sorted) {
+      const workspace = String(entry.workspaceRoot || "").trim();
+      if (!workspace || seen.has(workspace)) {
+        continue;
+      }
+      seen.add(workspace);
+      recent.push({ path: workspace, updatedAt: entry.updatedAt });
+      if (recent.length >= 8) {
+        break;
+      }
+    }
+
+    const currentWorkspace = String(workspaceRoot || "").trim();
+    if (currentWorkspace && !seen.has(currentWorkspace)) {
+      recent.unshift({ path: currentWorkspace, updatedAt: Date.now() });
+    }
+    return recent.slice(0, 8);
+  }, [conversationHistory, workspaceRoot]);
 
   const setStatus = useCallback((text: string, error = false) => {
     setEditorStatus({ text, error });
   }, []);
+
+  const upsertConversationHistory = useCallback((
+    conversationId: string,
+    messages: ChatMessage[],
+    forcedTitle = "",
+    timestampOverride?: number,
+  ) => {
+    setConversationHistory((prev) => {
+      const existing = prev.find((entry) => entry.id === conversationId);
+      const remaining = prev.filter((entry) => entry.id !== conversationId);
+      if (!hasConversationContent(messages)) {
+        return remaining;
+      }
+      const titleFromExisting = existing?.title ? collapseWhitespace(existing.title) : "";
+      const resolvedTitle = forcedTitle.trim() || titleFromExisting || buildDefaultConversationTitle(Date.now());
+      const messagesChanged = existing ? !areConversationMessagesEquivalent(existing.messages, messages) : true;
+      const updatedAt = timestampOverride
+        ?? (messagesChanged ? Date.now() : (existing?.updatedAt ?? Date.now()));
+      const updatedEntry: ConversationHistoryItem = {
+        id: conversationId,
+        title: resolvedTitle,
+        updatedAt,
+        messageCount: messages.length,
+        workspaceRoot: existing?.workspaceRoot ?? (workspaceRoot || null),
+        messages: [...messages],
+      };
+      const next = [updatedEntry, ...remaining];
+      next.sort((a, b) => b.updatedAt - a.updatedAt);
+      conversationHistoryRef.current = next;
+      return next;
+    });
+  }, [workspaceRoot]);
+
+  const persistConversation = useCallback(async (conversationId: string, messages: ChatMessage[], forcedTitle = "") => {
+    if (!conversationId || !hasConversationContent(messages)) {
+      return;
+    }
+
+    const steps = toHistorySteps(messages);
+    if (steps.length === 0) {
+      return;
+    }
+
+    const existing = conversationHistoryRef.current.find((entry) => entry.id === conversationId);
+    const titleFromExisting = existing?.title ? collapseWhitespace(existing.title) : "";
+    const resolvedTitle = forcedTitle.trim() || titleFromExisting || buildDefaultConversationTitle(Date.now());
+    const previousSteps = existing ? toHistorySteps(existing.messages) : [];
+    const stepsChanged = !existing || !areHistoryStepsEquivalent(previousSteps, steps);
+    const persistedTimestamp = stepsChanged
+      ? Date.now()
+      : (existing?.updatedAt ?? Date.now());
+
+    const payload: DesktopConversationHistory = {
+      id: conversationId,
+      timestamp: persistedTimestamp,
+      steps,
+      totalSteps: steps.length,
+      title: resolvedTitle,
+      workspace: workspaceRoot || null,
+    };
+
+    try {
+      await api.saveConversationHistory(payload);
+      upsertConversationHistory(conversationId, messages, resolvedTitle, persistedTimestamp);
+    } catch {
+    }
+  }, [upsertConversationHistory, workspaceRoot]);
 
   const recordPerfSample = useCallback((metric: string, durationMs: number) => {
     if (!isDevMode) return;
@@ -317,7 +751,7 @@ export function App() {
   const buildCommandContext = useCallback((messages: ChatMessage[]): DesktopCommandContext => {
     const contextMessages = messages
       .map((message) => {
-        if (message.role === "system") return null;
+        if (message.role === "system" || message.role === "error") return null;
         if (message.role === "user" || message.role === "assistant" || message.role === "tool") {
           return {
             role: message.role,
@@ -339,6 +773,16 @@ export function App() {
   }, [chatRunning]);
 
   useEffect(() => {
+    if (!hasConversationContent(chatMessages)) return;
+    const timeoutId = window.setTimeout(() => {
+      void persistConversation(activeConversationId, chatMessages);
+    }, 450);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeConversationId, chatMessages, persistConversation]);
+
+  useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     if (api && typeof api.setWindowTheme === "function") {
       api.setWindowTheme(theme);
@@ -353,6 +797,12 @@ export function App() {
       previewOpen,
     });
   }, [theme, sidebarOpen, previewOpen]);
+
+  useEffect(() => {
+    if (canOpenPreview) return;
+    if (!previewOpen) return;
+    setPreviewOpen(false);
+  }, [canOpenPreview, previewOpen]);
 
   useEffect(() => {
     const applyTopbarHeight = async () => {
@@ -375,43 +825,93 @@ export function App() {
     const normalized = normalizeRelative(relativePath);
     if (directoryCacheRef.current[normalized]) return;
     const entries = await api.readDir(normalized);
-    setDirectoryCache((prev) => ({ ...prev, [normalized]: Array.isArray(entries) ? entries : [] }));
+    const nextEntries = Array.isArray(entries) ? entries : [];
+    setDirectoryCache((prev) => {
+      if (areFsEntriesEquivalent(prev[normalized], nextEntries)) return prev;
+      return { ...prev, [normalized]: nextEntries };
+    });
   }, []);
 
   const refreshTree = useCallback(async (resetOpenDirectories = false) => {
     const rootEntries = await api.readDir("");
-    setDirectoryCache((prev) => ({ ...prev, "": rootEntries }));
+    const nextRootEntries = Array.isArray(rootEntries) ? rootEntries : [];
+    setDirectoryCache((prev) => {
+      if (areFsEntriesEquivalent(prev[""], nextRootEntries)) return prev;
+      return { ...prev, "": nextRootEntries };
+    });
     if (resetOpenDirectories) {
-      setOpenDirectories(new Set([""]));
+      setOpenDirectories((prev) => {
+        if (prev.size === 1 && prev.has("")) return prev;
+        return new Set([""]);
+      });
     }
   }, []);
 
-  const refreshLoadedDirectories = useCallback(async () => {
-    const loadedPaths = Object.keys(directoryCacheRef.current);
-    if (loadedPaths.length === 0) {
-      await refreshTree();
-      return;
-    }
-
+  const refreshDirectories = useCallback(async (paths: string[]) => {
+    const uniquePaths = Array.from(new Set(paths.map((entry) => normalizeRelative(entry))));
+    if (uniquePaths.length === 0) return;
     const entriesByPath = await Promise.all(
-      loadedPaths.map(async (relativePath) => {
+      uniquePaths.map(async (relativePath) => {
         try {
           const entries = await api.readDir(relativePath);
           return { relativePath, entries: Array.isArray(entries) ? entries : [] as FsEntry[] };
         } catch {
           return { relativePath, entries: [] as FsEntry[] };
         }
-      })
+      }),
     );
 
     setDirectoryCache((prev) => {
+      let changed = false;
       const next = { ...prev };
       for (const entry of entriesByPath) {
-        next[entry.relativePath] = entry.entries;
+        const normalizedEntries = Array.isArray(entry.entries) ? entry.entries : [];
+        if (areFsEntriesEquivalent(prev[entry.relativePath], normalizedEntries)) {
+          continue;
+        }
+        next[entry.relativePath] = normalizedEntries;
+        changed = true;
       }
-      return next;
+      return changed ? next : prev;
     });
-  }, [refreshTree]);
+  }, []);
+
+  const refreshDirectoriesForChanges = useCallback(async (changes: string[], fullRefresh: boolean) => {
+    if (fullRefresh) {
+      const targets = new Set<string>([""]);
+      for (const openPath of openDirectoriesRef.current.values()) {
+        targets.add(normalizeRelative(openPath));
+      }
+      await refreshDirectories(Array.from(targets.values()));
+      return;
+    }
+
+    const loadedPaths = new Set(Object.keys(directoryCacheRef.current));
+    if (loadedPaths.size === 0) {
+      await refreshTree();
+      return;
+    }
+
+    const targets = new Set<string>([""]);
+    for (const change of changes) {
+      const normalized = normalizeRelative(change);
+      if (!normalized) {
+        targets.add("");
+        continue;
+      }
+      const parent = getParentPath(normalized);
+      if (loadedPaths.has(parent)) {
+        targets.add(parent);
+      }
+      if (loadedPaths.has(normalized)) {
+        targets.add(normalized);
+      }
+      if (!parent) {
+        targets.add("");
+      }
+    }
+    await refreshDirectories(Array.from(targets.values()));
+  }, [refreshDirectories, refreshTree]);
 
   const openFile = useCallback(async (relativePath: string) => {
     const normalized = normalizeRelative(relativePath);
@@ -427,6 +927,7 @@ export function App() {
       });
       return;
     }
+    setEditorValue("");
     try {
       const file = await api.readFile(normalized);
       setCurrentFile(normalizeRelative(file.relativePath));
@@ -462,7 +963,7 @@ export function App() {
   const toggleDirectory = useCallback(async (relativePath: string) => {
     const normalized = normalizeRelative(relativePath);
     const startedAt = performance.now();
-    const isOpen = openDirectories.has(normalized);
+    const isOpen = openDirectoriesRef.current.has(normalized);
     if (isOpen) {
       setOpenDirectories((prev) => {
         const next = new Set(prev);
@@ -483,7 +984,7 @@ export function App() {
     window.requestAnimationFrame(() => {
       recordPerfSample("explorer.toggle", performance.now() - startedAt);
     });
-  }, [ensureDirLoaded, openDirectories, recordPerfSample]);
+  }, [ensureDirLoaded, recordPerfSample]);
 
   const flushAssistantDelta = useCallback(() => {
     const chunk = pendingAssistantDeltaRef.current;
@@ -553,7 +1054,7 @@ export function App() {
               .filter(Boolean);
         const catalogTouched = changes.some((entry) => entry.toLowerCase().startsWith(".mosaic/skills/"));
 
-        await refreshLoadedDirectories();
+        await refreshDirectoriesForChanges(changes, fullRefresh);
         if (catalogTouched) {
           await refreshCommandCatalog(true);
         }
@@ -564,8 +1065,15 @@ export function App() {
           continue;
         }
 
+        const activeFileParent = getParentPath(activeFile);
+        const activeFileBaseName = getBaseName(activeFile);
         const shouldReloadCurrent = fullRefresh || changes.some((entry) => {
-          return entry === activeFile || entry.startsWith(`${activeFile}/`) || activeFile.startsWith(`${entry}/`);
+          const normalized = normalizeRelative(entry);
+          if (!normalized) return false;
+          if (normalized === activeFile) return true;
+          if (normalized === activeFileParent) return true;
+          if (!normalized.includes("/") && normalized === activeFileBaseName) return true;
+          return false;
         });
 
         if (shouldReloadCurrent) {
@@ -582,7 +1090,7 @@ export function App() {
         }, FS_CHANGE_DEBOUNCE_MS);
       }
     }
-  }, [clearFsFlushTimer, openFile, refreshCommandCatalog, refreshLoadedDirectories, setStatus]);
+  }, [clearFsFlushTimer, openFile, refreshCommandCatalog, refreshDirectoriesForChanges, setStatus]);
 
   const scheduleFsFlush = useCallback(() => {
     clearFsFlushTimer();
@@ -608,8 +1116,8 @@ export function App() {
       if (statusText) {
         const isError = statusText === INTERRUPTED_MESSAGE;
         next.push({
-          id: createId("system"),
-          role: "system",
+          id: createId(isError ? "error" : "system"),
+          role: isError ? "error" : "system",
           content: statusText,
           isError,
         });
@@ -618,6 +1126,7 @@ export function App() {
     });
     resetAssistantDeltaBuffer();
     pendingToolCallsRef.current.clear();
+    activeRequestIdRef.current = "";
     setActiveRequestId("");
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
@@ -641,6 +1150,11 @@ export function App() {
     const trimmed = input.trim();
     if (!trimmed) return;
     if (activeRequestIdRef.current) return;
+    const isUsageCommand = /^\/usage(?:\s|$)/i.test(trimmed);
+    if (isUsageCommand) {
+      setUsageLoading(true);
+      setUsageError("");
+    }
 
     const context = buildCommandContext(chatMessages);
     const baseMessages = chatMessages;
@@ -648,19 +1162,33 @@ export function App() {
     try {
       const result = await api.executeCommand(trimmed, context);
 
+      if (result.openUsageView) {
+        if (result.usageReport) {
+          setUsageReport(result.usageReport);
+          setUsageError("");
+          setUsageOpen(true);
+          setUsageLoading(false);
+        } else {
+          setUsageError("Usage report is unavailable.");
+        }
+      }
+
       if (result.errorBanner) {
         appendChatMessage({
-          id: createId("system"),
-          role: "system",
+          id: createId("error"),
+          role: "error",
           content: result.errorBanner,
           isError: true,
         });
       }
 
       if (result.shouldClearMessages) {
+        void persistConversation(activeConversationId, baseMessages);
+        setActiveConversationId("");
         pendingToolCallsRef.current.clear();
         activeAssistantIdRef.current = "";
         setActiveAssistantId("");
+        setUsageOpen(false);
       }
 
       const historyBase = result.shouldClearMessages ? [] : baseMessages;
@@ -682,29 +1210,54 @@ export function App() {
         setActiveRequestId(response.requestId);
       } else {
         const nextMessages = result.shouldClearMessages ? [] : [...baseMessages];
-        if (result.content && result.content.trim()) {
+        const shouldAppendMessage = Boolean(result.content && result.content.trim()) && !result.openUsageView;
+        if (shouldAppendMessage) {
+          const isError = !result.success;
           nextMessages.push({
-            id: createId("system"),
-            role: "system",
+            id: createId(isError ? "error" : "system"),
+            role: isError ? "error" : "system",
             content: result.content,
-            isError: !result.success,
+            isError,
           });
         }
-        setChatMessages(nextMessages);
+        if (result.shouldClearMessages || shouldAppendMessage) {
+          setChatMessages(nextMessages);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to execute command";
       appendChatMessage({
-        id: createId("system"),
-        role: "system",
+        id: createId("error"),
+        role: "error",
         content: formatDesktopError(message, { source: "runtime" }),
         isError: true,
       });
       finalizeChatRun("");
     } finally {
+      setUsageLoading(false);
       void refreshCommandCatalog();
     }
-  }, [appendChatMessage, buildCommandContext, chatMessages, finalizeChatRun, refreshCommandCatalog]);
+  }, [activeConversationId, appendChatMessage, buildCommandContext, chatMessages, finalizeChatRun, persistConversation, refreshCommandCatalog]);
+
+  const refreshUsage = useCallback(async () => {
+    if (activeRequestIdRef.current) return;
+    setUsageLoading(true);
+    setUsageError("");
+    try {
+      const result = await api.executeCommand("/usage --refresh", buildCommandContext(chatMessages));
+      if (result.usageReport) {
+        setUsageReport(result.usageReport);
+        setUsageOpen(true);
+        return;
+      }
+      throw new Error(result.content || "Unable to load usage report.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to load usage report.";
+      setUsageError(message);
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [buildCommandContext, chatMessages]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     if (event.type === "text-delta") {
@@ -784,8 +1337,8 @@ export function App() {
 
     if (event.type === "error") {
       appendChatMessage({
-        id: createId("system"),
-        role: "system",
+        id: createId("error"),
+        role: "error",
         content: formatDesktopError(event.error ?? "Agent error", {
           source: event.source ?? "provider",
           provider: event.provider,
@@ -831,8 +1384,8 @@ export function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start chat";
       appendChatMessage({
-        id: createId("system"),
-        role: "system",
+        id: createId("error"),
+        role: "error",
         content: formatDesktopError(message, { source: "runtime" }),
         isError: true,
       });
@@ -840,25 +1393,170 @@ export function App() {
     }
   }, [appendChatMessage, chatInput, chatMessages, currentFile, editorValue, executeLocalCommand, finalizeChatRun]);
 
-  const stopChat = useCallback(async () => {
+  const stopChat = useCallback(() => {
     const requestId = activeRequestIdRef.current;
     if (!requestId) return;
-    try {
-      await api.cancelChat(requestId);
-    } finally {
-      finalizeChatRun("Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.");
-    }
+    finalizeChatRun(INTERRUPTED_MESSAGE);
+    void api.cancelChat(requestId).catch(() => {});
   }, [finalizeChatRun]);
 
-  const clearChat = useCallback(() => {
+  const openConversation = useCallback((conversationId: string) => {
     if (activeRequestIdRef.current) return;
+    if (!conversationId || conversationId === activeConversationId) return;
+    const target = conversationHistoryRef.current.find((entry) => entry.id === conversationId);
+    if (!target) return;
+
+    void (async () => {
+      void persistConversation(activeConversationId, chatMessages);
+      const targetWorkspace = typeof target.workspaceRoot === "string" ? target.workspaceRoot.trim() : "";
+      if (targetWorkspace && targetWorkspace !== workspaceRoot) {
+        try {
+          await api.setWorkspace(targetWorkspace);
+        } catch {
+        }
+      }
+
+      resetAssistantDeltaBuffer();
+      pendingToolCallsRef.current.clear();
+      setChatInput("");
+      setUsageOpen(false);
+      setUsageReport(null);
+      setUsageLoading(false);
+      setUsageError("");
+      activeAssistantIdRef.current = "";
+      setActiveAssistantId("");
+      setActiveConversationId(conversationId);
+      setChatMessages(target.messages);
+    })();
+  }, [activeConversationId, chatMessages, persistConversation, resetAssistantDeltaBuffer, workspaceRoot]);
+
+  const startNewConversation = useCallback(() => {
+    if (activeRequestIdRef.current) return;
+    void persistConversation(activeConversationId, chatMessages);
+    const nextConversationId = createId("conversation");
     resetAssistantDeltaBuffer();
     pendingToolCallsRef.current.clear();
     setChatMessages([]);
     setChatInput("");
+    setUsageOpen(false);
+    setUsageReport(null);
+    setUsageLoading(false);
+    setUsageError("");
+    setActiveConversationId(nextConversationId);
     activeAssistantIdRef.current = "";
     setActiveAssistantId("");
-  }, [resetAssistantDeltaBuffer]);
+  }, [activeConversationId, chatMessages, persistConversation, resetAssistantDeltaBuffer]);
+  const startNewConversationInWorkspace = useCallback((targetWorkspace: string) => {
+    if (activeRequestIdRef.current) return;
+    const nextWorkspace = String(targetWorkspace || "").trim();
+    if (!nextWorkspace) {
+      startNewConversation();
+      return;
+    }
+
+    void (async () => {
+      void persistConversation(activeConversationId, chatMessages);
+      if (nextWorkspace !== workspaceRoot) {
+        try {
+          await api.setWorkspace(nextWorkspace);
+        } catch {
+        }
+      }
+
+      const nextConversationId = createId("conversation");
+      resetAssistantDeltaBuffer();
+      pendingToolCallsRef.current.clear();
+      setChatMessages([]);
+      setChatInput("");
+      setUsageOpen(false);
+      setUsageReport(null);
+      setUsageLoading(false);
+      setUsageError("");
+      setActiveConversationId(nextConversationId);
+      activeAssistantIdRef.current = "";
+      setActiveAssistantId("");
+    })();
+  }, [activeConversationId, chatMessages, persistConversation, resetAssistantDeltaBuffer, startNewConversation, workspaceRoot]);
+
+  const renameConversation = useCallback(async (conversationId: string, nextTitle: string) => {
+    if (activeRequestIdRef.current) return;
+    const safeId = String(conversationId || "").trim();
+    const safeTitle = collapseWhitespace(nextTitle);
+    if (!safeId || !safeTitle) return;
+
+    const current = conversationHistoryRef.current;
+    let found = false;
+    const updated = current.map((entry) => {
+      if (entry.id !== safeId) return entry;
+      found = true;
+      return { ...entry, title: safeTitle };
+    });
+
+    const nextHistory = found
+      ? updated
+      : (
+        safeId === activeConversationId
+          ? [{
+            id: safeId,
+            title: safeTitle,
+            updatedAt: Date.now(),
+            messageCount: chatMessages.length,
+            workspaceRoot: workspaceRoot || null,
+            messages: [...chatMessages],
+          }, ...updated]
+          : updated
+      );
+    nextHistory.sort((a, b) => b.updatedAt - a.updatedAt);
+    conversationHistoryRef.current = nextHistory;
+    setConversationHistory(nextHistory);
+
+    try {
+      await api.renameConversationHistory(safeId, safeTitle);
+      if (safeId === activeConversationId) {
+        await persistConversation(safeId, chatMessages, safeTitle);
+      }
+    } catch {
+    }
+  }, [activeConversationId, chatMessages, persistConversation]);
+
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    if (activeRequestIdRef.current) return;
+    const safeId = String(conversationId || "").trim();
+    if (!safeId) return;
+
+    const filtered = conversationHistoryRef.current
+      .filter((entry) => entry.id !== safeId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    conversationHistoryRef.current = filtered;
+    setConversationHistory(filtered);
+
+    const wasActive = safeId === activeConversationId;
+    if (wasActive) {
+      const nextConversation = filtered[0];
+      resetAssistantDeltaBuffer();
+      pendingToolCallsRef.current.clear();
+      setChatInput("");
+      setUsageOpen(false);
+      setUsageReport(null);
+      setUsageLoading(false);
+      setUsageError("");
+      activeAssistantIdRef.current = "";
+      setActiveAssistantId("");
+
+      if (nextConversation) {
+        setActiveConversationId(nextConversation.id);
+        setChatMessages(nextConversation.messages);
+      } else {
+        setActiveConversationId("");
+        setChatMessages([]);
+      }
+    }
+
+    try {
+      await api.deleteConversationHistory(safeId);
+    } catch {
+    }
+  }, [activeConversationId, resetAssistantDeltaBuffer]);
 
   const applyCompletion = useCallback((completion: CommandCompletionItem) => {
     setChatInput((prev) => applyCommandCompletion(prev, completion.token));
@@ -901,10 +1599,42 @@ export function App() {
       }
 
       try {
-        const workspace = await api.getWorkspace();
-        setWorkspaceRoot(workspace.workspaceRoot ?? "");
+        const initialWorkspace = await api.getWorkspace();
+        const historyPayload = await api.getConversationHistory();
+        const loadedConversations = Array.isArray(historyPayload?.conversations)
+          ? historyPayload.conversations.map(toConversationHistoryItem)
+          : [];
+        setConversationHistory(loadedConversations);
+        const lastConversationId = typeof historyPayload?.lastConversationId === "string"
+          ? historyPayload.lastConversationId
+          : null;
+        const selectedConversation = (
+          loadedConversations.find((entry) => entry.id === lastConversationId)
+          ?? loadedConversations[0]
+        );
+        let resolvedWorkspace = initialWorkspace.workspaceRoot ?? "";
+        const selectedWorkspace = typeof selectedConversation?.workspaceRoot === "string"
+          ? selectedConversation.workspaceRoot.trim()
+          : "";
+        if (selectedWorkspace && selectedWorkspace !== resolvedWorkspace) {
+          try {
+            const switched = await api.setWorkspace(selectedWorkspace);
+            resolvedWorkspace = switched.workspaceRoot ?? selectedWorkspace;
+          } catch {
+            resolvedWorkspace = initialWorkspace.workspaceRoot ?? "";
+          }
+        }
+
+        setWorkspaceRoot(resolvedWorkspace);
         await refreshTree(true);
         await refreshCommandCatalog(true);
+        if (selectedConversation) {
+          setActiveConversationId(selectedConversation.id);
+          setChatMessages(selectedConversation.messages);
+        } else {
+          setActiveConversationId("");
+          setChatMessages([]);
+        }
         setStatus("Ready");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Initialization failed";
@@ -926,8 +1656,8 @@ export function App() {
       if (payload.type === "error") {
         flushAssistantDelta();
         appendChatMessage({
-          id: createId("system"),
-          role: "system",
+          id: createId("error"),
+          role: "error",
           content: formatDesktopError(payload.error ?? "Runtime error", {
             source: payload.source ?? "backend",
             provider: payload.provider,
@@ -1040,10 +1770,16 @@ export function App() {
         platform={platform}
         logoSrc={logoSrc}
         workspaceRoot={workspaceRoot}
+        formattedPath={topbarPath}
+        showTitle={hasActiveConversation || usageOpen}
         sidebarOpen={sidebarOpen}
-        previewOpen={previewOpen}
+        previewOpen={effectivePreviewOpen}
+        previewEnabled={canOpenPreview}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
-        onTogglePreview={() => setPreviewOpen((prev) => !prev)}
+        onTogglePreview={() => {
+          if (!canOpenPreview) return;
+          setPreviewOpen((prev) => !prev);
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className={`workspace-layout ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
@@ -1051,19 +1787,20 @@ export function App() {
           workspaceRoot={workspaceRoot}
           currentFile={currentFile}
           themeLabel={themeLabel}
-          chatCount={chatMessages.length}
+          conversations={sidebarConversations}
+          activeConversationId={activeConversationId}
           isRunning={chatRunning}
           onOpenSettings={() => setSettingsOpen(true)}
-          onPickWorkspace={() => {
-            void pickWorkspace();
-          }}
           onToggleTheme={toggleTheme}
-          onNewThread={clearChat}
+          onNewThread={startNewConversation}
+          onSelectConversation={openConversation}
+          onRenameConversation={renameConversation}
+          onDeleteConversation={deleteConversation}
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen((prev) => !prev)}
         />
-        <main className={`content-layout ${previewOpen ? "preview-open" : "preview-closed"}`}>
-          {previewOpen && (
+        <main className={`content-layout ${effectivePreviewOpen ? "preview-open" : "preview-closed"}`}>
+          {effectivePreviewOpen && (
             <EditorPanel
               currentFile={currentFile}
               editorValue={editorValue}
@@ -1078,22 +1815,38 @@ export function App() {
             />
           )}
           <Profiler id="AgentPanel" onRender={handleAgentPanelRender}>
-            <AgentPanel
-              messages={chatMessages}
-              inputValue={chatInput}
-              isRunning={chatRunning}
-              chatLogRef={chatLogRef}
-              commandCompletions={commandCompletions}
-              onInputChange={setChatInput}
-              onApplyCompletion={applyCompletion}
-              onSend={() => {
-                void sendChat();
-              }}
-              onStop={() => {
-                void stopChat();
-              }}
-              onClear={clearChat}
-            />
+            {usageOpen ? (
+              <UsagePanel
+                report={usageReport}
+                loading={usageLoading}
+                error={usageError}
+                onRefresh={() => {
+                  void refreshUsage();
+                }}
+                onClose={() => setUsageOpen(false)}
+              />
+            ) : (
+              <AgentPanel
+                hasActiveConversation={hasActiveConversation}
+                messages={chatMessages}
+                workspaceRoot={workspaceRoot}
+                recentWorkspaces={recentWorkspaces}
+                inputValue={chatInput}
+                isRunning={chatRunning}
+                chatLogRef={chatLogRef}
+                commandCompletions={commandCompletions}
+                onInputChange={setChatInput}
+                onApplyCompletion={applyCompletion}
+                onSend={() => {
+                  void sendChat();
+                }}
+                onStop={() => {
+                  void stopChat();
+                }}
+                onClear={startNewConversation}
+                onStartInWorkspace={startNewConversationInWorkspace}
+              />
+            )}
           </Profiler>
         </main>
       </div>

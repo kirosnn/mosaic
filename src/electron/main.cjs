@@ -4,6 +4,7 @@ const fsSync = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const readline = require("readline");
+const { homedir } = require("os");
 const { TOPBAR_HEIGHT } = require("./uiConstants.cjs");
 
 const IGNORED_DIRECTORIES = new Set([
@@ -26,12 +27,18 @@ const IGNORED_DIRECTORIES = new Set([
 const MAX_DIRECTORY_ENTRIES = 1500;
 const MAX_READ_FILE_PREVIEW_BYTES = 512 * 1024;
 const FS_CHANGE_BATCH_MS = 220;
+const MAX_FS_CHANGE_BATCH_SIZE = 500;
+const DIRECTORY_CACHE_TTL_MS = 1500;
+const DIRECTORY_CACHE_MAX_ENTRIES = 800;
+const FILE_PREVIEW_CACHE_TTL_MS = 1500;
+const FILE_PREVIEW_CACHE_MAX_ENTRIES = 80;
 const DEFAULT_THEME = "dark";
 const DEFAULT_WINDOW_MODE = "normal";
 const LIGHT_SIDEBAR_COLOR = "#eef2f7";
 const LIGHT_WINDOW_BACKGROUND_COLOR = "#eef2f7";
 const DARK_WINDOW_BACKGROUND_COLOR = "#000000";
 const IS_DEV = !app.isPackaged;
+const HISTORY_LAST_FILENAME = "last.txt";
 
 let workspaceRoot = process.cwd();
 let mainWindow = null;
@@ -51,6 +58,9 @@ const agentBackendPendingRequests = new Map();
 let workspaceWatcher = null;
 let fsChangeFlushTimer = null;
 const pendingFsChanges = new Set();
+const directoryEntryCache = new Map();
+const pendingDirectoryReads = new Map();
+const filePreviewCache = new Map();
 let userPreferences = {
   workspaceRoot,
   theme: DEFAULT_THEME,
@@ -170,14 +180,55 @@ function isIgnoredPath(relativePath) {
 
 function flushFsChanges() {
   if (pendingFsChanges.size === 0) return;
-  const changes = Array.from(pendingFsChanges.values());
+  const changes = pendingFsChanges.size > MAX_FS_CHANGE_BATCH_SIZE
+    ? []
+    : Array.from(pendingFsChanges.values());
   pendingFsChanges.clear();
   sendWindowEvent("fs:changed", { changes });
+}
+
+function trimCacheMap(cache, maxEntries) {
+  if (cache.size <= maxEntries) return;
+  const keys = Array.from(cache.keys());
+  const overflow = cache.size - maxEntries;
+  for (let index = 0; index < overflow; index += 1) {
+    const key = keys[index];
+    if (key !== undefined) {
+      cache.delete(key);
+    }
+  }
+}
+
+function clearFsCaches() {
+  directoryEntryCache.clear();
+  pendingDirectoryReads.clear();
+  filePreviewCache.clear();
+}
+
+function getParentRelativePath(relativePath) {
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized) return "";
+  const index = normalized.lastIndexOf("/");
+  if (index < 0) return "";
+  return normalized.slice(0, index);
+}
+
+function invalidateFsCachesForPath(relativePath) {
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized) {
+    clearFsCaches();
+    return;
+  }
+  const parent = getParentRelativePath(normalized);
+  directoryEntryCache.delete(normalized);
+  directoryEntryCache.delete(parent);
+  filePreviewCache.delete(normalized);
 }
 
 function queueFsChange(relativePath) {
   const normalized = normalizeRelative(relativePath);
   if (!normalized || isIgnoredPath(normalized)) return;
+  invalidateFsCachesForPath(normalized);
   pendingFsChanges.add(normalized);
   if (fsChangeFlushTimer) clearTimeout(fsChangeFlushTimer);
   fsChangeFlushTimer = setTimeout(() => {
@@ -215,60 +266,432 @@ function startWorkspaceWatcher() {
 }
 
 async function readDirectoryEntries(relativePath = "") {
-  const absolutePath = resolveInsideWorkspace(relativePath);
-  const entries = await fs.readdir(absolutePath, { withFileTypes: true });
-  const visibleEntries = entries
-    .filter((entry) => !(entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)))
-    .slice(0, MAX_DIRECTORY_ENTRIES)
-    .map((entry) => {
-      const childRelative = normalizeRelative(toPortablePath(path.join(normalizeRelative(relativePath), entry.name)));
-      return {
-        name: entry.name,
-        relativePath: childRelative,
-        type: entry.isDirectory() ? "directory" : "file",
-      };
-    })
-    .sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  const normalized = normalizeRelative(relativePath);
+  const now = Date.now();
+  const cached = directoryEntryCache.get(normalized);
+  if (cached && cached.expiresAt > now) {
+    return cached.entries;
+  }
 
-  return visibleEntries;
+  const inflight = pendingDirectoryReads.get(normalized);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    const absolutePath = resolveInsideWorkspace(normalized);
+    const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+    const visibleEntries = entries
+      .filter((entry) => !(entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)))
+      .slice(0, MAX_DIRECTORY_ENTRIES)
+      .map((entry) => {
+        const childRelative = normalizeRelative(toPortablePath(path.join(normalized, entry.name)));
+        return {
+          name: entry.name,
+          relativePath: childRelative,
+          type: entry.isDirectory() ? "directory" : "file",
+        };
+      })
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    directoryEntryCache.set(normalized, {
+      expiresAt: Date.now() + DIRECTORY_CACHE_TTL_MS,
+      entries: visibleEntries,
+    });
+    trimCacheMap(directoryEntryCache, DIRECTORY_CACHE_MAX_ENTRIES);
+    return visibleEntries;
+  })();
+
+  pendingDirectoryReads.set(normalized, request);
+  try {
+    return await request;
+  } finally {
+    pendingDirectoryReads.delete(normalized);
+  }
 }
 
 async function readFilePreview(relativePath = "") {
   const normalized = normalizeRelative(relativePath);
+  const now = Date.now();
+  const cached = filePreviewCache.get(normalized);
+  if (cached && cached.expiresAt > now) {
+    return cached.payload;
+  }
+
   const absolutePath = resolveInsideWorkspace(normalized);
   const stat = await fs.stat(absolutePath);
   const totalBytes = Number(stat.size) || 0;
+  let payload;
 
   if (totalBytes <= MAX_READ_FILE_PREVIEW_BYTES) {
     const content = await fs.readFile(absolutePath, "utf8");
-    return {
+    payload = {
       relativePath: normalized,
       content,
       truncated: false,
       totalBytes,
       previewBytes: totalBytes,
     };
+  } else {
+    const fileHandle = await fs.open(absolutePath, "r");
+    try {
+      const buffer = Buffer.alloc(MAX_READ_FILE_PREVIEW_BYTES);
+      const { bytesRead } = await fileHandle.read(buffer, 0, MAX_READ_FILE_PREVIEW_BYTES, 0);
+      const previewBytes = Math.max(0, bytesRead | 0);
+      const content = buffer.subarray(0, previewBytes).toString("utf8");
+      payload = {
+        relativePath: normalized,
+        content,
+        truncated: true,
+        totalBytes,
+        previewBytes,
+      };
+    } finally {
+      await fileHandle.close();
+    }
   }
 
-  const fileHandle = await fs.open(absolutePath, "r");
-  try {
-    const buffer = Buffer.alloc(MAX_READ_FILE_PREVIEW_BYTES);
-    const { bytesRead } = await fileHandle.read(buffer, 0, MAX_READ_FILE_PREVIEW_BYTES, 0);
-    const previewBytes = Math.max(0, bytesRead | 0);
-    const content = buffer.subarray(0, previewBytes).toString("utf8");
-    return {
-      relativePath: normalized,
-      content,
-      truncated: true,
-      totalBytes,
-      previewBytes,
-    };
-  } finally {
-    await fileHandle.close();
+  filePreviewCache.set(normalized, {
+    expiresAt: Date.now() + FILE_PREVIEW_CACHE_TTL_MS,
+    totalBytes,
+    mtimeMs: Number(stat.mtimeMs) || 0,
+    payload,
+  });
+  trimCacheMap(filePreviewCache, FILE_PREVIEW_CACHE_MAX_ENTRIES);
+  return payload;
+}
+
+function setWorkspaceRoot(nextWorkspaceRoot, options = {}) {
+  const normalized = sanitizeWorkspaceRoot(nextWorkspaceRoot);
+  if (normalized === workspaceRoot) {
+    return { changed: false, workspaceRoot };
   }
+  workspaceRoot = normalized;
+  userPreferences.workspaceRoot = workspaceRoot;
+  clearFsCaches();
+  savePreferences();
+  startWorkspaceWatcher();
+  if (options.emitEvent !== false) {
+    sendWindowEvent("workspace:changed", { workspaceRoot });
+  }
+  return { changed: true, workspaceRoot };
+}
+
+function getHistoryDir() {
+  const historyDir = path.join(homedir(), ".mosaic", "history");
+  if (!fsSync.existsSync(historyDir)) {
+    fsSync.mkdirSync(historyDir, { recursive: true });
+  }
+  return historyDir;
+}
+
+function getLastConversationFilePath() {
+  return path.join(getHistoryDir(), HISTORY_LAST_FILENAME);
+}
+
+function sanitizeConversationId(value) {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!id) return "";
+  if (!/^[a-zA-Z0-9._-]+$/.test(id)) return "";
+  return id;
+}
+
+function getConversationFilePath(id) {
+  const safeId = sanitizeConversationId(id);
+  if (!safeId) {
+    throw new Error("Invalid conversation id");
+  }
+  return path.join(getHistoryDir(), `${safeId}.json`);
+}
+
+function normalizeConversationStep(input, fallbackTimestamp) {
+  if (!input || typeof input !== "object") return null;
+  const type = (
+    input.type === "user"
+    || input.type === "assistant"
+    || input.type === "tool"
+    || input.type === "system"
+  )
+    ? input.type
+    : "";
+  if (!type) return null;
+  const content = typeof input.content === "string" ? input.content : String(input.content ?? "");
+  const timestampValue = Number(input.timestamp);
+  const timestamp = Number.isFinite(timestampValue) && timestampValue > 0 ? Math.floor(timestampValue) : fallbackTimestamp;
+  const step = {
+    ...input,
+    type,
+    content,
+    timestamp,
+  };
+  return step;
+}
+
+function normalizeConversationRecord(input, fallbackTimestamp = Date.now()) {
+  if (!input || typeof input !== "object") return null;
+  const id = sanitizeConversationId(input.id);
+  if (!id) return null;
+  const rawSteps = Array.isArray(input.steps) ? input.steps : [];
+  const steps = rawSteps
+    .map((step, index) => normalizeConversationStep(step, fallbackTimestamp + index))
+    .filter(Boolean);
+  const timestampValue = Number(input.timestamp);
+  const timestamp = Number.isFinite(timestampValue) && timestampValue > 0 ? Math.floor(timestampValue) : fallbackTimestamp;
+
+  const record = {
+    ...input,
+    id,
+    timestamp,
+    steps,
+    totalSteps: Number.isFinite(Number(input.totalSteps)) && Number(input.totalSteps) >= 0
+      ? Math.floor(Number(input.totalSteps))
+      : steps.length,
+  };
+
+  if (typeof input.title === "string" || input.title === null) {
+    record.title = input.title;
+  }
+  if (typeof input.workspace === "string" || input.workspace === null) {
+    record.workspace = input.workspace;
+  }
+  if (typeof input.model === "string") {
+    record.model = input.model;
+  }
+  if (typeof input.provider === "string") {
+    record.provider = input.provider;
+  }
+  if (typeof input.titleEdited === "boolean") {
+    record.titleEdited = input.titleEdited;
+  }
+  if (input.totalTokens && typeof input.totalTokens === "object") {
+    const prompt = Number(input.totalTokens.prompt);
+    const completion = Number(input.totalTokens.completion);
+    const total = Number(input.totalTokens.total);
+    if (Number.isFinite(prompt) && Number.isFinite(completion) && Number.isFinite(total)) {
+      record.totalTokens = {
+        prompt: Math.max(0, Math.floor(prompt)),
+        completion: Math.max(0, Math.floor(completion)),
+        total: Math.max(0, Math.floor(total)),
+      };
+    }
+  }
+
+  return record;
+}
+
+function areConversationStepsEquivalent(left, right) {
+  if (!left || !right) return false;
+  if (left.type !== right.type) return false;
+  if (String(left.content || "") !== String(right.content || "")) return false;
+  return true;
+}
+
+function mergeConversationSteps(existingSteps, nextSteps) {
+  const existing = Array.isArray(existingSteps) ? existingSteps : [];
+  const incoming = Array.isArray(nextSteps) ? nextSteps : [];
+  if (existing.length === 0) return incoming;
+  if (incoming.length === 0) return existing;
+
+  const merged = [];
+  let existingIndex = 0;
+
+  for (const step of incoming) {
+    const currentExisting = existing[existingIndex];
+    if (currentExisting && currentExisting.type === step.type) {
+      merged.push({ ...currentExisting, ...step });
+      existingIndex += 1;
+      continue;
+    }
+
+    let matchedIndex = -1;
+    for (let cursor = existingIndex; cursor < existing.length; cursor += 1) {
+      if (areConversationStepsEquivalent(existing[cursor], step)) {
+        matchedIndex = cursor;
+        break;
+      }
+    }
+
+    if (matchedIndex >= 0) {
+      for (let cursor = existingIndex; cursor < matchedIndex; cursor += 1) {
+        merged.push(existing[cursor]);
+      }
+      merged.push({ ...existing[matchedIndex], ...step });
+      existingIndex = matchedIndex + 1;
+      continue;
+    }
+
+    merged.push(step);
+  }
+
+  for (let cursor = existingIndex; cursor < existing.length; cursor += 1) {
+    merged.push(existing[cursor]);
+  }
+
+  return merged;
+}
+
+function getLastConversationId() {
+  const filepath = getLastConversationFilePath();
+  if (!fsSync.existsSync(filepath)) return null;
+  try {
+    const value = String(fsSync.readFileSync(filepath, "utf8") || "").trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function setLastConversationId(id) {
+  const value = sanitizeConversationId(id);
+  if (!value) return;
+  const filepath = getLastConversationFilePath();
+  try {
+    fsSync.writeFileSync(filepath, value, "utf8");
+  } catch {
+  }
+}
+
+function clearLastConversationId() {
+  const filepath = getLastConversationFilePath();
+  try {
+    fsSync.writeFileSync(filepath, "", "utf8");
+  } catch {
+  }
+}
+
+function listConversationHistory() {
+  const historyDir = getHistoryDir();
+  const files = fsSync.readdirSync(historyDir)
+    .filter((file) => file.endsWith(".json") && file !== "inputs.json");
+  const conversations = [];
+
+  for (const file of files) {
+    const filepath = path.join(historyDir, file);
+    try {
+      const raw = fsSync.readFileSync(filepath, "utf8");
+      const parsed = JSON.parse(raw);
+      const fallbackTimestamp = (() => {
+        try {
+          const stat = fsSync.statSync(filepath);
+          return Math.floor(stat.mtimeMs || Date.now());
+        } catch {
+          return Date.now();
+        }
+      })();
+      const normalized = normalizeConversationRecord(parsed, fallbackTimestamp);
+      if (!normalized || !Array.isArray(normalized.steps)) continue;
+      conversations.push(normalized);
+    } catch {
+    }
+  }
+
+  conversations.sort((a, b) => b.timestamp - a.timestamp);
+  return {
+    conversations,
+    lastConversationId: getLastConversationId(),
+  };
+}
+
+function saveConversationHistory(conversation) {
+  const normalized = normalizeConversationRecord(conversation, Date.now());
+  if (!normalized) {
+    throw new Error("Invalid conversation payload");
+  }
+  const filepath = getConversationFilePath(normalized.id);
+  let finalRecord = normalized;
+  if (fsSync.existsSync(filepath)) {
+    try {
+      const existingRaw = fsSync.readFileSync(filepath, "utf8");
+      const existingParsed = JSON.parse(existingRaw);
+      const existing = normalizeConversationRecord(existingParsed, normalized.timestamp);
+      if (existing) {
+        const mergedSteps = mergeConversationSteps(existing.steps, normalized.steps);
+        finalRecord = {
+          ...existing,
+          ...normalized,
+          timestamp: Math.max(Number(existing.timestamp) || 0, Number(normalized.timestamp) || 0),
+          steps: mergedSteps,
+          totalSteps: mergedSteps.length,
+        };
+        if ((finalRecord.title === undefined || finalRecord.title === null || finalRecord.title === "") && existing.title) {
+          finalRecord.title = existing.title;
+        }
+        if ((finalRecord.workspace === undefined || finalRecord.workspace === null || finalRecord.workspace === "") && existing.workspace) {
+          finalRecord.workspace = existing.workspace;
+        }
+        if (!finalRecord.model && existing.model) {
+          finalRecord.model = existing.model;
+        }
+        if (!finalRecord.provider && existing.provider) {
+          finalRecord.provider = existing.provider;
+        }
+        if (!finalRecord.totalTokens && existing.totalTokens) {
+          finalRecord.totalTokens = existing.totalTokens;
+        }
+        if (typeof finalRecord.titleEdited !== "boolean" && typeof existing.titleEdited === "boolean") {
+          finalRecord.titleEdited = existing.titleEdited;
+        }
+      }
+    } catch {
+    }
+  }
+  fsSync.writeFileSync(filepath, JSON.stringify(finalRecord, null, 2), "utf8");
+  setLastConversationId(finalRecord.id);
+  return { ok: true };
+}
+
+function renameConversationHistory(id, title) {
+  const safeId = sanitizeConversationId(id);
+  const nextTitle = typeof title === "string" ? title.trim() : "";
+  if (!safeId || !nextTitle) {
+    throw new Error("Invalid rename payload");
+  }
+  const filepath = getConversationFilePath(safeId);
+  if (!fsSync.existsSync(filepath)) {
+    return { ok: false };
+  }
+  const fallbackTimestamp = (() => {
+    try {
+      const stat = fsSync.statSync(filepath);
+      return Math.floor(stat.mtimeMs || Date.now());
+    } catch {
+      return Date.now();
+    }
+  })();
+  const raw = fsSync.readFileSync(filepath, "utf8");
+  const parsed = JSON.parse(raw);
+  const normalized = normalizeConversationRecord(parsed, fallbackTimestamp);
+  if (!normalized) {
+    return { ok: false };
+  }
+  normalized.title = nextTitle;
+  normalized.titleEdited = true;
+  fsSync.writeFileSync(filepath, JSON.stringify(normalized, null, 2), "utf8");
+  return { ok: true };
+}
+
+function deleteConversationHistory(id) {
+  const safeId = sanitizeConversationId(id);
+  if (!safeId) {
+    throw new Error("Invalid conversation id");
+  }
+  const filepath = getConversationFilePath(safeId);
+  if (fsSync.existsSync(filepath)) {
+    fsSync.unlinkSync(filepath);
+  }
+  const lastConversationId = getLastConversationId();
+  if (lastConversationId === safeId) {
+    const fallback = listConversationHistory().conversations[0];
+    if (fallback?.id) {
+      setLastConversationId(fallback.id);
+    } else {
+      clearLastConversationId();
+    }
+  }
+  return { ok: true };
 }
 
 function getBunExecutable() {
@@ -787,12 +1210,12 @@ ipcMain.handle("workspace:pick", async () => {
     return { changed: false, workspaceRoot };
   }
 
-  workspaceRoot = result.filePaths[0];
-  userPreferences.workspaceRoot = workspaceRoot;
-  savePreferences();
-  startWorkspaceWatcher();
-  sendWindowEvent("workspace:changed", { workspaceRoot });
-  return { changed: true, workspaceRoot };
+  return setWorkspaceRoot(result.filePaths[0], { emitEvent: true });
+});
+
+ipcMain.handle("workspace:set", async (_event, payload) => {
+  const requested = typeof payload?.workspaceRoot === "string" ? payload.workspaceRoot : "";
+  return setWorkspaceRoot(requested, { emitEvent: true });
 });
 
 ipcMain.handle("preferences:get", async () => {
@@ -863,6 +1286,22 @@ ipcMain.handle("chat:start", async (_event, payload) => {
 
 ipcMain.handle("chat:cancel", async (_event, payload) => {
   return { cancelled: await cancelChat(payload?.requestId ?? "") };
+});
+
+ipcMain.handle("history:list", async () => {
+  return listConversationHistory();
+});
+
+ipcMain.handle("history:save", async (_event, payload) => {
+  return saveConversationHistory(payload?.conversation);
+});
+
+ipcMain.handle("history:rename", async (_event, payload) => {
+  return renameConversationHistory(payload?.id, payload?.title);
+});
+
+ipcMain.handle("history:delete", async (_event, payload) => {
+  return deleteConversationHistory(payload?.id);
 });
 
 ipcMain.handle("command:catalog", async () => {
