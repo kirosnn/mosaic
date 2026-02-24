@@ -1,4 +1,5 @@
 import type { ImageAttachment } from '../images';
+import type { UsageReport } from '../usage';
 
 export interface SelectOption {
   name: string;
@@ -17,6 +18,8 @@ export interface CommandResult {
   shouldClearMessages?: boolean;
   shouldCompactMessages?: boolean;
   compactMaxTokens?: number;
+  openUsageView?: boolean;
+  usageReport?: UsageReport;
   showSelectMenu?: {
     title: string;
     options: SelectOption[];

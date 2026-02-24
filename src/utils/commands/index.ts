@@ -11,6 +11,7 @@ import { providerCommand } from './provider';
 import { modelCommand } from './model';
 import { contextCommand } from './context';
 import { skillCommand } from './skill';
+import { usageCommand } from './usage';
 import { buildForcedSkillInvocationPrompt, resolveSkillSlashCommand } from '../skills';
 
 export { commandRegistry } from './registry';
@@ -93,4 +94,5 @@ export function initializeCommands(): void {
   commandRegistry.register(modelCommand);
   commandRegistry.register(contextCommand);
   commandRegistry.register(skillCommand);
+  commandRegistry.register(usageCommand);
 }
