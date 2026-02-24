@@ -41,6 +41,8 @@ interface ParsedArgs {
   mcpArgs?: string[];
   authCommand?: boolean;
   authArgs?: string[];
+  usageCommand?: boolean;
+  usageArgs?: string[];
   resumeCommand?: boolean;
   resumeId?: string;
 }
@@ -88,6 +90,10 @@ class CLI {
         parsed.authCommand = true;
         parsed.authArgs = args.slice(i + 1);
         i = args.length;
+      } else if (arg === 'usage') {
+        parsed.usageCommand = true;
+        parsed.usageArgs = args.slice(i + 1);
+        i = args.length;
       } else if (!arg.startsWith('-')) {
         parsed.directory = arg;
         i++;
@@ -120,6 +126,7 @@ ${gold('Commands')}
   resume [id]               ${gray('Open a menu to resume a previous conversation session (or resume directly by id)')}
   auth <subcommand>         ${gray('Manage API keys and authentication')}
   mcp <subcommand>          ${gray('Manage Model Context Protocol (MCP) servers')}
+  usage [options]           ${gray('Open usage dashboard in TUI')}
   uninstall [--force]       ${gray('Uninstall Mosaic from your system')}
 
 ${gold('Auth Subcommands')}
@@ -143,6 +150,7 @@ ${gold('Examples')}
   ${gray('mosaic resume <id>')}                  # Resume a specific session by id
   ${gray('mosaic auth set --provider openai --token sk-...')} # Store an API key
   ${gray('mosaic mcp list')}                     # Check connected tools
+  ${gray('mosaic usage --workspace')}            # Open usage dashboard for current workspace only
   ${gray('mosaic uninstall --force')}            # Completely remove Mosaic
 `);
   }
@@ -181,6 +189,12 @@ if (parsed.authCommand) {
   const { runAuthCli } = await import('./auth/cli');
   await runAuthCli(parsed.authArgs ?? []);
   process.exit(0);
+}
+
+if (parsed.usageCommand) {
+  const usageArgs = parsed.usageArgs ?? [];
+  const suffix = usageArgs.join(' ').trim();
+  parsed.initialMessage = suffix ? `/usage ${suffix}` : '/usage';
 }
 
 if (parsed.directory) {
