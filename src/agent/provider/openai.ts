@@ -9,6 +9,9 @@ import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
 import { ContextGuard } from './contextGuard';
+import { createWebSocketFetch } from 'ai-sdk-openai-websocket-fetch';
+
+const wsFetch = createWebSocketFetch();
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -16,10 +19,12 @@ function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   }
   if (schema instanceof z.ZodEffects) {
     const inner = unwrapOptional(schema.innerType());
-    return inner === schema.innerType() ? schema : new z.ZodEffects({
-      ...schema._def,
-      schema: inner,
-    });
+    return inner === schema.innerType()
+      ? schema
+      : new z.ZodEffects({
+        ...schema._def,
+        schema: inner,
+      });
   }
   return schema;
 }
@@ -130,9 +135,8 @@ export class OpenAIProvider implements Provider {
       const active = await refreshOauthIfNeeded();
       const accessToken = active?.accessToken;
       const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
-      const accountId = typeof tokenPayload?.chatgpt_account_id === 'string'
-        ? tokenPayload.chatgpt_account_id
-        : undefined;
+      const accountId =
+        typeof tokenPayload?.chatgpt_account_id === 'string' ? tokenPayload.chatgpt_account_id : undefined;
 
       const headers = new Headers(input instanceof Request ? input.headers : undefined);
       if (init?.headers) {
@@ -146,7 +150,7 @@ export class OpenAIProvider implements Provider {
       headers.set('originator', 'codex_cli_rs');
       if (accountId) headers.set('chatgpt-account-id', accountId);
 
-      let url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url);
+      let url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const originalUrl = url;
       if (url.includes('/v1/responses')) {
         url = url.replace('/v1/responses', '/codex/responses');
@@ -159,7 +163,9 @@ export class OpenAIProvider implements Provider {
         headers,
       };
 
-      const method = (nextInit.method || (input instanceof Request ? input.method : 'GET')).toString().toUpperCase();
+      const method = (nextInit.method || (input instanceof Request ? input.method : 'GET'))
+        .toString()
+        .toUpperCase();
       if (method === 'POST') {
         const contentType = headers.get('content-type') ?? '';
         let bodyText: string | undefined;
@@ -198,7 +204,10 @@ export class OpenAIProvider implements Provider {
         }
       }
       const bodySize = typeof nextInit.body === 'string' ? nextInit.body.length : 0;
-      debugLog(`[oauth][openai] ${method} ${originalUrl} -> ${url} bodySize=${bodySize} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
+      debugLog(
+        `[oauth][openai] ${method} ${originalUrl} -> ${url} bodySize=${bodySize} token=${maskToken(accessToken)} account=${accountId ?? ''
+        }`
+      );
       const res = await fetch(url, nextInit);
       if (!res.ok) {
         const text = await res.clone().text();
@@ -207,10 +216,14 @@ export class OpenAIProvider implements Provider {
       return res;
     };
 
+    const transportFetch = oauthAuth
+      ? (fetchWithOAuth as typeof fetch)
+      : (wsFetch as unknown as typeof fetch);
+
     const openai = createOpenAI({
       apiKey: oauthAuth ? 'oauth' : cleanApiKey,
       baseURL: oauthAuth ? 'https://chatgpt.com/backend-api' : undefined,
-      fetch: oauthAuth ? (fetchWithOAuth as typeof fetch) : undefined,
+      fetch: transportFetch,
       compatibility: oauthAuth ? 'compatible' : undefined,
     });
 
@@ -231,10 +244,7 @@ export class OpenAIProvider implements Provider {
       endpoint: OpenAIEndpoint,
       strictJsonSchema: boolean
     ): AsyncGenerator<AgentEvent> {
-      const toolsToUse =
-        endpoint === 'responses'
-          ? transformToolsForResponsesApi(config.tools)
-          : config.tools;
+      const toolsToUse = endpoint === 'responses' ? transformToolsForResponsesApi(config.tools) : config.tools;
 
       const outputLimit = config.maxOutputTokens ?? 16384;
       const useOutputLimit = !oauthAuth;
@@ -296,8 +306,7 @@ export class OpenAIProvider implements Provider {
             hasEmitted = true;
             yield {
               type: 'step-finish',
-              stepNumber:
-                typeof c.stepIndex === 'number' ? c.stepIndex : Math.max(0, stepCounter - 1),
+              stepNumber: typeof c.stepIndex === 'number' ? c.stepIndex : Math.max(0, stepCounter - 1),
               finishReason: String(c.finishReason ?? 'stop'),
             };
             break;
@@ -330,9 +339,8 @@ export class OpenAIProvider implements Provider {
           case 'finish': {
             hasEmitted = true;
             const finishReason = String(c.finishReason ?? 'stop');
-            const effectiveFinishReason = finishReason === 'stop' && sanitizer.wasTruncated()
-              ? 'length'
-              : finishReason;
+            const effectiveFinishReason =
+              finishReason === 'stop' && sanitizer.wasTruncated() ? 'length' : finishReason;
             if (effectiveFinishReason !== finishReason) {
               debugLog('[openai] finish reason remapped stop->length due to sanitizer truncation');
             }
@@ -380,10 +388,7 @@ export class OpenAIProvider implements Provider {
     };
 
     try {
-      yield* runWithRetry(
-        () => runOnce('responses', false),
-        { abortSignal: options?.abortSignal, key: config.provider }
-      );
+      yield* runWithRetry(() => runOnce('responses', false), { abortSignal: options?.abortSignal, key: config.provider });
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
@@ -399,10 +404,10 @@ export class OpenAIProvider implements Provider {
       const fallbackEndpoint = classifyEndpointError(msg);
       if (fallbackEndpoint && fallbackEndpoint !== 'responses') {
         try {
-          yield* runWithRetry(
-            () => runOnce(fallbackEndpoint, false),
-            { abortSignal: options?.abortSignal, key: config.provider }
-          );
+          yield* runWithRetry(() => runOnce(fallbackEndpoint, false), {
+            abortSignal: options?.abortSignal,
+            key: config.provider,
+          });
           return;
         } catch (endpointError) {
           if (options?.abortSignal?.aborted) return;
