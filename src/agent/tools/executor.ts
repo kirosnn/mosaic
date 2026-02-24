@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, appendFile, stat, mkdir, realpath } from 'fs/promises';
+import { readFile, writeFile, readdir, stat, mkdir, realpath, unlink } from 'fs/promises';
 import { join, resolve, dirname, extname, sep } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -8,7 +8,8 @@ import { getLocalBashDecision } from '../../utils/localRules';
 import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import { debugLog } from '../../utils/debug';
-import { addPendingChange } from '../../utils/pendingChangesBridge';
+import { addPendingChange, clearPendingChanges, hasPendingChanges, isInReviewMode, startReview } from '../../utils/pendingChangesBridge';
+import { tokenizeCommand } from '../../utils/commandPattern';
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
@@ -79,6 +80,73 @@ const DANGEROUS_BASH_PATTERNS = [
 ];
 
 const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
+const ASSIGNMENT_TOKEN_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+const POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS = new Set([
+  'node',
+  'deno',
+  'python',
+  'python3',
+  'ruby',
+  'php',
+  'perl',
+  'bash',
+  'sh',
+  'zsh',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'npm',
+  'npx',
+  'yarn',
+  'pnpm',
+  'bun',
+  'tsc',
+  'eslint',
+  'prettier',
+  'jest',
+  'vitest',
+  'mocha',
+  'cargo',
+  'rustc',
+  'go',
+  'java',
+  'javac',
+  'dotnet',
+  'wget',
+]);
+
+function normalizeCommandName(token: string): string {
+  const lower = token.toLowerCase();
+  const slashIndex = Math.max(lower.lastIndexOf('/'), lower.lastIndexOf('\\'));
+  const basename = slashIndex >= 0 ? lower.slice(slashIndex + 1) : lower;
+  return basename.endsWith('.exe') ? basename.slice(0, -4) : basename;
+}
+
+function getInvokedCommandName(command: string): string {
+  const tokens = tokenizeCommand(command);
+  if (tokens.length === 0) return '';
+  let commandIndex = 0;
+  while (commandIndex < tokens.length && ASSIGNMENT_TOKEN_PATTERN.test(tokens[commandIndex] ?? '')) {
+    commandIndex++;
+  }
+  if (commandIndex >= tokens.length) return '';
+  return normalizeCommandName(tokens[commandIndex] ?? '');
+}
+
+function hasPotentiallyMutatingSafeBashSegment(command: string): boolean {
+  const parsed = splitTopLevelBashSegments(command);
+  if (parsed.hasUnsupportedSyntax || parsed.segments.length === 0) {
+    const commandName = getInvokedCommandName(command);
+    return commandName ? POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS.has(commandName) : false;
+  }
+  for (const segment of parsed.segments) {
+    const commandName = getInvokedCommandName(segment);
+    if (commandName && POTENTIALLY_MUTATING_SAFE_BASH_COMMANDS.has(commandName)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
@@ -383,6 +451,99 @@ export interface ToolResult {
   diff?: string[];
 }
 
+interface ReviewDecisionCounts {
+  reviewedCount: number;
+  keptCount: number;
+  deniedCount: number;
+}
+
+function countReviewDecisions(results: boolean[]): ReviewDecisionCounts {
+  let keptCount = 0;
+  let deniedCount = 0;
+  for (const approved of results) {
+    if (approved) keptCount++;
+    else deniedCount++;
+  }
+  return {
+    reviewedCount: results.length,
+    keptCount,
+    deniedCount,
+  };
+}
+
+function buildReviewRejectionResult(operation: string, counts: ReviewDecisionCounts): ToolResult | null {
+  if (counts.deniedCount <= 0) return null;
+
+  const summary = counts.reviewedCount > 0
+    ? `${counts.keptCount} kept, ${counts.deniedCount} denied`
+    : `${counts.deniedCount} denied`;
+  const userMessage = counts.deniedCount > 1 ? 'Changes denied by user' : 'Change denied by user';
+  const error = `OPERATION REJECTED BY USER DURING REVIEW: ${operation}
+
+Review summary: ${summary}
+
+REQUIRED ACTION: You MUST use the question tool immediately to ask what to do next.
+DO NOT proceed as if this change was accepted.`;
+
+  return {
+    success: false,
+    error,
+    userMessage,
+  };
+}
+
+function buildReviewUnavailableResult(operation: string): ToolResult {
+  const error = `REVIEW UNAVAILABLE FOR OPERATION: ${operation}
+
+No review decision was captured, so the change was reverted for safety.
+
+REQUIRED ACTION: Ask the user to retry and confirm the change in review.`;
+
+  return {
+    success: false,
+    error,
+    userMessage: 'Review unavailable, change reverted',
+  };
+}
+
+async function restoreWorkspaceFile(workspace: string, relativePath: string, content: string): Promise<void> {
+  const fullPath = resolve(workspace, relativePath);
+  if (content === '') {
+    try {
+      await unlink(fullPath);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err?.code !== 'ENOENT') throw error;
+    }
+    return;
+  }
+
+  await mkdir(dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, 'utf-8');
+}
+
+async function enforceSingleReviewDecision(
+  workspace: string,
+  path: string,
+  oldContent: string,
+  operation: string,
+  reviewResults: boolean[],
+): Promise<ToolResult | null> {
+  if (reviewResults.length === 0) {
+    await restoreWorkspaceFile(workspace, path, oldContent);
+    clearPendingChanges();
+    return buildReviewUnavailableResult(operation);
+  }
+
+  const counts = countReviewDecisions(reviewResults);
+  if (counts.deniedCount > 0) {
+    await restoreWorkspaceFile(workspace, path, oldContent);
+    return buildReviewRejectionResult(operation, counts);
+  }
+
+  return null;
+}
+
 export interface ExecuteToolOptions {
   skipApproval?: boolean;
 }
@@ -442,6 +603,13 @@ interface WorkspaceReviewSnapshot {
   skipped: number;
 }
 
+interface WorkspaceReviewOutcome {
+  changedCount: number;
+  reviewedCount: number;
+  keptCount: number;
+  deniedCount: number;
+}
+
 function normalizeWorkspaceRelativePath(path: string): string {
   return path.split(sep).join('/');
 }
@@ -455,6 +623,7 @@ function shouldTrackBashFileChanges(command: string): boolean {
   if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
   if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
   if (BASH_REDIRECTION_PATTERN.test(trimmed)) return true;
+  if (hasPotentiallyMutatingSafeBashSegment(trimmed)) return true;
   if (isReadOnlyBashCommandChain(trimmed)) return false;
 
   return !isSafeBashCommand(trimmed);
@@ -531,11 +700,23 @@ async function captureWorkspaceReviewSnapshot(workspace: string): Promise<Worksp
   return { files, truncated, skipped };
 }
 
-async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceReviewSnapshot | null): Promise<number> {
-  if (!before) return 0;
+async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceReviewSnapshot | null): Promise<WorkspaceReviewOutcome> {
+  if (!before) {
+    debugLog('[review] bash track skipped reason=no_snapshot_before');
+    return {
+      changedCount: 0,
+      reviewedCount: 0,
+      keptCount: 0,
+      deniedCount: 0,
+    };
+  }
   const after = await captureWorkspaceReviewSnapshot(workspace);
   const allPaths = Array.from(new Set([...before.files.keys(), ...after.files.keys()])).sort((a, b) => a.localeCompare(b));
   let changedCount = 0;
+  let reviewedCount = 0;
+  let keptCount = 0;
+  let deniedCount = 0;
+  const changedEntries: Array<{ path: string; oldContent: string; newContent: string }> = [];
 
   for (const path of allPaths) {
     const oldContent = before.files.get(path) ?? '';
@@ -553,18 +734,64 @@ async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceRev
         ? `Delete (${path})`
         : `Edit (${path})`;
 
-    addPendingChange(type, path, oldContent, newContent, {
+    addPendingChange(type, 'bash', path, oldContent, newContent, {
       title,
       content: diffLines.join('\n'),
     });
+    changedEntries.push({ path, oldContent, newContent });
     changedCount++;
+  }
+
+  debugLog(
+    `[review] bash track changedCount=${changedCount} pending=${hasPendingChanges()} inReview=${isInReviewMode()}`,
+  );
+
+  if (changedCount > 0 && hasPendingChanges() && !isInReviewMode()) {
+    debugLog('[review] bash startReview requested');
+    const reviewResults = await startReview();
+    if (reviewResults.length === 0) {
+      debugLog('[review] bash startReview returned no decisions; restoring all changed entries');
+      for (const entry of changedEntries) {
+        await restoreWorkspaceFile(workspace, entry.path, entry.oldContent);
+      }
+      clearPendingChanges();
+      deniedCount = changedEntries.length;
+    } else {
+      const counts = countReviewDecisions(reviewResults);
+      reviewedCount = counts.reviewedCount;
+      keptCount = counts.keptCount;
+      deniedCount = counts.deniedCount;
+      debugLog(
+        `[review] bash review decisions reviewed=${reviewedCount} kept=${keptCount} denied=${deniedCount} bits=${reviewResults.map(v => (v ? '1' : '0')).join('')}`,
+      );
+
+      for (let i = 0; i < changedEntries.length; i++) {
+        if (reviewResults[i] === false) {
+          const entry = changedEntries[i];
+          if (entry) {
+            await restoreWorkspaceFile(workspace, entry.path, entry.oldContent);
+          }
+        }
+      }
+    }
+  } else if (changedCount > 0) {
+    debugLog(
+      `[review] bash review skipped changedCount=${changedCount} hasPending=${hasPendingChanges()} inReview=${isInReviewMode()}`,
+    );
+  } else {
+    debugLog('[review] bash track found no filesystem changes');
   }
 
   if (before.truncated || before.skipped > 0 || after.truncated || after.skipped > 0) {
     debugLog(`[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={files:${after.files.size},truncated:${after.truncated},skipped:${after.skipped}}`);
   }
 
-  return changedCount;
+  return {
+    changedCount,
+    reviewedCount,
+    keptCount,
+    deniedCount,
+  };
 }
 
 function matchGlob(filename: string, pattern: string): boolean {
@@ -1005,6 +1232,13 @@ export async function executeTool(toolName: string, args: Record<string, unknown
     const bypassBashApproval = isBashTool && options.skipApproval === true;
 
     if (isBashTool) {
+      const commandPreview = bashCommand.replace(/\s+/g, ' ').trim().slice(0, 180);
+      debugLog(
+        `[review] bash gate setup approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval} localDecision=${localBashDecision ?? 'none'} command="${commandPreview}"`,
+      );
+    }
+
+    if (isBashTool) {
       if (localBashDecision === 'disallow') {
         return {
           success: false,
@@ -1018,12 +1252,21 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
     const bashNeedsApproval = isBashTool && !bypassBashApproval && !isSafeBashCommand(bashCommand) && approvalsEnabled
       && localBashDecision !== 'auto-run';
-    const shouldTrackBashChanges = isBashTool && !bypassBashApproval && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
+    const shouldTrackBashChanges = isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
     let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
+
+    if (isBashTool) {
+      debugLog(
+        `[review] bash gate decision needsApproval=${bashNeedsApproval} shouldTrackChanges=${shouldTrackBashChanges}`,
+      );
+    }
 
     if (bashNeedsApproval) {
       const preview = await generatePreview(toolName, args, workspace);
       const approvalResult = await requestApproval('bash', args, preview);
+      debugLog(
+        `[review] bash approval result approved=${approvalResult.approved} customResponse=${approvalResult.customResponse ? 'yes' : 'no'}`,
+      );
 
       if (!approvalResult.approved) {
         if (approvalResult.customResponse) {
@@ -1072,11 +1315,19 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
     if (shouldTrackBashChanges) {
       try {
+        debugLog('[review] bash snapshot-before start');
         bashSnapshotBefore = await captureWorkspaceReviewSnapshot(workspace);
+        debugLog(
+          `[review] bash snapshot-before captured files=${bashSnapshotBefore.files.size} truncated=${bashSnapshotBefore.truncated} skipped=${bashSnapshotBefore.skipped}`,
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         debugLog(`[tool] bash snapshot-before failed: ${message}`);
       }
+    } else if (isBashTool) {
+      debugLog(
+        `[review] bash tracking skipped approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval}`,
+      );
     }
 
     switch (toolName) {
@@ -1143,10 +1394,50 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
 
         if (append) {
-          await appendFile(fullPath, content, 'utf-8');
+          const updatedContent = `${oldContent}${content}`;
+          await writeFile(fullPath, updatedContent, 'utf-8');
+
+          if (!content || content.trim() === '') {
+            return {
+              success: true,
+              result: `Content appended successfully to: ${path}`
+            };
+          }
+
+          trackFileChange(path, oldContent, updatedContent);
+
+          const diff = generateDiff(oldContent, updatedContent);
+          const diffLines = formatDiffForDisplay(diff);
+
+          if (approvalsEnabled) {
+            addPendingChange(oldContent === '' ? 'write' : 'edit', 'write', path, oldContent, updatedContent, {
+              title: `Write (${path})`,
+              content: diffLines.join('\n'),
+            });
+            let reviewResults: boolean[] = [];
+            if (hasPendingChanges() && !isInReviewMode()) {
+              reviewResults = await startReview();
+            }
+            debugLog(
+              `[review] write/append review path=${path} decisions=${reviewResults.length}`,
+            );
+
+            const reviewResult = await enforceSingleReviewDecision(
+              workspace,
+              path,
+              oldContent,
+              `appending file: ${path}`,
+              reviewResults,
+            );
+            if (reviewResult) return reviewResult;
+          } else {
+            debugLog(`[review] write/append auto-apply path=${path} approvalsEnabled=false`);
+          }
+
           return {
             success: true,
-            result: `Content appended successfully to: ${path}`
+            result: `Content appended successfully to: ${path}`,
+            diff: diffLines,
           };
         } else {
           await writeFile(fullPath, content, 'utf-8');
@@ -1163,11 +1454,29 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const diff = generateDiff(oldContent, content);
           const diffLines = formatDiffForDisplay(diff);
 
-          if (shouldRequireApprovals()) {
-            addPendingChange('write', path, oldContent, content, {
+          if (approvalsEnabled) {
+            addPendingChange('write', 'write', path, oldContent, content, {
               title: `Write (${path})`,
               content: diffLines.join('\n'),
             });
+            let reviewResults: boolean[] = [];
+            if (hasPendingChanges() && !isInReviewMode()) {
+              reviewResults = await startReview();
+            }
+            debugLog(
+              `[review] write review path=${path} decisions=${reviewResults.length}`,
+            );
+
+            const reviewResult = await enforceSingleReviewDecision(
+              workspace,
+              path,
+              oldContent,
+              `writing file: ${path}`,
+              reviewResults,
+            );
+            if (reviewResult) return reviewResult;
+          } else {
+            debugLog(`[review] write auto-apply path=${path} approvalsEnabled=false`);
           }
 
           return {
@@ -1261,16 +1570,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case 'bash': {
         let command = args.command as string;
         let timeout = 30000;
-        const flushBashTrackedChanges = async () => {
-          if (!bashSnapshotBefore) return;
+        const flushBashTrackedChanges = async (): Promise<WorkspaceReviewOutcome | null> => {
+          if (!bashSnapshotBefore) {
+            debugLog('[review] bash flush skipped reason=no_snapshot_before');
+            return null;
+          }
           try {
-            const changedCount = await trackBashWorkspaceChanges(workspace, bashSnapshotBefore);
-            if (changedCount > 0) {
-              debugLog(`[tool] bash queued ${changedCount} filesystem change(s) for review`);
+            const reviewOutcome = await trackBashWorkspaceChanges(workspace, bashSnapshotBefore);
+            if (reviewOutcome.changedCount > 0) {
+              debugLog(`[tool] bash queued ${reviewOutcome.changedCount} filesystem change(s) for review`);
             }
+            debugLog(
+              `[review] bash flush outcome changed=${reviewOutcome.changedCount} reviewed=${reviewOutcome.reviewedCount} kept=${reviewOutcome.keptCount} denied=${reviewOutcome.deniedCount}`,
+            );
+            return reviewOutcome;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             debugLog(`[tool] bash snapshot-after failed: ${message}`);
+            return null;
           }
         };
 
@@ -1299,7 +1616,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           });
 
           const output = normalizeCommandOutput((stdout || '') + (stderr || ''));
-          await flushBashTrackedChanges();
+          const reviewOutcome = await flushBashTrackedChanges();
+          const reviewRejection = buildReviewRejectionResult(
+            `executing command: ${command}`,
+            {
+              reviewedCount: reviewOutcome?.reviewedCount ?? 0,
+              keptCount: reviewOutcome?.keptCount ?? 0,
+              deniedCount: reviewOutcome?.deniedCount ?? 0,
+            }
+          );
+          if (reviewRejection) {
+            return reviewRejection;
+          }
           return {
             success: true,
             result: output || 'Command executed with no output'
@@ -1314,7 +1642,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               ? `Command output (timed out after ${timeout}ms):\n${partialOutput}\n\n[Process continues running in background]`
               : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
 
-            await flushBashTrackedChanges();
+            const reviewOutcome = await flushBashTrackedChanges();
+            const reviewRejection = buildReviewRejectionResult(
+              `executing command: ${command}`,
+              {
+                reviewedCount: reviewOutcome?.reviewedCount ?? 0,
+                keptCount: reviewOutcome?.keptCount ?? 0,
+                deniedCount: reviewOutcome?.deniedCount ?? 0,
+              }
+            );
+            if (reviewRejection) {
+              return reviewRejection;
+            }
             return {
               success: false,
               result: output
@@ -1327,7 +1666,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             ? `Command exited with code ${exitCode ?? 'unknown'}:\n${output}`
             : `Command failed: ${errorMessage}`;
 
-          await flushBashTrackedChanges();
+          const reviewOutcome = await flushBashTrackedChanges();
+          const reviewRejection = buildReviewRejectionResult(
+            `executing command: ${command}`,
+            {
+              reviewedCount: reviewOutcome?.reviewedCount ?? 0,
+              keptCount: reviewOutcome?.keptCount ?? 0,
+              deniedCount: reviewOutcome?.deniedCount ?? 0,
+            }
+          );
+          if (reviewRejection) {
+            return reviewRejection;
+          }
           return {
             success: false,
             result: fullOutput
@@ -1596,11 +1946,29 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const diff = generateDiff('', newContent);
           const diffLines = formatDiffForDisplay(diff);
 
-          if (shouldRequireApprovals()) {
-            addPendingChange('write', path, '', newContent, {
+          if (approvalsEnabled) {
+            addPendingChange('write', 'edit', path, '', newContent, {
               title: `Create (${path})`,
               content: diffLines.join('\n'),
             });
+            let reviewResults: boolean[] = [];
+            if (hasPendingChanges() && !isInReviewMode()) {
+              reviewResults = await startReview();
+            }
+            debugLog(
+              `[review] edit/create review path=${path} decisions=${reviewResults.length}`,
+            );
+
+            const reviewResult = await enforceSingleReviewDecision(
+              workspace,
+              path,
+              '',
+              `creating file: ${path}`,
+              reviewResults,
+            );
+            if (reviewResult) return reviewResult;
+          } else {
+            debugLog(`[review] edit/create auto-apply path=${path} approvalsEnabled=false`);
           }
 
           return {
@@ -1630,11 +1998,29 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const diff = generateDiff(content, updatedContent);
         const diffLines = formatDiffForDisplay(diff);
 
-        if (shouldRequireApprovals()) {
-          addPendingChange('edit', path, content, updatedContent, {
+        if (approvalsEnabled) {
+          addPendingChange('edit', 'edit', path, content, updatedContent, {
             title: `Edit (${path})`,
             content: diffLines.join('\n'),
           });
+          let reviewResults: boolean[] = [];
+          if (hasPendingChanges() && !isInReviewMode()) {
+            reviewResults = await startReview();
+          }
+          debugLog(
+            `[review] edit review path=${path} decisions=${reviewResults.length}`,
+          );
+
+          const reviewResult = await enforceSingleReviewDecision(
+            workspace,
+            path,
+            content,
+            `editing file: ${path}`,
+            reviewResults,
+          );
+          if (reviewResult) return reviewResult;
+        } else {
+          debugLog(`[review] edit auto-apply path=${path} approvalsEnabled=false`);
         }
 
         return {
