@@ -29,7 +29,6 @@ import { Agent } from "../agent";
 import { buildSmartConversationHistory } from "../agent/context";
 import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, respondReview, acceptAllReview, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
-import { ReviewMenu } from "./main/ReviewMenu";
 import { revertChange } from "../utils/revertChanges";
 import { CommandSelectMenu } from "./main/CommandSelectMenu";
 import type { CommandExecutionContext, SelectOption } from "../utils/commands/types";
@@ -832,12 +831,6 @@ Analyze the output and continue. Do not run the same command again unless I expl
     <ReviewPanel
       change={currentReviewChange}
       progress={reviewProgress}
-    />
-  ) : undefined;
-
-  const reviewMenuElement = isReviewMode ? (
-    <ReviewMenu
-      disabled={false}
       onKeep={handleReviewKeep}
       onRevert={handleReviewReject}
       onAcceptAll={handleReviewAcceptAll}
@@ -891,7 +884,6 @@ Analyze the output and continue. Do not run the same command again unless I expl
       pendingImages={pendingImages}
       chatError={chatError}
       reviewPanel={reviewPanelElement}
-      reviewMenu={reviewMenuElement}
       selectMenu={selectMenuElement}
     />
   );
