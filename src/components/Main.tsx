@@ -18,9 +18,11 @@ import { buildCompactionDisplay, compactMessagesForUi, estimateTotalTokens } fro
 import { runAgentStream, type AgentStreamCallbacks } from "./main/useAgentStream";
 import { HomePage } from './main/HomePage';
 import { ChatPage } from './main/ChatPage';
+import { UsageScreen } from "./main/UsageScreen";
 import type { ImageAttachment } from "../utils/images";
 import { subscribeImageCommand, setImageSupport } from "../utils/imageBridge";
 import { findModelsDevModelById, modelAcceptsImages, getModelsDevContextLimit } from "../utils/models";
+import { buildUsageReport, type UsageReport } from "../utils/usage";
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
@@ -35,7 +37,7 @@ import type { CommandExecutionContext, SelectOption } from "../utils/commands/ty
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
-  const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage || hasRestoredSession ? "chat" : "home");
+  const [currentPage, setCurrentPage] = useState<"home" | "chat" | "usage">(initialMessage || hasRestoredSession ? "chat" : "home");
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
@@ -50,6 +52,9 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [imagesSupported, setImagesSupported] = useState(false);
   const [selectMenu, setSelectMenu] = useState<{ title: string; options: SelectOption[]; onSelect: (value: string) => void } | null>(null);
+  const [usageReport, setUsageReport] = useState<UsageReport | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const currentTitleRef = useRef<string | null>(initialTitle ?? null);
   const lastAppliedTerminalTitleRef = useRef<string | null>(null);
   const titleExtractedRef = useRef(false);
@@ -323,7 +328,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   }, [questionRequest]);
 
   useEffect(() => {
-    if (currentPage !== "chat") return;
+    if (currentPage === "home") return;
 
     process.stdin.setRawMode(true);
     process.stdout.write('\x1b[?1000h');
@@ -331,6 +336,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     process.stdout.write('\x1b[?1006h');
 
     const handleData = (data: Buffer) => {
+      if (currentPage !== "chat") return;
       const str = data.toString();
 
       if (str.match(/\x1b\[<(\d+);(\d+);(\d+)([mM])/)) {
@@ -389,6 +395,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     if (shortcutsOpenRef.current || commandsOpenRef.current || chatModalOpenRef.current) {
       if (key.name === 'escape') return;
     }
+
+    if (currentPageRef.current === "usage") return;
 
     if ((key.name === 'c' && key.ctrl) || key.sequence === '\x03') {
       if (getCurrentQuestion()) {
@@ -471,6 +479,25 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     lastPromptTokens: lastPromptTokensRef.current,
     isProcessing,
   }), [imagesSupported, currentTokens, tokenBreakdown, isProcessing]);
+
+  const refreshUsageView = useCallback(async () => {
+    if (!usageReport) return;
+    setUsageLoading(true);
+    setUsageError(null);
+    try {
+      const nextReport = await buildUsageReport({
+        includeAllWorkspaces: usageReport.scope.includeAllWorkspaces,
+        workspace: process.cwd(),
+        refreshPricing: true,
+      });
+      setUsageReport(nextReport);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to refresh usage report';
+      setUsageError(message);
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [usageReport]);
 
   const handleResubmitUserMessage = (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => {
     debugLog(`[ui] input-resubmit requested id=${payload.id} index=${payload.index} chars=${payload.content.length} images=${payload.images.length} preview="${toLogPreview(payload.content, 800)}"`);
@@ -621,6 +648,11 @@ Analyze the output and continue. Do not run the same command again unless I expl
     }
 
     if (isCommand(value)) {
+      const isUsageCommand = /^\/usage(?:\s|$)/i.test(value.trim());
+      if (isUsageCommand) {
+        setUsageLoading(true);
+        setUsageError(null);
+      }
       debugLog(`[ui] input type=slash commandChars=${value.trim().length} command="${toLogPreview(value.trim(), 1200)}"`);
       const result = await executeCommand(value, buildCommandContext(baseMessages));
       if (result) {
@@ -634,6 +666,20 @@ Analyze the output and continue. Do not run the same command again unless I expl
           setSelectMenu(result.showSelectMenu);
           return;
         }
+        if (result.openUsageView) {
+          if (result.usageReport) {
+            setUsageReport(result.usageReport);
+            setUsageError(null);
+            setUsageLoading(false);
+            setCurrentPage("usage");
+          } else {
+            setUsageError('Usage report is unavailable');
+          }
+          if (result.shouldAddToHistory !== false) {
+            addInputToHistory(value.trim());
+          }
+          return;
+        }
 
         if (result.shouldClearMessages === true && result.shouldCompactMessages !== true) {
           Agent.resetSessionState();
@@ -645,6 +691,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
           setCurrentTokens(0);
           setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
           setPendingImages([]);
+          setUsageReport(null);
           const commandMessage: Message = {
             id: createId(),
             role: "slash",
@@ -652,6 +699,9 @@ Analyze the output and continue. Do not run the same command again unless I expl
             isError: !result.success
           };
           setMessages([commandMessage]);
+          if (isUsageCommand) {
+            setUsageLoading(false);
+          }
           return;
         }
 
@@ -683,6 +733,9 @@ Analyze the output and continue. Do not run the same command again unless I expl
             return [compactNotice, ...compacted.messages];
           });
           setCurrentTokens(nextTokens);
+          if (isUsageCommand) {
+            setUsageLoading(false);
+          }
           return;
         }
 
@@ -711,6 +764,9 @@ Analyze the output and continue. Do not run the same command again unless I expl
             autoCompact: false,
           }, getStreamCallbacks());
 
+          if (isUsageCommand) {
+            setUsageLoading(false);
+          }
           return;
         }
 
@@ -727,7 +783,13 @@ Analyze the output and continue. Do not run the same command again unless I expl
           addInputToHistory(value.trim());
         }
 
+        if (isUsageCommand) {
+          setUsageLoading(false);
+        }
         return;
+      }
+      if (isUsageCommand) {
+        setUsageLoading(false);
       }
     }
 
@@ -836,6 +898,24 @@ Analyze the output and continue. Do not run the same command again unless I expl
       onAcceptAll={handleReviewAcceptAll}
     />
   ) : undefined;
+
+  if (currentPage === "usage") {
+    return (
+      <UsageScreen
+        report={usageReport}
+        loading={usageLoading}
+        error={usageError}
+        terminalWidth={terminalWidth}
+        terminalHeight={terminalHeight}
+        onRefresh={() => {
+          void refreshUsageView();
+        }}
+        onClose={() => {
+          setCurrentPage(messages.length > 0 ? "chat" : "home");
+        }}
+      />
+    );
+  }
 
   const modalWidth = Math.min(60, Math.floor(terminalWidth * 0.8));
   const modalHeight = Math.min(20, Math.floor(terminalHeight * 0.7));
