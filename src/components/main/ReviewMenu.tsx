@@ -12,26 +12,28 @@ interface ReviewMenuProps {
 export function ReviewMenu({ disabled = false, onKeep, onRevert, onAcceptAll }: ReviewMenuProps) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-    const actionCount = 3;
+    const actions = [
+        { key: 'y', label: 'Keep', run: onKeep },
+        { key: 'r', label: 'Revert', run: onRevert },
+        { key: 'a', label: 'Accept all', run: onAcceptAll },
+    ];
+    const actionCount = actions.length;
+
     const runAction = (index: number) => {
-        if (index === 0) {
-            onKeep();
-        } else if (index === 1) {
-            onRevert();
-        } else {
-            onAcceptAll();
-        }
+        const action = actions[index];
+        if (!action) return;
+        action.run();
     };
 
     useKeyboard((key) => {
         if (disabled) return;
 
-        if (key.name === 'up' || key.name === 'k') {
+        if (key.name === 'left' || key.name === 'h' || key.name === 'up' || key.name === 'k') {
             setSelectedIndex(prev => (prev === 0 ? actionCount - 1 : prev - 1));
             return;
         }
 
-        if (key.name === 'down' || key.name === 'j') {
+        if (key.name === 'right' || key.name === 'l' || key.name === 'down' || key.name === 'j') {
             setSelectedIndex(prev => (prev === actionCount - 1 ? 0 : prev + 1));
             return;
         }
@@ -58,93 +60,46 @@ export function ReviewMenu({ disabled = false, onKeep, onRevert, onAcceptAll }: 
     });
 
     return (
-        <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+        <box flexDirection="column" width="100%" backgroundColor="#111827" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
             <box flexDirection="row" justifyContent="space-between" width="100%">
-                <text fg="#8a8a8a" attributes={TextAttributes.DIM}>Review actions</text>
-                <text fg="#8a8a8a" attributes={TextAttributes.DIM}>y keep · r revert · a accept all</text>
+                <text fg="#64748b" attributes={TextAttributes.DIM}>Actions</text>
+                <text fg="#64748b" attributes={TextAttributes.DIM}>←/→ select · Enter apply</text>
             </box>
-            <box flexDirection="column" marginTop={1}>
-                <box
-                    flexDirection="row"
-                    backgroundColor={selectedIndex === 0 ? '#2a2a2a' : (hoveredIndex === 0 ? '#202020' : 'transparent')}
-                    paddingLeft={1}
-                    paddingRight={1}
-                    onMouseOver={() => {
-                        if (disabled) return;
-                        setHoveredIndex(0);
-                    }}
-                    onMouseOut={() => {
-                        setHoveredIndex(prev => (prev === 0 ? null : prev));
-                    }}
-                    onMouseDown={(event: any) => {
-                        if (disabled) return;
-                        if (event?.isSelecting) return;
-                        if (event?.button !== undefined && event.button !== 0) return;
-                        setSelectedIndex(0);
-                        runAction(0);
-                    }}
-                >
-                    <text
-                        fg={selectedIndex === 0 ? '#e6e6e6' : '#b5b5b5'}
-                        attributes={selectedIndex === 0 ? TextAttributes.BOLD : TextAttributes.DIM}
-                    >
-                        {selectedIndex === 0 ? '> ' : '  '}Keep
-                    </text>
-                </box>
-                <box
-                    flexDirection="row"
-                    backgroundColor={selectedIndex === 1 ? '#2a2a2a' : (hoveredIndex === 1 ? '#202020' : 'transparent')}
-                    paddingLeft={1}
-                    paddingRight={1}
-                    onMouseOver={() => {
-                        if (disabled) return;
-                        setHoveredIndex(1);
-                    }}
-                    onMouseOut={() => {
-                        setHoveredIndex(prev => (prev === 1 ? null : prev));
-                    }}
-                    onMouseDown={(event: any) => {
-                        if (disabled) return;
-                        if (event?.isSelecting) return;
-                        if (event?.button !== undefined && event.button !== 0) return;
-                        setSelectedIndex(1);
-                        runAction(1);
-                    }}
-                >
-                    <text
-                        fg={selectedIndex === 1 ? '#e6e6e6' : '#b5b5b5'}
-                        attributes={selectedIndex === 1 ? TextAttributes.BOLD : TextAttributes.DIM}
-                    >
-                        {selectedIndex === 1 ? '> ' : '  '}Revert
-                    </text>
-                </box>
-                <box
-                    flexDirection="row"
-                    backgroundColor={selectedIndex === 2 ? '#2a2a2a' : (hoveredIndex === 2 ? '#202020' : 'transparent')}
-                    paddingLeft={1}
-                    paddingRight={1}
-                    onMouseOver={() => {
-                        if (disabled) return;
-                        setHoveredIndex(2);
-                    }}
-                    onMouseOut={() => {
-                        setHoveredIndex(prev => (prev === 2 ? null : prev));
-                    }}
-                    onMouseDown={(event: any) => {
-                        if (disabled) return;
-                        if (event?.isSelecting) return;
-                        if (event?.button !== undefined && event.button !== 0) return;
-                        setSelectedIndex(2);
-                        runAction(2);
-                    }}
-                >
-                    <text
-                        fg={selectedIndex === 2 ? '#e6e6e6' : '#b5b5b5'}
-                        attributes={selectedIndex === 2 ? TextAttributes.BOLD : TextAttributes.DIM}
-                    >
-                        {selectedIndex === 2 ? '> ' : '  '}Accept all
-                    </text>
-                </box>
+            <box flexDirection="row" marginTop={1}>
+                {actions.map((action, index) => {
+                    const isSelected = selectedIndex === index;
+                    const isHovered = hoveredIndex === index;
+                    return (
+                        <box
+                            key={action.key}
+                            flexDirection="row"
+                            backgroundColor={isSelected ? '#1f2937' : (isHovered ? '#19202c' : 'transparent')}
+                            paddingLeft={1}
+                            paddingRight={1}
+                            marginRight={1}
+                            onMouseOver={() => {
+                                if (disabled) return;
+                                setHoveredIndex(index);
+                                setSelectedIndex(index);
+                            }}
+                            onMouseOut={() => {
+                                setHoveredIndex(prev => (prev === index ? null : prev));
+                            }}
+                            onMouseDown={(event: any) => {
+                                if (disabled) return;
+                                if (event?.isSelecting) return;
+                                if (event?.button !== undefined && event.button !== 0) return;
+                                setSelectedIndex(index);
+                                runAction(index);
+                            }}
+                        >
+                            <text fg={isSelected ? '#e2e8f0' : '#94a3b8'} attributes={isSelected ? TextAttributes.BOLD : TextAttributes.DIM}>
+                                {isSelected ? '> ' : '  '}
+                                [{action.key}] {action.label}
+                            </text>
+                        </box>
+                    );
+                })}
             </box>
         </box>
     );
