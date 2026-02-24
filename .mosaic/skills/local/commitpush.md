@@ -7,7 +7,7 @@ requires: []
 modelHints:
   prefers_small_commits: true
   commit_style: "single-file commits"
-summary: "Commit each changed file with a professional English message and push after validations."
+summary: "Commit each changed file with a professional English message and push directly without running tests."
 onActivate:
   run: false
   prompt: ""
@@ -20,13 +20,13 @@ Use this skill when:
 - You have a working tree with changes and you want **one commit per file**.
 - You want commit messages in **professional English** starting with one of:
   - `fix:`, `feat:`, `add:`, `modif:`, `del:`
-- You want to **validate the project** (lint/tests/build as appropriate) **before committing**.
+- You want to commit and push **without running tests/lint/build**.
 - You want to **push after all commits** are created successfully.
 
 Do NOT use this skill when:
 - The repository is in the middle of a rebase/merge conflict.
 - There are untracked secrets/credentials or generated artifacts that shouldn’t be committed.
-- The project validations cannot be run (missing deps/toolchain) and you can’t reasonably fix that first.
+- You need mandatory validations to run before commit.
 
 ---
 
@@ -46,36 +46,11 @@ If there are conflicts or rebase/merge in progress: **stop** and ask to resolve 
 
 ---
 
-### 1) Determine project-type validations (auto-detect)
-Detect the project stack by presence of files (highest priority first):
-- Node: `package.json`
-- Bun: `bun.lockb`
-- PNPM: `pnpm-lock.yaml`
-- Yarn: `yarn.lock`
-- Python: `pyproject.toml` or `requirements.txt`
-- Rust: `Cargo.toml`
-- Go: `go.mod`
-- Java/Gradle: `build.gradle` / `gradlew`
-- Maven: `pom.xml`
-- .NET: `*.sln` / `*.csproj`
-- PHP: `composer.json`
-
-Then pick the best available validation commands (only those that exist in scripts/config):
-- For Node/Bun:
-  - Prefer `lint`, then `test`, then `build` if present in `package.json` scripts.
-- For Python:
-  - If `pytest` present: run tests
-  - If `ruff`/`flake8` present: run lint
-- For Rust:
-  - `cargo fmt --check` (if rustfmt available), `cargo clippy` (if available), `cargo test`
-- For Go:
-  - `go test ./...` and `gofmt` check
-- For Java:
-  - `./gradlew test` or `mvn test` (depending on wrapper presence)
-- For .NET:
-  - `dotnet test`
-
-Rule: validations must be **green** before any commit. If they fail, fix first, then re-run.
+### 1) Validation behavior
+Do not run project validations by default:
+- Do not run `test`, `lint`, `build`, or language-specific validation commands.
+- Do not block commits on validation status.
+- Only run validations if the user explicitly asks for it in the current request.
 
 ---
 
@@ -100,9 +75,7 @@ For each file `F` in plan:
 1. Ensure working tree still matches expectations (no new surprise files).
 2. Stage only that file:
    - `git add -- "F"`
-3. Verify project still passes validations (see constraints for optimization):
-   - Run full validations on first commit.
-   - Then run targeted/fast validations if available; if not, run the same validations each time.
+3. Do not run validation commands unless explicitly requested by the user.
 4. Create commit message in professional English:
    - Format:
      - `<prefix> <short imperative summary>`
@@ -121,10 +94,9 @@ If commit fails, stop immediately and report why.
 ---
 
 ### 4) Final verification + push
-1. Run validations one last time on the full repo state.
-2. Ensure branch has an upstream; if not, set it:
+1. Ensure branch has an upstream; if not, set it:
    - `git push -u origin <branch>`
-3. Push:
+2. Push:
    - `git push`
 
 ---
@@ -151,13 +123,8 @@ If commit fails, stop immediately and report why.
 - If user ask you to do in another way or remove the co-author, do it.
 
 ### Validation policy
-- Must run and pass validations appropriate to the project before committing.
-- If no validation tooling is detectable, at minimum:
-  - `git diff --check`
-  - basic build command if known
-- If validations are expensive:
-  - Full run before first commit and before final push.
-  - Between commits: run the fastest equivalent (lint or targeted tests) if available.
+- Do not run tests, lint, build, or other validations by default.
+- If the user explicitly requests validations, run only the commands requested.
 
 ### Operational constraints
 - Works on Windows/macOS/Linux; prefer cross-platform commands.
@@ -167,16 +134,13 @@ If commit fails, stop immediately and report why.
 
 ## Suggested default commands (implementation notes)
 
-### Detect scripts (Node/Bun)
-- Read `package.json` scripts:
-  - If `bun.lockb`: prefer `bun run <script>`
-  - Else if `pnpm-lock.yaml`: `pnpm run <script>`
-  - Else if `yarn.lock`: `yarn <script>`
-  - Else: `npm run <script>`
-
-### Minimal validation fallback
-- `git diff --check`
-- `git status --porcelain`
+### Git-only execution
+- `git status --short`
+- `git rev-parse --abbrev-ref HEAD`
+- `git add -- "path"`
+- `git commit -m "<prefix> <summary>" -m "Co-authored-by: Mosaic | https://github.com/kirosnn/mosaic"`
+- `git push -u origin <branch>` (if no upstream)
+- `git push`
 
 ---
 
