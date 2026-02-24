@@ -19,7 +19,12 @@
       "if ((Test-Path *",
       "git branch *",
       "Get-Location; git *",
-      "bun run lint; *"
+      "bun run lint; *",
+      "New-Item File *",
+      "echo Hello *",
+      "git remote *",
+      "Test-Path .git/MERGE_HEAD *",
+      "Test-Path .git/rebase-apply; *"
     ]
   }
 }
