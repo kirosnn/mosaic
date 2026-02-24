@@ -53,7 +53,25 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
           </box>
 
           <box flexDirection="column" width="100%" flexGrow={1}>
-            <box flexDirection="column" width="100%" overflow="scroll">
+            <scrollbox
+              flexDirection="column"
+              width="100%"
+              flexGrow={1}
+              verticalScrollbarOptions={{
+                showArrows: false,
+                trackOptions: {
+                  backgroundColor: "#141414",
+                  foregroundColor: "#141414",
+                },
+              }}
+              horizontalScrollbarOptions={{
+                showArrows: false,
+                trackOptions: {
+                  backgroundColor: "#141414",
+                  foregroundColor: "#141414",
+                },
+              }}
+            >
               {shortcuts.map((s, idx) => (
                 <box key={idx} flexDirection="row" width="100%" marginBottom={1}>
                   <box width={22}>
@@ -64,7 +82,7 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
                   </box>
                 </box>
               ))}
-            </box>
+            </scrollbox>
           </box>
         </box>
       </box>
