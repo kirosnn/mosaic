@@ -1,4 +1,7 @@
 :root {
+  --font-ui: "Mosaic Regular", "Extended Regular", "Segoe UI Variable", sans-serif;
+  --font-title: "Blauer Nue", "Mosaic Regular", "Extended Regular", "Segoe UI Variable", sans-serif;
+  --font-code: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --topbar-height: 54px;
   --transparent: transparent;
   --bg-0: #000;
@@ -13,7 +16,8 @@
   --brand-1: #a8c4ff;
   --brand-2: #72a7ff;
   --ok: #7cd3a4;
-  --err: #dc2626;
+  --err: #f77d7d;
+  --err-bg: #682626;
   --topbar-bg: #000;
   --panel-bg: #141414;
   --panel-solid: #171615;
@@ -133,7 +137,8 @@
   --brand-1: #1f4f9f;
   --brand-2: #2d64c2;
   --ok: #257a50;
-  --err: #dc2626;
+  --err: #f77d7d;
+  --err-bg: #682626;
   --topbar-bg: #f8fbff;
   --panel-bg: #ffffff;
   --panel-solid: #f5f8fd;

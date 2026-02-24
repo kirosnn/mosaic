@@ -1,8 +1,8 @@
 .topbar {
   height: var(--topbar-height);
   padding: 0 16px;
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 560px) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   background: var(--bg-0);
@@ -20,10 +20,42 @@
   padding-left: 94px;
 }
 
+.topbar-left-slot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbar-logo {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.topbar-title-wrap {
+  justify-self: center;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.topbar-title {
+  font-family: "Blauer Nue", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-self: end;
   -webkit-app-region: no-drag;
 }
 

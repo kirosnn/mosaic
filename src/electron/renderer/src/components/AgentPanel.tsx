@@ -4,7 +4,10 @@ import { getCompactToolResult, getToolInfo, getToolLabel, getToolStateClassName,
 import type { CommandCompletionItem } from "../commandCompletion";
 
 interface AgentPanelProps {
+  hasActiveConversation: boolean;
   messages: ChatMessage[];
+  workspaceRoot: string;
+  recentWorkspaces: Array<{ path: string; updatedAt: number }>;
   inputValue: string;
   isRunning: boolean;
   chatLogRef: React.RefObject<HTMLDivElement | null>;
@@ -14,6 +17,7 @@ interface AgentPanelProps {
   onSend: () => void;
   onStop: () => void;
   onClear: () => void;
+  onStartInWorkspace: (workspaceRoot: string) => void;
 }
 const CHAT_ITEM_GAP = 24;
 const CHAT_OVERSCAN_PX = 480;
@@ -22,17 +26,31 @@ const CHAT_USER_ROW_HEIGHT = 90;
 const CHAT_TOOL_ROW_HEIGHT = 102;
 const CHAT_SYSTEM_ROW_HEIGHT = 80;
 
+function formatWorkspaceLabel(inputPath: string): string {
+  const normalized = String(inputPath || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!normalized) return "Unknown workspace";
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length <= 2) return normalized;
+  return `.../${segments.slice(-2).join("/")}`;
+}
+
+function formatWorkspaceDetail(inputPath: string): string {
+  const value = String(inputPath || "").trim();
+  return value || "Unknown workspace";
+}
+
 function estimateRowHeight(message: ChatMessage): number {
   if (message.role === "user") return CHAT_USER_ROW_HEIGHT;
   if (message.role === "tool") return CHAT_TOOL_ROW_HEIGHT;
+  if (message.role === "error") return CHAT_SYSTEM_ROW_HEIGHT;
   if (message.role === "system") return CHAT_SYSTEM_ROW_HEIGHT;
   return CHAT_FALLBACK_ROW_HEIGHT;
 }
 
 function renderMessageContent(message: ChatMessage): React.ReactNode {
   if (message.role !== "tool") {
-    if (message.role === "system") {
-      if (message.isError) {
+    if (message.role === "system" || message.role === "error") {
+      if (message.role === "error" || message.isError) {
         return (
           <div className="chat-error-line">
             <span className="chat-error-bullet" aria-hidden="true">■</span>
@@ -48,7 +66,7 @@ function renderMessageContent(message: ChatMessage): React.ReactNode {
       );
     }
     const content = message.role === "user" && message.displayContent ? message.displayContent : message.content;
-    return <div className="chat-item-body">{content}</div>;
+    return <div className={`chat-item-body${message.role === "user" ? " chat-item-body-user" : ""}`}>{content}</div>;
   }
 
   const compact = isCompactTool(message.toolName);
@@ -261,6 +279,40 @@ export function AgentPanel(props: AgentPanelProps) {
     }
   }, [props.inputValue]);
 
+  if (!props.hasActiveConversation) {
+    const currentWorkspace = String(props.workspaceRoot || "").trim();
+    return (
+      <aside className="panel chat-panel chat-panel-home">
+        <section className="chat-home">
+          <h2 className="chat-home-title">Welcome to Mosaic</h2>
+          <p className="chat-home-description">Open a thread to start chatting with the agent.</p>
+          <button className="primary-button chat-home-action" onClick={props.onClear}>New thread</button>
+          {props.recentWorkspaces.length > 0 ? (
+            <div className="chat-home-workspaces">
+              <div className="chat-home-workspaces-title">Recent workspaces</div>
+              <div className="chat-home-workspaces-list">
+                {props.recentWorkspaces.map((workspace) => {
+                  const isCurrent = workspace.path === currentWorkspace;
+                  return (
+                    <button
+                      key={`${workspace.path}-${workspace.updatedAt}`}
+                      className={`chat-home-workspace-item ${isCurrent ? "current" : ""}`}
+                      onClick={() => props.onStartInWorkspace(workspace.path)}
+                      title={formatWorkspaceDetail(workspace.path)}
+                    >
+                      <span className="chat-home-workspace-label">{formatWorkspaceLabel(workspace.path)}</span>
+                      <span className="chat-home-workspace-detail">{formatWorkspaceDetail(workspace.path)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      </aside>
+    );
+  }
+
   return (
     <aside className="panel chat-panel">
       <ChatLog messages={props.messages} chatLogRef={props.chatLogRef} />
@@ -269,7 +321,7 @@ export function AgentPanel(props: AgentPanelProps) {
             ref={textareaRef}
             className="chat-input"
             rows={1}
-            placeholder="Ask Mosaic..."
+            placeholder="What are we building today ?"
             value={props.inputValue}
             onChange={(event) => props.onInputChange(event.target.value)}
             onKeyDown={(event) => {

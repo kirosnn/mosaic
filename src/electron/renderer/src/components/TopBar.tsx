@@ -4,8 +4,11 @@ interface TopBarProps {
   platform: string;
   logoSrc: string;
   workspaceRoot: string;
+  formattedPath: string;
+  showTitle?: boolean;
   sidebarOpen?: boolean;
   previewOpen?: boolean;
+  previewEnabled?: boolean;
   onOpenSettings: () => void;
   onToggleSidebar?: () => void;
   onTogglePreview: () => void;
@@ -14,8 +17,22 @@ interface TopBarProps {
 export function TopBar(props: TopBarProps) {
   return (
     <header className={`topbar platform-${props.platform}`}>
+      <div className="topbar-left-slot">
+        <img className="topbar-logo" src={props.logoSrc} alt="Mosaic" />
+      </div>
+      {props.showTitle !== false ? (
+        <div className="topbar-title-wrap">
+          <div className="topbar-title" title={props.formattedPath}>{props.formattedPath}</div>
+        </div>
+      ) : <div />}
       <div className="topbar-actions">
-        <button className="icon-btn" onClick={props.onTogglePreview} title="Toggle Preview Modal">
+        <button
+          className="icon-btn"
+          onClick={props.onTogglePreview}
+          title={props.previewEnabled === false ? "Open a thread first" : "Toggle Preview Modal"}
+          disabled={props.previewEnabled === false}
+          aria-disabled={props.previewEnabled === false}
+        >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" strokeWidth="2"><path stroke="currentColor" strokeLinejoin="round" strokeLinecap="round" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path></svg>
         </button>
         <button className="icon-btn" onClick={props.onOpenSettings}>

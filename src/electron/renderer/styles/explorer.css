@@ -18,7 +18,7 @@
   padding: 1px 6px;
   border-radius: 4px;
   color: var(--text-2);
-  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-family: var(--font-code);
   font-size: 11px;
   transition: background-color 120ms ease;
 }

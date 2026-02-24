@@ -6,12 +6,24 @@ function showFatalError(message: string): void {
   const root = document.getElementById("root");
   if (!root) return;
   root.innerHTML = "";
-  const container = document.createElement("div");
-  container.style.padding = "24px";
-  container.style.fontFamily = "Consolas, monospace";
-  container.style.color = "#b91c1c";
-  container.textContent = `Renderer error: ${message}`;
-  root.appendChild(container);
+  const screen = document.createElement("section");
+  screen.className = "fatal-screen";
+
+  const card = document.createElement("article");
+  card.className = "fatal-screen-card";
+
+  const title = document.createElement("h1");
+  title.className = "fatal-screen-title";
+  title.textContent = "Renderer error";
+
+  const detail = document.createElement("pre");
+  detail.className = "fatal-screen-message";
+  detail.textContent = String(message || "Unknown renderer error");
+
+  card.appendChild(title);
+  card.appendChild(detail);
+  screen.appendChild(card);
+  root.appendChild(screen);
 }
 
 window.addEventListener("error", (event) => {

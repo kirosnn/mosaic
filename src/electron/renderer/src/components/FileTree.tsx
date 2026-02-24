@@ -367,47 +367,62 @@ function collectVisibleRows(
   }
 }
 
-const FileTreeRow = memo(function FileTreeRow(props: FileTreeRowProps) {
-  const entryPath = props.row.entry.relativePath;
-  return (
-    <div
-      className={`file-tree-row file-tree-row-virtual ${props.row.isSelected ? "selected" : ""}`}
-      style={{
-        transform: `translateY(${props.top}px)`,
-        paddingLeft: `${props.row.depth * FILE_TREE_INDENT_PX}px`,
-      }}
-      onClick={() => {
-        if (props.row.isDirectory) {
-          props.onToggleDirectory(entryPath);
-        } else {
-          props.onOpenFile(entryPath);
-        }
-      }}
-    >
-      <span className="file-icon-container">
-        {props.row.isDirectory ? (
-          props.row.isOpen ? (
-            <ChevronDown size={FILE_ICON_SIZE} className="tree-arrow" />
+const FileTreeRow = memo(
+  function FileTreeRow(props: FileTreeRowProps) {
+    const entryPath = props.row.entry.relativePath;
+    return (
+      <div
+        className={`file-tree-row file-tree-row-virtual ${props.row.isSelected ? "selected" : ""}`}
+        style={{
+          transform: `translateY(${props.top}px)`,
+          paddingLeft: `${props.row.depth * FILE_TREE_INDENT_PX}px`,
+        }}
+        onClick={() => {
+          if (props.row.isDirectory) {
+            props.onToggleDirectory(entryPath);
+          } else {
+            props.onOpenFile(entryPath);
+          }
+        }}
+      >
+        <span className="file-icon-container">
+          {props.row.isDirectory ? (
+            props.row.isOpen ? (
+              <ChevronDown size={FILE_ICON_SIZE} className="tree-arrow" />
+            ) : (
+              <ChevronRight size={FILE_ICON_SIZE} className="tree-arrow" />
+            )
           ) : (
-            <ChevronRight size={FILE_ICON_SIZE} className="tree-arrow" />
-          )
-        ) : (
-          <span className="tree-spacer" />
-        )}
-      </span>
+            <span className="tree-spacer" />
+          )}
+        </span>
 
-      <span className="file-type-icon">
-        {props.row.isDirectory ? (
-          props.row.isOpen ? <FolderOpen size={FILE_ICON_SIZE} className="file-icon folder-icon" /> : <Folder size={FILE_ICON_SIZE} className="file-icon folder-icon" />
-        ) : (
-          renderFileIcon(props.row.entry.name)
-        )}
-      </span>
+        <span className="file-type-icon">
+          {props.row.isDirectory ? (
+            props.row.isOpen ? <FolderOpen size={FILE_ICON_SIZE} className="file-icon folder-icon" /> : <Folder size={FILE_ICON_SIZE} className="file-icon folder-icon" />
+          ) : (
+            renderFileIcon(props.row.entry.name)
+          )}
+        </span>
 
-      <span className="file-name">{props.row.entry.name}</span>
-    </div>
-  );
-});
+        <span className="file-name">{props.row.entry.name}</span>
+      </div>
+    );
+  },
+  (prevProps, nextProps) => {
+    if (prevProps.top !== nextProps.top) return false;
+    if (prevProps.onToggleDirectory !== nextProps.onToggleDirectory) return false;
+    if (prevProps.onOpenFile !== nextProps.onOpenFile) return false;
+    if (prevProps.row.depth !== nextProps.row.depth) return false;
+    if (prevProps.row.isDirectory !== nextProps.row.isDirectory) return false;
+    if (prevProps.row.isOpen !== nextProps.row.isOpen) return false;
+    if (prevProps.row.isSelected !== nextProps.row.isSelected) return false;
+    if (prevProps.row.entry.name !== nextProps.row.entry.name) return false;
+    if (prevProps.row.entry.relativePath !== nextProps.row.entry.relativePath) return false;
+    if (prevProps.row.entry.type !== nextProps.row.entry.type) return false;
+    return true;
+  },
+);
 
 export function FileTree({
   parentPath,
