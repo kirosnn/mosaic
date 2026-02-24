@@ -1,9 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
-import { CustomInput } from '../CustomInput';
 import type { ApprovalRequest } from '../../utils/approvalBridge';
-import { renderDiffBlock } from '../../utils/diffRendering';
 import { getBaseCommand } from '../../utils/commandPattern';
 
 export type RuleAction = 'auto-run';
@@ -12,158 +10,181 @@ interface ApprovalPanelProps {
   request: ApprovalRequest;
   disabled?: boolean;
   onRespond: (approved: boolean, customResponse?: string, ruleAction?: RuleAction) => void;
-  maxWidth?: number;
 }
 
-export function ApprovalPanel({ request, disabled = false, onRespond, maxWidth }: ApprovalPanelProps) {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [scrollOffset, setScrollOffset] = useState(0);
+interface ApprovalOption {
+  label: string;
+  hotkey: string;
+  action: 'allow' | 'deny' | 'auto-run';
+}
+
+function getPreviewLines(request: ApprovalRequest, command: string): string[] {
+  if (request.toolName === 'bash') {
+    return [`$ ${command || '(empty command)'}`];
+  }
+
+  const raw = (request.preview.content || '').split('\n').map((line) => line.trimEnd());
+  const nonEmpty = raw.filter((line) => line.trim().length > 0);
+  const limited = nonEmpty.slice(0, 6);
+  if (limited.length === 0) return ['(no preview)'];
+  return limited;
+}
+
+function runOption(option: ApprovalOption, onRespond: (approved: boolean, customResponse?: string, ruleAction?: RuleAction) => void): void {
+  if (option.action === 'allow') {
+    onRespond(true);
+    return;
+  }
+  if (option.action === 'auto-run') {
+    onRespond(true, undefined, 'auto-run');
+    return;
+  }
+  onRespond(false);
+}
+
+export function ApprovalPanel({ request, disabled = false, onRespond }: ApprovalPanelProps) {
   const isBash = request.toolName === 'bash';
-  const bashCommand = isBash ? String(request.args.command ?? '') : '';
-  const bashBaseCommand = bashCommand ? getBaseCommand(bashCommand) : '';
-  const allOptions = isBash ? ['Allow execution', 'Always allow execution for', 'Deny execution'] : ['Yes', 'No'];
+  const command = isBash ? String(request.args.command ?? '').trim() : '';
+  const baseCommand = command ? getBaseCommand(command) : '';
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const options = useMemo<ApprovalOption[]>(() => {
+    if (!isBash) {
+      return [
+        { label: 'Yes, proceed', hotkey: 'y', action: 'allow' },
+        { label: 'No, and tell Mosaic what to do differently', hotkey: 'n', action: 'deny' },
+      ];
+    }
+
+    return [
+      { label: 'Yes, proceed', hotkey: 'y', action: 'allow' },
+      { label: `Yes, and do not ask again for commands that start with \`${baseCommand || command || 'command'}\``, hotkey: 'a', action: 'auto-run' },
+      { label: 'No, and tell Mosaic what to do differently', hotkey: 'n', action: 'deny' },
+    ];
+  }, [baseCommand, command, isBash]);
 
   useEffect(() => {
     setSelectedIndex(0);
-    setHoveredIndex(null);
-    setScrollOffset(0);
   }, [request.id]);
-
-  const previewLines = request.preview.content.split('\n');
-  const maxVisiblePreviewLines = 15;
-  const canScroll = previewLines.length > maxVisiblePreviewLines;
-  const executeSelection = (index: number) => {
-    const option = allOptions[index];
-    if (option === 'Allow execution') {
-      onRespond(true);
-    } else if (option === 'Always allow execution for') {
-      onRespond(true, undefined, 'auto-run');
-    } else {
-      onRespond(false);
-    }
-  };
 
   useKeyboard((key) => {
     if (disabled) return;
-
-    if ((key.name === 'up' || key.name === 'k') && key.shift && canScroll) {
-      setScrollOffset(prev => Math.max(0, prev - 1));
-      return;
-    }
-
-    if ((key.name === 'down' || key.name === 'j') && key.shift && canScroll) {
-      setScrollOffset(prev => Math.min(previewLines.length - maxVisiblePreviewLines, prev + 1));
-      return;
-    }
+    const typed = typeof key.sequence === 'string' ? key.sequence.toLowerCase() : '';
 
     if (key.name === 'up' || key.name === 'k') {
-      setSelectedIndex(prev => (prev === 0 ? allOptions.length - 1 : prev - 1));
+      setSelectedIndex((prev) => (prev === 0 ? options.length - 1 : prev - 1));
       return;
     }
 
     if (key.name === 'down' || key.name === 'j') {
-      setSelectedIndex(prev => (prev === allOptions.length - 1 ? 0 : prev + 1));
+      setSelectedIndex((prev) => (prev === options.length - 1 ? 0 : prev + 1));
       return;
     }
 
-    if (key.name === 'return') {
-      executeSelection(selectedIndex);
+    if (key.name === 'return' || key.name === 'enter') {
+      const option = options[selectedIndex];
+      if (option) runOption(option, onRespond);
       return;
+    }
+
+    if (key.name === 'escape') {
+      onRespond(false);
+      return;
+    }
+
+    if (typed === '1') {
+      const option = options[0];
+      if (option) runOption(option, onRespond);
+      return;
+    }
+
+    if (typed === '2') {
+      const option = options[1];
+      if (option) runOption(option, onRespond);
+      return;
+    }
+
+    if (typed === '3') {
+      const option = options[2];
+      if (option) runOption(option, onRespond);
+      return;
+    }
+
+    if (typed === 'y') {
+      const allow = options.find((option) => option.action === 'allow');
+      if (allow) runOption(allow, onRespond);
+      return;
+    }
+
+    if (typed === 'a' || typed === 'p') {
+      const auto = options.find((option) => option.action === 'auto-run');
+      if (auto) runOption(auto, onRespond);
+      return;
+    }
+
+    if (typed === 'n' || typed === 'q') {
+      const deny = options.find((option) => option.action === 'deny');
+      if (deny) runOption(deny, onRespond);
     }
   });
 
-  const handleCustomSubmit = (text: string) => {
-    if (!text || !text.trim()) {
-      return;
-    }
-    onRespond(false, text);
-  };
-
-
-  const titleMatch = request.preview.title.match(/^(.+?)\s*\((.+)\)$/);
-  const toolName = titleMatch ? titleMatch[1] : request.preview.title;
-  const toolInfo = titleMatch ? titleMatch[2] : null;
-  const visibleContent = previewLines.slice(scrollOffset, scrollOffset + maxVisiblePreviewLines).join('\n');
+  const runningTarget = isBash
+    ? (command || 'command')
+    : (request.preview.title || request.toolName);
+  const introLine = isBash
+    ? 'Would you like to run the following command?'
+    : 'Would you like to run the following operation?';
+  const previewLines = getPreviewLines(request, command);
+  const reasonLine = request.preview.details?.[0];
 
   return (
-    <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
-      <box flexDirection="row" marginBottom={1}>
-        <text fg={"#ffffff"}>{toolName}</text>
-        {toolInfo && (
-          <>
-            <text fg={"#ffffff"}> </text>
-            <text fg={"#ffffff"} attributes={TextAttributes.DIM}>({toolInfo})</text>
-          </>
-        )}
+    <box flexDirection="column" width="100%">
+      <box flexDirection="row">
+        <text fg="#9a9a9a">• </text>
+        <text fg="#ffffff" attributes={TextAttributes.BOLD}>Running</text>
+        <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{` ${runningTarget}`}</text>
       </box>
 
-      <box
-        flexDirection="column"
-        marginBottom={1}
-        paddingLeft={1}
-        paddingRight={1}
-        paddingBottom={1}
-      >
-        {renderDiffBlock(visibleContent, `preview-diff-${request.id}`, {
-          height: maxVisiblePreviewLines,
-          filePath: toolInfo ?? undefined,
-          view: "split"
-        })}
-        {canScroll && (
-          <text fg="#808080" attributes={TextAttributes.DIM}>
-            {scrollOffset > 0 ? '↑ ' : '  '}
-            Line {scrollOffset + 1}-{Math.min(scrollOffset + maxVisiblePreviewLines, previewLines.length)} of {previewLines.length}
-            {scrollOffset + maxVisiblePreviewLines < previewLines.length ? ' ↓' : ''}
-            {' (Shift+↑/↓ to scroll)'}
-          </text>
-        )}
+      <text>{' '}</text>
+      <text fg="#d4d4d8">{introLine}</text>
+
+      {reasonLine ? (
+        <box flexDirection="row" marginTop={1}>
+          <text fg="#9a9a9a">Reason: </text>
+          <text fg="#b8b8b8" attributes={TextAttributes.ITALIC}>{reasonLine}</text>
+        </box>
+      ) : null}
+
+      <box flexDirection="column" marginTop={1}>
+        {previewLines.map((line, index) => (
+          <text key={`${request.id}-preview-${index}`} fg="#d4d4d8">{line || ' '}</text>
+        ))}
       </box>
+
+      <text>{' '}</text>
 
       <box flexDirection="column">
-        {allOptions.map((option, index) => {
+        {options.map((option, index) => {
           const selected = index === selectedIndex;
-          const hovered = hoveredIndex === index;
-
+          const prefix = `${index + 1}. `;
+          const suffix = option.action === 'deny' ? ' (esc)' : ` (${option.hotkey})`;
+          const rowAttributes = selected ? TextAttributes.BOLD : TextAttributes.DIM;
+          const rowColor = '#ffffff';
           return (
-            <box
-              key={`${request.id}-${index}`}
-              flexDirection="row"
-              backgroundColor={selected ? '#2a2a2a' : (hovered ? '#202020' : 'transparent')}
-              paddingLeft={1}
-              paddingRight={1}
-              onMouseOver={() => {
-                if (disabled) return;
-                setHoveredIndex(index);
-              }}
-              onMouseOut={() => {
-                setHoveredIndex(prev => (prev === index ? null : prev));
-              }}
-              onMouseDown={(event: any) => {
-                if (disabled) return;
-                if (event?.isSelecting) return;
-                if (event?.button !== undefined && event.button !== 0) return;
-                setSelectedIndex(index);
-                executeSelection(index);
-              }}
-            >
-              <text
-                fg={selected ? '#e6e6e6' : 'white'}
-                attributes={selected ? TextAttributes.BOLD : TextAttributes.DIM}
-              >
-                {selected ? '> ' : '  '}{option}
+            <box key={`${request.id}-option-${index}`} flexDirection="row">
+              <text fg={rowColor} attributes={rowAttributes}>
+                {selected ? '> ' : '  '}
               </text>
-              {option === 'Always allow execution for' && bashBaseCommand ? (
-                <text> "{bashBaseCommand}"</text>
-              ) : null}
+              <text fg={rowColor} attributes={rowAttributes}>{prefix}</text>
+              <text fg={rowColor} attributes={rowAttributes}>{option.label}</text>
+              <text fg={rowColor} attributes={rowAttributes}>{suffix}</text>
             </box>
           );
         })}
       </box>
 
-      <box flexDirection="row" paddingLeft={1} >
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="> Tell Mosaic what to do instead and press Enter" focused={!disabled} disableHistory={true} maxWidth={maxWidth} />
-      </box>
+      <text>{' '}</text>
+      <text fg="#6f6f6f">Press enter to confirm or esc to cancel</text>
     </box>
   );
 }
