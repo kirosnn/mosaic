@@ -52,7 +52,9 @@ export function renderDiffLine(line: string, key: string) {
 }
 
 function buildUnifiedDiff(lines: string[], filePath?: string): { diff: string; isDiff: boolean } {
-  const parsedLines = lines.map(line => ({ line, parsed: parseDiffLine(line) }));
+  const parsedLines = lines
+    .map(line => line.replace(/\r$/, ''))
+    .map(line => ({ line, parsed: parseDiffLine(line) }));
   const hasDiff = parsedLines.some(item => item.parsed.isDiffLine);
   if (!hasDiff) {
     return { diff: lines.join('\n'), isDiff: false };
@@ -63,17 +65,19 @@ function buildUnifiedDiff(lines: string[], filePath?: string): { diff: string; i
   const rightPath = `b/${safePath}`;
   const removedCount = parsedLines.filter(item => item.parsed.isDiffLine && item.parsed.isRemoved).length;
   const addedCount = parsedLines.filter(item => item.parsed.isDiffLine && item.parsed.isAdded).length;
+  const oldStart = removedCount === 0 ? 0 : 1;
+  const newStart = addedCount === 0 ? 0 : 1;
 
   const header = [
     `diff --git ${leftPath} ${rightPath}`,
     `--- ${leftPath}`,
     `+++ ${rightPath}`,
-    `@@ -1,${removedCount} +1,${addedCount} @@`,
+    `@@ -${oldStart},${removedCount} +${newStart},${addedCount} @@`,
   ];
 
   const body = parsedLines.map(({ line, parsed }) => {
     if (parsed.isDiffLine) {
-      return `${parsed.prefix}${parsed.content ?? ''}`;
+      return `${parsed.prefix} ${parsed.content ?? ''}`;
     }
     return ` ${line}`;
   });
@@ -89,9 +93,14 @@ function getFiletypeFromPath(filePath?: string): string | undefined {
   return DIFF_FILETYPE_MAP[ext];
 }
 
-export function renderDiffBlock(content: string, key: string, options?: { height?: number; filePath?: string; view?: "unified" | "split" }) {
+export function renderDiffBlock(
+  content: string,
+  key: string,
+  options?: { height?: number; filePath?: string; view?: "unified" | "split"; variant?: "default" | "critique" }
+) {
   const lines = content.split('\n');
   const { diff, isDiff } = buildUnifiedDiff(lines, options?.filePath);
+  const variant = options?.variant ?? "default";
 
   if (!isDiff) {
     return (
@@ -102,6 +111,19 @@ export function renderDiffBlock(content: string, key: string, options?: { height
       </box>
     );
   }
+
+  const isCritique = variant === "critique";
+  const text = isCritique ? "#d4d4d8" : "#E6EDF3";
+  const lineNumberFg = isCritique ? "#a1a1aa" : "#E6EDF3";
+  const lineNumberBg = isCritique ? "#000000" : "#141414";
+  const addedBg = isCritique ? "#0f2d18" : "#0d2b0d";
+  const removedBg = isCritique ? "#2c1116" : "#2b0d0d";
+  const contextBg = isCritique ? "#000000" : "#141414";
+  const addedContentBg = isCritique ? "#0f2d18" : "#1a3a1a";
+  const removedContentBg = isCritique ? "#2c1116" : "#3a1a1a";
+  const contextContentBg = isCritique ? "#000000" : "#141414";
+  const addedLineNumberBg = isCritique ? "#0a1f11" : "#0d2b0d";
+  const removedLineNumberBg = isCritique ? "#1f0b0f" : "#2b0d0d";
 
   return (
     <diff
@@ -114,17 +136,17 @@ export function renderDiffBlock(content: string, key: string, options?: { height
       syntaxStyle={DIFF_SYNTAX_STYLE}
       showLineNumbers={true}
       wrapMode="none"
-      fg="#E6EDF3"
-      lineNumberFg="#E6EDF3"
-      lineNumberBg="#141414"
-      addedBg="#0d2b0d"
-      removedBg="#2b0d0d"
-      contextBg="#141414"
-      addedContentBg="#1a3a1a"
-      removedContentBg="#3a1a1a"
-      contextContentBg="#141414"
-      addedLineNumberBg="#0d2b0d"
-      removedLineNumberBg="#2b0d0d"
+      fg={text}
+      lineNumberFg={lineNumberFg}
+      lineNumberBg={lineNumberBg}
+      addedBg={addedBg}
+      removedBg={removedBg}
+      contextBg={contextBg}
+      addedContentBg={addedContentBg}
+      removedContentBg={removedContentBg}
+      contextContentBg={contextContentBg}
+      addedLineNumberBg={addedLineNumberBg}
+      removedLineNumberBg={removedLineNumberBg}
       addedSignColor="#22c55e"
       removedSignColor="#ef4444"
     />
