@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { TextAttributes } from '@opentui/core';
 import { useKeyboard } from '@opentui/react';
 import { CustomInput } from '../CustomInput';
@@ -22,12 +22,12 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
     setHoveredIndex(null);
     setValidationError(null);
     setRemaining(request.timeout ?? null);
-  }, [request.id]);
+  }, [request.id, request.timeout]);
 
   useEffect(() => {
     if (remaining === null || remaining <= 0) return;
     const id = setInterval(() => {
-      setRemaining(prev => (prev !== null && prev > 0 ? prev - 1 : prev));
+      setRemaining((prev) => (prev !== null && prev > 0 ? prev - 1 : prev));
     }, 1000);
     return () => clearInterval(id);
   }, [remaining !== null]);
@@ -36,32 +36,34 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
     if (disabled) return;
 
     if (key.name === 'up' || key.name === 'k') {
-      setSelectedIndex(prev => (prev === 0 ? request.options.length - 1 : prev - 1));
+      setSelectedIndex((prev) => (prev === 0 ? request.options.length - 1 : prev - 1));
       return;
     }
 
     if (key.name === 'down' || key.name === 'j') {
-      setSelectedIndex(prev => (prev === request.options.length - 1 ? 0 : prev + 1));
+      setSelectedIndex((prev) => (prev === request.options.length - 1 ? 0 : prev + 1));
       return;
     }
 
-    if (key.name === 'return') {
+    if (key.name === 'return' || key.name === 'enter') {
       onAnswer(selectedIndex);
       return;
     }
 
-    if (key.name && /^[1-9]$/.test(key.name)) {
-      const idx = Number(key.name) - 1;
-      if (idx >= 0 && idx < request.options.length) {
-        onAnswer(idx);
-      }
+    if (key.name === 'escape') {
+      return;
+    }
+
+    const typed = typeof key.sequence === 'string' ? key.sequence.toLowerCase() : '';
+    if (/^[1-9]$/.test(typed)) {
+      const idx = Number(typed) - 1;
+      if (idx >= 0 && idx < request.options.length) onAnswer(idx);
     }
   });
 
   const handleCustomSubmit = (text: string) => {
-    if (!text || !text.trim()) {
-      return;
-    }
+    if (!text || !text.trim()) return;
+
     if (request.validation) {
       try {
         if (!new RegExp(request.validation.pattern).test(text)) {
@@ -73,52 +75,72 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
         return;
       }
     }
+
     setValidationError(null);
     onAnswer(0, text);
   };
 
+  const promptLines = useMemo(() => {
+    const raw = (request.prompt || '').split('\n').map((line) => line.trimEnd());
+    return raw.length ? raw : [''];
+  }, [request.prompt]);
+
   let lastGroup: string | undefined;
 
   return (
-    <box flexDirection="column" width="100%" backgroundColor="#1a1a1a" paddingLeft={1} paddingRight={1} paddingTop={1} paddingBottom={1}>
-      <box flexDirection="row" marginBottom={1}>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>Question</text>
-        {remaining !== null && (
-          <text fg={remaining <= 5 ? '#ff4444' : '#888888'}> Timeout: {remaining}s</text>
-        )}
+    <box flexDirection="column" width="100%">
+      <box flexDirection="row">
+        <text fg="#9a9a9a">• </text>
+        <text fg="#ffffff" attributes={TextAttributes.BOLD}>Question</text>
+        {remaining !== null ? (
+          <text
+            fg={remaining <= 5 ? '#ff4444' : '#9a9a9a'}
+            attributes={remaining <= 5 ? TextAttributes.BOLD : TextAttributes.DIM}
+          >
+            {` Timeout: ${remaining}s`}
+          </text>
+        ) : null}
       </box>
 
-      <box flexDirection="column" marginBottom={1}>
-        {request.prompt.split('\n').map((line, index) => (
-          <text key={`prompt-line-${index}`} attributes={TextAttributes.BOLD}>{line || ' '}</text>
+      <text>{' '}</text>
+
+      <box flexDirection="column">
+        {promptLines.map((line, index) => (
+          <text key={`${request.id}-prompt-${index}`} fg="#d4d4d8">
+            {line || ' '}
+          </text>
         ))}
       </box>
 
-      <box flexDirection="column" marginBottom={1}>
+      <text>{' '}</text>
+
+      <box flexDirection="column">
         {request.options.map((option, index) => {
           const selected = index === selectedIndex;
-          const prefix = selected ? '> ' : '  ';
-          const number = index <= 8 ? `${index + 1}. ` : '   ';
           const showGroupHeader = option.group && option.group !== lastGroup;
           lastGroup = option.group;
+
+          const prefix = index <= 8 ? `${index + 1}. ` : '   ';
+          const suffix = index <= 8 ? ` (${index + 1})` : '';
+          const rowAttributes = selected ? TextAttributes.BOLD : TextAttributes.DIM;
+          const rowColor = '#ffffff';
+
           return (
-            <box key={`${request.id}-${index}`} flexDirection="column">
-              {showGroupHeader && (
-                <box paddingLeft={1} marginTop={index > 0 ? 1 : 0}>
-                  <text fg="#888888" attributes={TextAttributes.BOLD}>{option.group}</text>
+            <box key={`${request.id}-opt-${index}`} flexDirection="column">
+              {showGroupHeader ? (
+                <box flexDirection="row" marginTop={index > 0 ? 1 : 0}>
+                  <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{option.group}</text>
                 </box>
-              )}
+              ) : null}
+
               <box
                 flexDirection="row"
-                backgroundColor={selected ? '#2a2a2a' : (hoveredIndex === index ? '#202020' : 'transparent')}
-                paddingLeft={1}
-                paddingRight={1}
                 onMouseOver={() => {
                   if (disabled) return;
                   setHoveredIndex(index);
                 }}
                 onMouseOut={() => {
-                  setHoveredIndex(prev => (prev === index ? null : prev));
+                  setHoveredIndex((prev) => (prev === index ? null : prev));
                 }}
                 onMouseDown={(event: any) => {
                   if (disabled) return;
@@ -128,23 +150,39 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
                   onAnswer(index);
                 }}
               >
-                <text fg={selected ? '#ffca38' : 'white'} attributes={selected ? TextAttributes.BOLD : TextAttributes.NONE}>
-                  {prefix}{number}{option.label}
+                <text fg={rowColor} attributes={rowAttributes}>
+                  {selected ? '> ' : '  '}
                 </text>
+                <text fg={rowColor} attributes={rowAttributes}>{prefix}</text>
+                <text
+                  fg={rowColor}
+                  attributes={hoveredIndex === index && !selected ? TextAttributes.NONE : rowAttributes}
+                >
+                  {option.label}
+                </text>
+                <text fg={rowColor} attributes={rowAttributes}>{suffix}</text>
               </box>
             </box>
           );
         })}
       </box>
 
-      {validationError && (
-        <box marginBottom={1} paddingLeft={1}>
-          <text fg="#ff4444">{validationError}</text>
+      {validationError ? (
+        <box flexDirection="row" marginTop={1}>
+          <text fg="#ff4444" attributes={TextAttributes.BOLD}>{validationError}</text>
         </box>
-      )}
+      ) : null}
+
+      <text>{' '}</text>
 
       <box flexDirection="row">
-        <CustomInput onSubmit={handleCustomSubmit} placeholder="Tell Mosaic what it should do and press Enter" focused={!disabled} disableHistory={true} maxWidth={maxWidth} />
+        <CustomInput
+          onSubmit={handleCustomSubmit}
+          placeholder="Tell Mosaic what it should do and press Enter"
+          focused={!disabled}
+          disableHistory={true}
+          maxWidth={maxWidth}
+        />
       </box>
     </box>
   );
