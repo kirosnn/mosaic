@@ -7,6 +7,7 @@ import {
   type CommandExecutionContext,
 } from "../../utils/commands";
 import { listWorkspaceSkills } from "../../utils/skills";
+import type { UsageReport } from "../../utils/usage";
 
 interface CatalogCommand {
   name: string;
@@ -29,6 +30,8 @@ interface SerializableCommandResult {
   shouldCompactMessages?: boolean;
   compactMaxTokens?: number;
   errorBanner?: string;
+  openUsageView?: boolean;
+  usageReport?: UsageReport;
 }
 
 interface CommandCatalogPayload {
@@ -57,8 +60,28 @@ interface WorkerResponse {
   error?: string;
 }
 
+const DISABLED_COMMANDS = new Set(["usage"]);
+
 function emit(payload: WorkerResponse): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+function getResolvedCommandName(input: string): string {
+  const parsed = parseCommand(input);
+  if (!parsed) return "";
+  const command = commandRegistry.get(parsed.command);
+  if (command?.name) {
+    return command.name.toLowerCase();
+  }
+  return parsed.command.toLowerCase();
+}
+
+function buildDisabledCommandResult(commandName: string): SerializableCommandResult {
+  return {
+    success: false,
+    content: `Command /${commandName} is not available in Electron mode.`,
+    shouldAddToHistory: false,
+  };
 }
 
 function buildCatalog(): CommandCatalogPayload {
@@ -66,6 +89,7 @@ function buildCatalog(): CommandCatalogPayload {
   const entries = commandRegistry.getAll();
   for (const [key, command] of entries) {
     if (key !== command.name) continue;
+    if (DISABLED_COMMANDS.has(command.name.toLowerCase())) continue;
     commandsByName.set(command.name, {
       name: command.name,
       description: command.description,
@@ -130,6 +154,8 @@ function normalizeResult(input: string, result: Awaited<ReturnType<typeof execut
       shouldCompactMessages: false,
       compactMaxTokens: result.compactMaxTokens,
       errorBanner: result.errorBanner,
+      openUsageView: result.openUsageView,
+      usageReport: result.usageReport,
     };
   }
 
@@ -142,6 +168,8 @@ function normalizeResult(input: string, result: Awaited<ReturnType<typeof execut
       shouldCompactMessages: false,
       compactMaxTokens: result.compactMaxTokens,
       errorBanner: result.errorBanner,
+      openUsageView: result.openUsageView,
+      usageReport: result.usageReport,
     };
   }
 
@@ -153,6 +181,8 @@ function normalizeResult(input: string, result: Awaited<ReturnType<typeof execut
     shouldCompactMessages: result.shouldCompactMessages,
     compactMaxTokens: result.compactMaxTokens,
     errorBanner: result.errorBanner,
+    openUsageView: result.openUsageView,
+    usageReport: result.usageReport,
   };
 }
 
@@ -191,6 +221,16 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResponse> {
       ok: false,
       action,
       error: "Missing command input.",
+    };
+  }
+
+  const commandName = getResolvedCommandName(commandInput);
+  if (commandName && DISABLED_COMMANDS.has(commandName)) {
+    return {
+      requestId,
+      ok: true,
+      action,
+      result: buildDisabledCommandResult(commandName),
     };
   }
 
