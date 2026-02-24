@@ -628,23 +628,10 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
 
   if (approvalRequest) {
     const previewLines = approvalRequest.preview.content.split('\n').length;
-    const maxVisibleLines = Math.min(previewLines, viewportHeight - 10);
-    const approvalPanelLines = Math.max(8, 6 + maxVisibleLines);
-    const currentTotalLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
-    const linesFromBottom = currentTotalLines % viewportHeight;
-    const spaceNeeded = viewportHeight - linesFromBottom;
-
-    if (linesFromBottom > 0) {
-      allItems.push({
-        key: `approval-${approvalRequest.id}-pagebreak`,
-        type: 'line',
-        content: '',
-        role: 'assistant',
-        isFirst: false,
-        isSpacer: true,
-        visualLines: spaceNeeded,
-      });
-    }
+    const maxVisibleLines = Math.min(previewLines, 6);
+    const optionLines = approvalRequest.toolName === 'bash' ? 3 : 2;
+    const reasonLines = Array.isArray(approvalRequest.preview.details) && approvalRequest.preview.details.length > 0 ? 1 : 0;
+    const approvalPanelLines = 6 + reasonLines + maxVisibleLines + optionLines;
 
     allItems.push({
       key: `approval-${approvalRequest.id}`,
