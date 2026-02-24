@@ -142,6 +142,13 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   }, [completionIndex, completions.length])
 
   useEffect(() => {
+    const scrollbox = completionScrollboxRef.current
+    if (!scrollbox) return
+    if (scrollbox.verticalScrollBar) scrollbox.verticalScrollBar.visible = false
+    if (scrollbox.horizontalScrollBar) scrollbox.horizontalScrollBar.visible = false
+  }, [completions.length])
+
+  useEffect(() => {
     if (initialValue === undefined) return
     if (initialValue === initialValueRef.current) return
     initialValueRef.current = initialValue
@@ -788,7 +795,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
               showArrows: false,
               trackOptions: {
                 backgroundColor: "#1f1f1f",
-                foregroundColor: "#383838",
+                foregroundColor: "#1f1f1f",
               },
             }}
             horizontalScrollbarOptions={{
