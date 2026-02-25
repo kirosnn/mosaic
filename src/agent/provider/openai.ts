@@ -87,6 +87,21 @@ function transformToolsForResponsesApi(
   return transformed;
 }
 
+function isMissingToolCallOutputError(message: string): boolean {
+  const normalized = String(message || '').toLowerCase();
+  return normalized.includes('no tool call found for function call output') && normalized.includes('call_id');
+}
+
+function stripToolMessages(messages: CoreMessage[]): { messages: CoreMessage[]; removed: number } {
+  let removed = 0;
+  const filtered = messages.filter((message) => {
+    if (message.role !== 'tool') return true;
+    removed++;
+    return false;
+  });
+  return { messages: filtered, removed };
+}
+
 export class OpenAIProvider implements Provider {
   async *sendMessage(
     messages: CoreMessage[],
@@ -242,7 +257,8 @@ export class OpenAIProvider implements Provider {
 
     const runOnce = async function* (
       endpoint: OpenAIEndpoint,
-      strictJsonSchema: boolean
+      strictJsonSchema: boolean,
+      runMessages: CoreMessage[] = messages
     ): AsyncGenerator<AgentEvent> {
       const toolsToUse = endpoint === 'responses' ? transformToolsForResponsesApi(config.tools) : config.tools;
 
@@ -250,7 +266,7 @@ export class OpenAIProvider implements Provider {
       const useOutputLimit = !oauthAuth;
       const result = streamText({
         model: pickModel(endpoint),
-        messages: messages,
+        messages: runMessages,
         system: config.systemPrompt,
         tools: toolsToUse,
         maxSteps: config.maxSteps ?? 100,
@@ -392,6 +408,28 @@ export class OpenAIProvider implements Provider {
     } catch (error) {
       if (options?.abortSignal?.aborted) return;
       const msg = error instanceof Error ? error.message : String(error);
+
+      if (isMissingToolCallOutputError(msg)) {
+        const stripped = stripToolMessages(messages);
+        if (stripped.removed > 0) {
+          debugLog(`[openai] responses fallback removing ${stripped.removed} tool message(s) after missing call_id error`);
+          try {
+            yield* runWithRetry(
+              () => runOnce('responses', false, stripped.messages),
+              { abortSignal: options?.abortSignal, key: config.provider }
+            );
+            return;
+          } catch (retryError) {
+            if (options?.abortSignal?.aborted) return;
+            const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+            yield {
+              type: 'error',
+              error: retryMsg || 'Unknown error occurred',
+            };
+            return;
+          }
+        }
+      }
 
       if (oauthAuth) {
         yield {
