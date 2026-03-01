@@ -1,4 +1,4 @@
-import { SyntaxStyle, RGBA } from '@opentui/core';
+import { SyntaxStyle, RGBA } from '@cascadetui/core';
 import { parseDiffLine, getDiffLineColors } from './diff';
 
 const DIFF_SYNTAX_STYLE = SyntaxStyle.fromStyles({
