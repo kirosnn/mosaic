@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard } from "@cascadetui/react";
 import { addInputToHistory } from "../utils/history";
 import { readConfig } from "../utils/config";
 
