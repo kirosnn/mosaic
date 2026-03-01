@@ -42,7 +42,7 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
       case 'error':
         return '#ff3838';
       case 'warning':
-        return '#ffca38';
+        return '#2596be';
       case 'info':
       default:
         return '#3899ff';
