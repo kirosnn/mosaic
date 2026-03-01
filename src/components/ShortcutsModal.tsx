@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 
 interface ShortcutItem {
   keys: string;
@@ -45,10 +45,10 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
 
           <box marginBottom={1} flexDirection="row" width="100%">
             <box paddingLeft={1} paddingRight={1} backgroundColor={activeTab === 0 ? '#2a2a2a' : 'transparent'}>
-              <text fg={activeTab === 0 ? "#ffca38" : undefined} attributes={activeTab === 0 ? TextAttributes.BOLD : TextAttributes.DIM}>F1 General</text>
+              <text fg={activeTab === 0 ? "#2596be" : undefined} attributes={activeTab === 0 ? TextAttributes.BOLD : TextAttributes.DIM}>F1 General</text>
             </box>
             <box marginLeft={1} paddingLeft={1} paddingRight={1} backgroundColor={activeTab === 1 ? '#2a2a2a' : 'transparent'}>
-              <text fg={activeTab === 1 ? "#ffca38" : undefined} attributes={activeTab === 1 ? TextAttributes.BOLD : TextAttributes.DIM}>F2 Setup</text>
+              <text fg={activeTab === 1 ? "#2596be" : undefined} attributes={activeTab === 1 ? TextAttributes.BOLD : TextAttributes.DIM}>F2 Setup</text>
             </box>
           </box>
 
@@ -75,7 +75,7 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
               {shortcuts.map((s, idx) => (
                 <box key={idx} flexDirection="row" width="100%" marginBottom={1}>
                   <box width={22}>
-                    <text fg="#ffca38" attributes={TextAttributes.BOLD}>{s.keys}</text>
+                    <text fg="#2596be" attributes={TextAttributes.BOLD}>{s.keys}</text>
                   </box>
                   <box flexGrow={1} minWidth={0}>
                     <text attributes={TextAttributes.DIM}>{s.description}</text>
