@@ -1,5 +1,5 @@
-import { TextAttributes } from "@opentui/core";
-import { useKeyboard, useRenderer } from "@opentui/react";
+import { TextAttributes } from "@cascadetui/core";
+import { useKeyboard, useRenderer } from "@cascadetui/react";
 import { useMemo, useState } from "react";
 import type { UsageDailyEntry, UsageDailyModelEntry, UsageReport } from "../../utils/usage";
 
@@ -31,9 +31,9 @@ interface OverviewRow {
 }
 
 type FooterActionId = "scroll" | "tabs" | "refresh" | "back" | "quit";
-const ACCENT_COLOR = "#ffca38";
+const ACCENT_COLOR = "#2596be";
 const MODEL_COLOR_PALETTE = [
-  "#ffca38",
+  "#2596be",
   "#8fb6ff",
   "#8fc7a4",
   "#f0a35f",
