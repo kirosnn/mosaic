@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { TextAttributes } from "@opentui/core"
-import { useKeyboard, useRenderer } from "@opentui/react"
+import { TextAttributes } from "@cascadetui/core"
+import { useKeyboard, useRenderer } from "@cascadetui/react"
 import { execSync } from 'child_process'
 import { writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -834,7 +834,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
                     desiredCursorColRef.current = null
                   }}
                 >
-                  <text fg="#ffca38">{'\u203A'} </text>
+                  <text fg="#2596be">{'\u203A'} </text>
                   <text>{`/${item.token}`}</text>
                 </box>
               )
