@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 import { commandRegistry } from "../utils/commands";
 
 interface CommandItem {
@@ -60,7 +60,7 @@ export function CommandModal() {
                   <box key={idx} flexDirection="column" width="100%" marginBottom={1}>
                     <box flexDirection="row" width="100%">
                       <box width={12}>
-                        <text fg="#ffca38" attributes={TextAttributes.BOLD}>/{cmd.name}</text>
+                        <text fg="#2596be" attributes={TextAttributes.BOLD}>/{cmd.name}</text>
                       </box>
                       <box flexGrow={1} minWidth={0}>
                         <text>{cmd.description}</text>
