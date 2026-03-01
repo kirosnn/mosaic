@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TextAttributes } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
+import { TextAttributes } from '@cascadetui/core';
+import { useKeyboard } from '@cascadetui/react';
 import { CustomInput } from '../CustomInput';
 import type { QuestionRequest } from '../../utils/questionBridge';
 
