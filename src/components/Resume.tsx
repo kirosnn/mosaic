@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useKeyboard } from '@opentui/react';
-import { TextAttributes } from '@opentui/core';
+import { useKeyboard } from '@cascadetui/react';
+import { TextAttributes } from '@cascadetui/core';
 import { loadConversations, deleteConversation, type ConversationHistory } from '../utils/history';
 
 interface ResumeProps {
@@ -84,7 +84,7 @@ export function Resume({ onSelect, onCancel }: ResumeProps) {
     if (conversations.length === 0) {
         return (
             <box flexDirection="column" paddingTop={1} paddingLeft={2}>
-                <text fg="#ffca38" attributes={TextAttributes.BOLD}>Resume Session</text>
+                <text fg="#2596be" attributes={TextAttributes.BOLD}>Resume Session</text>
                 <text fg="gray" marginTop={1}>No sessions found.</text>
                 <text fg="gray" marginTop={1} attributes={TextAttributes.DIM}>Press ESC to exit</text>
             </box>
@@ -97,7 +97,7 @@ export function Resume({ onSelect, onCancel }: ResumeProps) {
 
     return (
         <box flexDirection="column" paddingTop={1} paddingLeft={2}>
-            <text fg="#ffca38" attributes={TextAttributes.BOLD}>
+            <text fg="#2596be" attributes={TextAttributes.BOLD}>
                 Resume Session ({conversations.length})
             </text>
             <text fg="gray" marginBottom={1} attributes={TextAttributes.DIM}>
@@ -117,7 +117,7 @@ export function Resume({ onSelect, onCancel }: ResumeProps) {
                     <box
                         key={conv.id}
                         flexDirection="row"
-                        backgroundColor={isSel ? '#ffca38' : (isHovered ? '#202020' : 'transparent')}
+                        backgroundColor={isSel ? '#2596be' : (isHovered ? '#202020' : 'transparent')}
                         onMouseOver={() => {
                             setHovered(idx);
                         }}
