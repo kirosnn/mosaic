@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import { basename, join, relative } from 'path';
 
 export interface SkillFrontmatter {
@@ -124,11 +125,81 @@ export interface SkillIndexCache {
   byId: Record<string, string[]>;
 }
 
-const SKILLS_DIR_RELATIVE = '.mosaic/skills';
+const SKILLS_DIR_RELATIVE = '~/.mosaic/skills';
 const ACTIVE_SKILLS_FILE = '.active.json';
 const CACHE_FILE = '.cache.json';
 const CACHE_VERSION = 1;
 const ONE_SHOT_SKILLS_KEY = '__mosaic_one_shot_skill_ids__';
+
+const DEFAULT_SKILLS: Array<{ relativePath: string; content: string }> = [
+  {
+    relativePath: 'local/how-to-create-a-skill.md',
+    content: `---
+id: create-skill
+title: How To Create A Skill
+tags: [skills, authoring]
+priority: 100
+requires: []
+modelHints: {}
+summary: "Teach the agent how to create, structure, and validate a new Mosaic skill."
+onActivate:
+  run: false
+  prompt: ""
+---
+
+# How To Create A Skill
+
+Goal:
+- Create a new skill markdown file under ~/.mosaic/skills/local.
+
+Steps:
+- Pick a short, stable id (kebab-case).
+- Create the file name using the id (e.g. <id>.md).
+- Add YAML frontmatter with:
+  - id
+  - title
+  - tags
+  - priority (higher = applied earlier)
+  - requires (dependencies on other skill ids)
+  - summary (short)
+  - onActivate (optional)
+- Use a single H1 title matching the skill.
+- Write:
+  - When to use (clear triggers)
+  - Execution workflow (concrete steps)
+  - Constraints (safety boundaries)
+
+Validation checklist:
+- No instruction override language (do not bypass system/developer/user instructions).
+- No destructive commands unless explicitly required and safe.
+- Keep it actionable and specific.
+`,
+  },
+  {
+    relativePath: 'local/skill-writing-style.md',
+    content: `---
+id: skill-writing-style
+title: Skill Writing Style
+tags: [skills]
+priority: 60
+requires: []
+modelHints: {}
+summary: "Guidelines for writing concise, safe, and effective skills."
+onActivate:
+  run: false
+  prompt: ""
+---
+
+# Skill Writing Style
+
+When writing a skill:
+- Use short sections.
+- Prefer bullet steps.
+- Include guardrails.
+- Prefer deterministic instructions.
+`,
+  },
+];
 
 function normalizeLineEndings(value: string): string {
   return value.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
@@ -363,7 +434,65 @@ function resolveOnActivateConfig(frontmatter: SkillFrontmatter): { run: boolean;
 }
 
 function getSkillsDirPath(): string {
+  return join(homedir(), '.mosaic', 'skills');
+}
+
+function getLegacyProjectSkillsDirPath(): string {
   return join(process.cwd(), '.mosaic', 'skills');
+}
+
+function listMarkdownFilesUnder(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return listSkillMarkdownFiles(dir);
+}
+
+function copyDirRecursive(sourceDir: string, targetDir: string): void {
+  if (!existsSync(sourceDir)) return;
+  mkdirSync(targetDir, { recursive: true });
+  const entries = readdirSync(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(sourcePath, targetPath);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    copyFileSync(sourcePath, targetPath);
+  }
+}
+
+function migrateLegacyProjectSkillsIfNeeded(globalSkillsDir: string): void {
+  const legacyDir = getLegacyProjectSkillsDirPath();
+  if (!existsSync(legacyDir)) return;
+
+  const globalHasSkills = listMarkdownFilesUnder(globalSkillsDir).length > 0;
+  const legacyHasSkills = listMarkdownFilesUnder(legacyDir).length > 0;
+  if (globalHasSkills || !legacyHasSkills) return;
+
+  copyDirRecursive(legacyDir, globalSkillsDir);
+  const backupDir = `${legacyDir}.migrated-${Date.now()}`;
+  try {
+    renameSync(legacyDir, backupDir);
+  } catch {
+  }
+}
+
+function ensureDefaultSkills(globalSkillsDir: string): void {
+  const hasAnySkills = listMarkdownFilesUnder(globalSkillsDir).length > 0;
+  if (hasAnySkills) return;
+
+  for (const skill of DEFAULT_SKILLS) {
+    const absolutePath = join(globalSkillsDir, skill.relativePath);
+    const parentDir = join(globalSkillsDir, skill.relativePath.split('/').slice(0, -1).join('/'));
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true });
+    }
+    if (!existsSync(absolutePath)) {
+      writeFileSync(absolutePath, skill.content, 'utf-8');
+    }
+  }
 }
 
 function getActiveSkillsFilePath(): string {
@@ -804,6 +933,21 @@ export function ensureSkillsDirectory(): string {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
+  const localDir = join(dir, 'local');
+  const teamDir = join(dir, 'team');
+  const vendorDir = join(dir, 'vendor');
+  if (!existsSync(localDir)) mkdirSync(localDir, { recursive: true });
+  if (!existsSync(teamDir)) mkdirSync(teamDir, { recursive: true });
+  if (!existsSync(vendorDir)) mkdirSync(vendorDir, { recursive: true });
+
+  try {
+    migrateLegacyProjectSkillsIfNeeded(dir);
+  } catch {
+  }
+  try {
+    ensureDefaultSkills(dir);
+  } catch {
+  }
   return dir;
 }
 
@@ -830,7 +974,7 @@ export function getSkillIdPathMap(skillsInput?: WorkspaceSkill[]): Record<string
 }
 
 export function listWorkspaceSkills(): WorkspaceSkill[] {
-  const root = getSkillsDirPath();
+  const root = ensureSkillsDirectory();
   if (!existsSync(root)) return [];
   const files = listSkillMarkdownFiles(root);
   const skills: WorkspaceSkill[] = [];
