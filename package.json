@@ -1,6 +1,6 @@
 {
-  "name": "@kirosnn/mosaic",
-  "version": "0.8.0",
+  "name": "@monoverse/mosaic",
+  "version": "0.8.1",
   "description": "The open source coding agent.",
   "license": "MIT",
   "type": "module",
@@ -14,13 +14,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "dev": "bun run --watch src/index.tsx",
-    "mosaic": "bun run src/index.tsx",
-    "start": "bun run src/index.tsx",
+    "dev": "bun run --watch index.tsx",
+    "mosaic": "bun run index.tsx",
+    "start": "bun run index.tsx",
     "lint": "bunx tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
-    "electron:build-renderer": "bunx tsc -p tsconfig.electron.renderer.json && node --input-type=module -e \"import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('src/electron/renderer/dist', { recursive: true }); writeFileSync('src/electron/renderer/dist/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n');\"",
-    "electron:dev": "node src/electron/dev-runner.cjs"
+    "test": "bun test"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -30,8 +28,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@types/turndown": "^5.0.6",
-    "electron": "^37.2.6"
+    "@types/turndown": "^5.0.6"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
@@ -39,18 +36,16 @@
     "@ai-sdk/mistral": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
     "@ai-sdk/xai": "^1.0.0",
+    "@cascadetui/core": "^0.1.8",
+    "@cascadetui/react": "^0.1.8",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@mozilla/readability": "^0.6.0",
-    "@opentui/core": "^0.1.81",
-    "@opentui/react": "^0.1.81",
     "ai": "^4.0.0",
     "ai-sdk-openai-websocket-fetch": "^1.0.0",
-    "better-sqlite3": "^12.6.0",
     "groq-sdk": "^0.37.0",
     "linkedom": "^0.18.12",
     "lucide-react": "^0.575.0",
     "ollama": "^0.5.0",
-    "opentui-spinner": "^0.0.6",
     "playwright": "^1.45.0",
     "react": "19.2.4",
     "react-doctor": "^0.0.17",
