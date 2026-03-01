@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { homedir } from 'os';
-import { TextAttributes } from '@opentui/core';
-import { useKeyboard } from '@opentui/react';
+import { TextAttributes } from '@cascadetui/core';
+import { useKeyboard } from '@cascadetui/react';
 import type { PendingChange } from '../../utils/pendingChangesBridge';
 import { renderDiffBlock } from '../../utils/diffRendering';
 import { parseDiffLine } from '../../utils/diff';
