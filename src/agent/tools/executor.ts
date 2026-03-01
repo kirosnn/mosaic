@@ -528,6 +528,19 @@ const EXCLUDED_DIRECTORIES = new Set([
 const BASH_REVIEW_MAX_FILES = 2000;
 const BASH_REVIEW_MAX_FILE_BYTES = 512 * 1024;
 const BASH_REVIEW_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+const BASH_FILE_MUTATION_PATTERNS = [
+  /\b(remove-item|ri|del|erase|rmdir|rm|move-item|mv|copy-item|cp|xcopy|robocopy|new-item|newitem|mkdir|md|rename-item|ren|set-content|add-content|clear-content|out-file|touch|truncate)\b/i,
+  /\bgit\s+(apply|am|cherry-pick|merge|rebase|checkout|switch|restore|reset|clean|stash\s+(apply|pop)|pull)\b/i,
+  /\bnpm\s+(install|i|add|uninstall|remove|update|upgrade|ci|rebuild)\b/i,
+  /\byarn\s+(add|remove|up|upgrade|set\s+version|link)\b/i,
+  /\bpnpm\s+(add|install|i|remove|update|upgrade|link|rebuild)\b/i,
+  /\bbun\s+(add|install|i|remove|update|upgrade|link)\b/i,
+  /\bpip\s+(install|uninstall|remove)\b/i,
+  /\bconda\s+(install|remove|update)\b/i,
+  /\bsed\b.*\s-i\b/i,
+  /\bperl\b.*\s-pe\b/i,
+  /\btee\b/i,
+];
 
 interface WorkspaceReviewSnapshot {
   files: Map<string, string>;
@@ -550,14 +563,13 @@ function shouldTrackBashFileChanges(command: string): boolean {
   const trimmed = (command || '').trim();
   if (!trimmed) return false;
 
-  const mutationPattern = /\b(remove-item|ri|del|erase|rmdir|rm|move-item|mv|copy-item|cp|xcopy|robocopy|new-item|mkdir|md|rename-item|ren|set-content|add-content|clear-content|out-file|touch|truncate)\b/i;
-  if (mutationPattern.test(trimmed)) return true;
-  if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
-  if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
-  if (BASH_REDIRECTION_PATTERN.test(trimmed)) return true;
   if (isReadOnlyBashCommandChain(trimmed)) return false;
+  if (BASH_REDIRECTION_PATTERN.test(trimmed)) return true;
+  for (const pattern of BASH_FILE_MUTATION_PATTERNS) {
+    if (pattern.test(trimmed)) return true;
+  }
 
-  return !isSafeBashCommand(trimmed);
+  return false;
 }
 
 async function captureWorkspaceReviewSnapshot(workspace: string): Promise<WorkspaceReviewSnapshot> {
