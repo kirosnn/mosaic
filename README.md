@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo_white.svg" width="200" alt="Mosaic logo" />
+  <img src="docs/monoverse_white.png" width="200" alt="Monoverse logo" />
 </p>
 
 <h1 align="center">Mosaic</h1>
@@ -200,24 +200,6 @@ Skills are auto-activated based on workspace configuration and can be managed wi
 - Use `/approvals off` to enable auto-approve mode.
 - MCP approvals are managed per server/tool policy.
 
-## Electron IDE (Experimental)
-
-Mosaic now includes an Electron desktop interface inspired by coding-agent IDE workflows.
-
-### Run
-
-```bash
-bun install
-bun run electron:dev
-```
-
-### Features
-
-- Workspace explorer with file open/create actions
-- Built-in text editor with save support
-- React renderer inside Electron (IDE-style layout)
-- Streaming agent chat panel powered by the existing Mosaic agent runtime
-
 ## Development
 
 ```bash
@@ -235,7 +217,7 @@ bun test
 
 ## Project Structure
 
-- `src/index.tsx`: CLI entrypoint and app bootstrap
+- `index.tsx`: CLI entrypoint and app bootstrap
 - `src/components/`: TUI components
 - `src/agent/`: core agent, providers, prompts, and internal tools
 - `src/mcp/`: MCP runtime, config, and CLI
