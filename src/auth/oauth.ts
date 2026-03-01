@@ -188,7 +188,8 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mosaic Authorization Failed</title>
+<link rel="icon" href="../../docs/monoverse_white.png" type="image/png">
+    <title>Monoverse Authorization Failed</title>
     <style>
         :root {
             --bg-app: #171717;
@@ -245,10 +246,7 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
 </head>
 <body>
     <div class="container">
-        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-             <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
-            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
-        </svg>
+        <img class="logo" src="../../docs/monoverse_white.png" alt="Monoverse Logo">
         <h1>Authorization Failed</h1>
         <p>Please return to the terminal and try again.</p>
     </div>
@@ -263,13 +261,14 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mosaic Authorization</title>
+<link rel="icon" href="../../docs/monoverse_white.png" type="image/png">
+    <title>Monoverse Authorization</title>
     <style>
         :root {
             --bg-app: #171717;
             --text-primary: #ffffff;
             --text-secondary: #aaaaaa;
-            --accent-color: #ffca38;
+            --accent-color: #2596be;
             --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
         }
         @media (prefers-color-scheme: light) {
@@ -319,10 +318,7 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
 </head>
 <body>
     <div class="container">
-        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
-            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
-        </svg>
+        <img class="logo" src="../../docs/monoverse_white.png" alt="Monoverse Logo">
         <h1>Authorization Complete</h1>
         <p>You can close this tab and return to the terminal.</p>
     </div>
