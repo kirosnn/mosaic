@@ -1,6 +1,7 @@
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import type { Command } from './types';
+import { ensureSkillsDirectory } from '../skills';
 
 const INIT_PROMPT = `Analyze the codebase and create or update the MOSAIC.md file in the root of the current workspace.
 
@@ -58,15 +59,8 @@ export const initCommand: Command = {
   execute: async (): Promise<{ success: boolean; content: string; shouldAddToHistory?: boolean }> => {
     try {
       const mosaicDir = join(process.cwd(), '.mosaic');
-      const skillsDir = join(mosaicDir, 'skills');
-      const skillsLocalDir = join(skillsDir, 'local');
-      const skillsTeamDir = join(skillsDir, 'team');
-      const skillsVendorDir = join(skillsDir, 'vendor');
       await mkdir(mosaicDir, { recursive: true });
-      await mkdir(skillsDir, { recursive: true });
-      await mkdir(skillsLocalDir, { recursive: true });
-      await mkdir(skillsTeamDir, { recursive: true });
-      await mkdir(skillsVendorDir, { recursive: true });
+      ensureSkillsDirectory();
     } catch (error) {
       return {
         success: false,
