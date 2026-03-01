@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
-import { TextAttributes, SyntaxStyle, RGBA, type KeyEvent } from "@opentui/core";
-import { useRenderer } from "@opentui/react";
+import { TextAttributes, SyntaxStyle, RGBA, type KeyEvent } from "@cascadetui/core";
+import { useRenderer } from "@cascadetui/react";
 import { renderMarkdownSegment } from "../../utils/markdown";
 import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
 import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
@@ -76,7 +76,7 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
         ?? (marker === '~' || marker === '●' ? 'in_progress' : (marker === 'x' || marker === '✓' ? 'completed' : 'pending'));
       const isInProgress = resolvedStatus === 'in_progress';
       const isCompleted = resolvedStatus === 'completed';
-      const markerColor = isInProgress ? '#ffca38' : '#9a9a9a';
+      const markerColor = isInProgress ? '#2596be' : '#9a9a9a';
       const markerChar = isInProgress ? '●' : (isCompleted ? '✓' : ' ');
       return (
         <box flexDirection="row">
@@ -111,11 +111,11 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
   const planMatch = content.match(/^(\s*)>\s*(\[[~x ]\])?\s*(.*)$/);
   if (planMatch) {
     const [, leading, bracket, rest] = planMatch;
-    const bracketColor = bracket === '[~]' ? '#ffca38' : 'white';
+    const bracketColor = bracket === '[~]' ? '#2596be' : 'white';
     return (
       <box flexDirection="row">
         <text fg="white">{leading || ''}</text>
-        <text fg="#ffca38">{'>'}</text>
+        <text fg="#2596be">{'>'}</text>
         <text fg="white"> </text>
         {bracket ? <text fg={bracketColor}>{bracket}</text> : null}
         {bracket ? <text fg="white"> </text> : null}
@@ -154,7 +154,7 @@ function renderSlashText(content: string, indent: number) {
     const max = parts[3] || '0';
     return (
       <box flexDirection="row">
-        <text fg="#ffca38">Model in use : </text>
+        <text fg="#2596be">Model in use : </text>
         <text fg="white" attributes={TextAttributes.BOLD}>{model}</text>
         <text fg="#9a9a9a">{` · ${used}/${max} tokens`}</text>
       </box>
@@ -198,7 +198,7 @@ function renderSlashText(content: string, indent: number) {
       UP: '#58a6ff',
       MS: '#79c0ff',
       FS: '#8b949e',
-      AB: '#ffca38',
+      AB: '#2596be',
     };
     const color = colorByCode[code] || 'white';
 
@@ -226,8 +226,8 @@ function renderSlashText(content: string, indent: number) {
   if (head === '[CTX_NOTE]') {
     return (
       <box flexDirection="row">
-        <text fg="#ffca38">! </text>
-        <text fg="#ffca38" attributes={TextAttributes.DIM}>{parts.slice(1).join('|') || ''}</text>
+        <text fg="#2596be">! </text>
+        <text fg="#2596be" attributes={TextAttributes.DIM}>{parts.slice(1).join('|') || ''}</text>
       </box>
     );
   }
@@ -613,7 +613,7 @@ export function ChatPage({
               onMouseDown={handleUserMouseDown}
             >
               {item.role === "user" && (item.content || item.isPadding) && (
-                <text fg="#ffca38">▎ </text>
+                <text fg="#2596be">▎ </text>
               )}
               {showSlashBar && (
                 <text fg="white">▎ </text>
@@ -630,12 +630,16 @@ export function ChatPage({
                   const arrowColor = isRunning
                     ? (blinkOn ? 'white' : '#808080')
                     : (resolvedSuccess ? '#44aa88' : '#ff3838');
-                  const label = item.compactLabel || '';
-                  const result = item.compactResult || '';
+                  const lineText = item.content || ' ';
+                  const isFirstCompactLine = (item.compactLineIndex ?? 0) === 0;
                   return (
                     <box flexDirection="row">
-                      <text fg={arrowColor}>{''}➔  </text>
-                      <text attributes={TextAttributes.DIM}>{`${label}${result ? ` : ${result}` : ''}`}</text>
+                      {isFirstCompactLine ? (
+                        <text fg={arrowColor}>{''}➔  </text>
+                      ) : (
+                        <text>{'   '}</text>
+                      )}
+                      <text attributes={TextAttributes.DIM}>{lineText}</text>
                     </box>
                   );
                 })()
@@ -739,7 +743,7 @@ export function ChatPage({
       >
         {pendingImages.length > 0 && (
           <box flexDirection="row" width="100%" marginBottom={1}>
-            <text fg="#ffca38">Images: </text>
+            <text fg="#2596be">Images: </text>
             <text fg="gray">{pendingImages.map((img) => img.name).join(", ")}</text>
           </box>
         )}
