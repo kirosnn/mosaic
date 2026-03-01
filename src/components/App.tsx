@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { KeyEvent } from '@opentui/core';
+import type { KeyEvent } from '@cascadetui/core';
 import { isFirstRun, markFirstRunComplete } from '../utils/config';
-import { useRenderer } from '@opentui/react';
+import { useRenderer } from '@cascadetui/react';
 import { Welcome } from './Welcome';
 import { Setup } from './Setup';
 import { Main } from './Main';
@@ -15,6 +15,7 @@ import { shouldRequireApprovals, setRequireApprovals } from '../utils/config';
 import { getCurrentApproval, respondApproval } from '../utils/approvalBridge';
 import { emitApprovalMode } from '../utils/approvalModeBridge';
 import type { Message } from './main/types';
+import { normalizeSelectedText } from '../utils/selectionText';
 
 const execAsync = promisify(exec);
 
@@ -71,11 +72,13 @@ export function App({ initialMessage, initialMessages, initialTitle }: AppProps)
       if (!selection || selection.isSelecting || !selection.isActive) return;
       const text = typeof selection.getSelectedText === 'function' ? selection.getSelectedText() : '';
       if (!text) return;
+      const normalizedText = normalizeSelectedText(text);
+      if (!normalizedText) return;
       const now = Date.now();
       const last = lastSelectionRef.current;
-      if (last && last.text === text && now - last.at < 400) return;
-      lastSelectionRef.current = { text, at: now };
-      copyToClipboard(text);
+      if (last && last.text === normalizedText && now - last.at < 400) return;
+      lastSelectionRef.current = { text: normalizedText, at: now };
+      copyToClipboard(normalizedText);
       addNotification('Copied to clipboard', 'info', 2000);
     };
 
