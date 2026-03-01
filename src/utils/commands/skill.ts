@@ -116,7 +116,7 @@ function resolveSingleSkill(name: string, skills: WorkspaceSkill[], pickIndex?: 
 
 export const skillCommand: Command = {
   name: 'skill',
-  description: 'Manage workspace skills in .mosaic/skills',
+  description: 'Manage workspace skills in ~/.mosaic/skills',
   usage: '/skill [list|active|clear|show|info|search|pack|create|path]',
   aliases: ['skills', 'sk'],
   execute: (args: string[]) => {
