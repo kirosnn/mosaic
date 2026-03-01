@@ -9,7 +9,7 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
+    "jsxImportSource": "@cascadetui/react",
     "allowImportingTsExtensions": true,
     "moduleDetection": "force",
     "noEmit": true,
@@ -28,7 +28,6 @@
     "src/**/*"
   ],
   "exclude": [
-    "node_modules",
-    "src/electron/renderer/src/**/*"
+    "node_modules"
   ]
 }
