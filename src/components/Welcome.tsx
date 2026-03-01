@@ -1,5 +1,5 @@
-import { TextAttributes } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { TextAttributes } from "@cascadetui/core";
+import { useKeyboard } from "@cascadetui/react";
 import { VERSION } from "../utils/version";
 
 interface WelcomeProps {
@@ -21,9 +21,7 @@ export function Welcome({ onComplete, isFirstRun, shortcutsOpen = false, command
     <box width="100%" height="100%" justifyContent="center" alignItems="center">
       <box flexDirection="row">
         <box flexDirection="column" alignItems="center" marginBottom={2}>
-          <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╗   ███╗</text>
-          <text fg="#ffca38" attributes={TextAttributes.BOLD}>████╗ ████║</text>
-          <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╔████╔███║</text>
+          <ascii-font text="Mosaic" font="tiny" color="#1a1a1a" />
         </box>
         <box flexDirection="column" alignItems="flex-start" marginLeft={2}>
           <text attributes={TextAttributes.DIM}>Mosaic welcomes you !</text>
