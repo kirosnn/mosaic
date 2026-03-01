@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { TextAttributes } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { TextAttributes } from "@cascadetui/core";
+import { useKeyboard } from "@cascadetui/react";
 
 export interface SelectOption {
   name: string;
@@ -62,7 +62,7 @@ export function SelectList({ options, onSelect, disabled = false }: SelectListPr
           }}
         >
           <box flexDirection="column">
-            <text fg={isSelected ? "#ffca38" : undefined} attributes={isSelected ? TextAttributes.BOLD : TextAttributes.NONE}>{isSelected ? '> ' : '  '}{option.name}</text>
+            <text fg={isSelected ? "#2596be" : undefined} attributes={isSelected ? TextAttributes.BOLD : TextAttributes.NONE}>{isSelected ? '> ' : '  '}{option.name}</text>
             <text attributes={TextAttributes.DIM}>{'  '}{option.description}</text>
           </box>
         </box>
