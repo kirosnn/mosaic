@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 import { THINKING_WORDS, type TokenBreakdown } from "./types";
 
 interface ThinkingIndicatorProps {
@@ -169,14 +169,13 @@ function createKnightRiderFrames(options: KnightRiderOptions = {}): { frames: st
     const colors =
         options.colors ??
         [
-            "#ffca38",
-            "#ffd666",
-            "#ffb800",
-            "#ff9a3a",
-            "#ff7a2f",
+            "#2596be",
+            "#5bb8d4",
+            "#8ed3e6",
+            "#bfeaf3",
+            "#e9f7fb",
         ];
-
-    const defaultColor = options.defaultColor ?? "#2a2320";
+    const defaultColor = options.defaultColor ?? "#20252a";
 
     const inactiveChar = options.inactiveChar ?? "▪";
     const activeChar = options.activeChar ?? "■";
@@ -323,7 +322,7 @@ export function ThinkingIndicator(props: ThinkingIndicatorProps) {
             {displayedTokens > 0 && (
                 <>
                     <text attributes={TextAttributes.DIM}>{" — "}</text>
-                    <text fg={isFlashing ? "#ffca38" : "white"}>{displayedTokens.toLocaleString()}</text>
+                    <text fg={isFlashing ? "#2596be" : "white"}>{displayedTokens.toLocaleString()}</text>
                     <text attributes={TextAttributes.DIM}>{` tokens${breakdownStr}`}</text>
                 </>
             )}
@@ -358,10 +357,10 @@ export function ThinkingIndicatorBlock(props: ThinkingIndicatorProps) {
             <ThinkingIndicator {...props} />
             {props.nextStep ? (
                 <box flexDirection="row" width="100%" paddingLeft={2}>
-                    <text fg="#ffca38">{"▪ "}</text>
+                    <text fg="#2596be">{"▪ "}</text>
                     {nextLabel.split("").map((char, index) => {
                         return (
-                            <text key={index} fg="#ffca38" attributes={TextAttributes.BOLD}>
+                            <text key={index} fg="#2596be" attributes={TextAttributes.BOLD}>
                                 {char}
                             </text>
                         );
