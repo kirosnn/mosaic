@@ -6,7 +6,7 @@ import { buildActiveSkillsPromptSection } from '../../utils/skills';
 
 export const DEFAULT_SYSTEM_PROMPT = `You are Mosaic, an AI coding agent operating in the user's terminal.
 You assist with software engineering tasks: coding, debugging, refactoring, testing, and documentation.
-Version : 0.8.0 *(Beta)*
+Version : 0.8.1 *(Beta)*
 
 <environment>
 - Workspace: {{WORKSPACE}}
