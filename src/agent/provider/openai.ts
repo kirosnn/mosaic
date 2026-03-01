@@ -92,14 +92,74 @@ function isMissingToolCallOutputError(message: string): boolean {
   return normalized.includes('no tool call found for function call output') && normalized.includes('call_id');
 }
 
-function stripToolMessages(messages: CoreMessage[]): { messages: CoreMessage[]; removed: number } {
-  let removed = 0;
-  const filtered = messages.filter((message) => {
-    if (message.role !== 'tool') return true;
-    removed++;
-    return false;
-  });
-  return { messages: filtered, removed };
+function extractMissingToolCallId(message: string): string | null {
+  const match = String(message || '').match(/call_id\s+([A-Za-z0-9_-]+)/i);
+  return match?.[1] ?? null;
+}
+
+function getPartCallId(part: any): string | null {
+  const raw = part?.toolCallId ?? part?.tool_call_id ?? part?.call_id;
+  return typeof raw === 'string' && raw.trim() ? raw : null;
+}
+
+function isStructuredToolPartType(part: any): boolean {
+  const type = typeof part?.type === 'string' ? part.type : '';
+  return type === 'tool-call' || type === 'tool-result' || type === 'function_call' || type === 'function_call_output';
+}
+
+function sanitizeMessagesForMissingToolCall(
+  messages: CoreMessage[],
+  missingCallId: string | null
+): { messages: CoreMessage[]; removedToolMessages: number; removedAssistantParts: number; removedAssistantMessages: number } {
+  let removedToolMessages = 0;
+  let removedAssistantParts = 0;
+  let removedAssistantMessages = 0;
+  const sanitized: CoreMessage[] = [];
+
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      removedToolMessages++;
+      continue;
+    }
+
+    if (message.role === 'assistant' && typeof message.content === 'string') {
+      if (message.content.startsWith('TOOL LEDGER (continuation context):')) {
+        removedAssistantMessages++;
+        continue;
+      }
+      sanitized.push(message);
+      continue;
+    }
+
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) {
+      sanitized.push(message);
+      continue;
+    }
+
+    const nextParts: any[] = [];
+    for (const part of message.content as any[]) {
+      const isStructuredToolPart = isStructuredToolPartType(part);
+      const partCallId = getPartCallId(part);
+      const removeByCallId = Boolean(missingCallId && partCallId === missingCallId);
+      if (isStructuredToolPart || removeByCallId) {
+        removedAssistantParts++;
+        continue;
+      }
+      nextParts.push(part);
+    }
+
+    if (nextParts.length === 0) {
+      removedAssistantMessages++;
+      continue;
+    }
+
+    sanitized.push({
+      ...message,
+      content: nextParts as any,
+    });
+  }
+
+  return { messages: sanitized, removedToolMessages, removedAssistantParts, removedAssistantMessages };
 }
 
 export class OpenAIProvider implements Provider {
@@ -410,24 +470,45 @@ export class OpenAIProvider implements Provider {
       const msg = error instanceof Error ? error.message : String(error);
 
       if (isMissingToolCallOutputError(msg)) {
-        const stripped = stripToolMessages(messages);
-        if (stripped.removed > 0) {
-          debugLog(`[openai] responses fallback removing ${stripped.removed} tool message(s) after missing call_id error`);
+        const missingCallId = extractMissingToolCallId(msg);
+        const sanitized = sanitizeMessagesForMissingToolCall(messages, missingCallId);
+        const totalRemoved = sanitized.removedToolMessages + sanitized.removedAssistantParts + sanitized.removedAssistantMessages;
+        if (totalRemoved > 0) {
+          debugLog(`[openai] responses fallback missing call_id=${missingCallId ?? 'unknown'} removed={toolMsgs:${sanitized.removedToolMessages},assistantParts:${sanitized.removedAssistantParts},assistantMsgs:${sanitized.removedAssistantMessages}}`);
           try {
             yield* runWithRetry(
-              () => runOnce('responses', false, stripped.messages),
+              () => runOnce('responses', false, sanitized.messages),
               { abortSignal: options?.abortSignal, key: config.provider }
             );
             return;
           } catch (retryError) {
             if (options?.abortSignal?.aborted) return;
             const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
-            yield {
-              type: 'error',
-              error: retryMsg || 'Unknown error occurred',
-            };
-            return;
+            if (!isMissingToolCallOutputError(retryMsg)) {
+              yield {
+                type: 'error',
+                error: retryMsg || 'Unknown error occurred',
+              };
+              return;
+            }
           }
+        }
+
+        try {
+          debugLog('[openai] responses fallback switching to chat endpoint after missing call_id error');
+          yield* runWithRetry(
+            () => runOnce('chat', false, sanitized.messages),
+            { abortSignal: options?.abortSignal, key: config.provider }
+          );
+          return;
+        } catch (chatRetryError) {
+          if (options?.abortSignal?.aborted) return;
+          const chatRetryMsg = chatRetryError instanceof Error ? chatRetryError.message : String(chatRetryError);
+          yield {
+            type: 'error',
+            error: chatRetryMsg || 'Unknown error occurred',
+          };
+          return;
         }
       }
 
