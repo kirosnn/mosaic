@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { TextAttributes, type KeyEvent } from "@opentui/core";
-import { useRenderer } from "@opentui/react";
+import { TextAttributes, type KeyEvent } from "@cascadetui/core";
+import { useRenderer } from "@cascadetui/react";
 import { getAllProviders, getProviderById, modelRequiresApiKey, addCustomProvider, addCustomModel, type CustomProvider, type AIModel } from '../utils/config';
 import { SelectList, type SelectOption } from './SelectList';
 import { CustomInput } from './CustomInput';
