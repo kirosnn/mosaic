@@ -43,6 +43,7 @@ export interface RenderItem {
   isCompactTool?: boolean;
   compactLabel?: string;
   compactResult?: string;
+  compactLineIndex?: number;
   messageId?: string;
   messageIndex?: number;
   userMessageText?: string;
@@ -383,20 +384,26 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
           label = message.toolName === 'title' ? name : (info ? `${name} (${info})` : name);
           result = getCompactResult(message);
         }
-        allItems.push({
-          key: `${messageKey}-compact`,
-          type: 'tool_compact',
-          role: messageRole,
-          toolName: message.toolName,
-          isFirst: true,
-          visualLines: 1,
-          success: message.success,
-          isRunning: message.isRunning,
-          runningStartTime: message.runningStartTime,
-          isCompactTool: true,
-          compactLabel: label,
-          compactResult: result
-        });
+        const compactText = `${label}${result ? ` : ${result}` : ''}`;
+        const compactLines = wrapText(compactText, Math.max(10, maxWidth - 6));
+        for (let i = 0; i < compactLines.length; i++) {
+          allItems.push({
+            key: `${messageKey}-compact-${i}`,
+            type: 'tool_compact',
+            content: compactLines[i] || '',
+            role: messageRole,
+            toolName: message.toolName,
+            isFirst: i === 0,
+            visualLines: 1,
+            success: message.success,
+            isRunning: message.isRunning,
+            runningStartTime: message.runningStartTime,
+            isCompactTool: true,
+            compactLabel: label,
+            compactResult: result,
+            compactLineIndex: i
+          });
+        }
       } else {
         if (messageRole === "user" && message.images && message.images.length > 0) {
           for (let i = 0; i < message.images.length; i++) {
