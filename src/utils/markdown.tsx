@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 
 export interface MarkdownSegment {
   type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem' | 'link';
@@ -113,7 +113,7 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
       return <text key={key} fg="#ffdd80">{`${segment.content}`}</text>;
 
     case 'heading':
-      return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
+      return <text key={key} fg="#2596be" attributes={TextAttributes.BOLD}>{segment.content}</text>;
 
     case 'link':
       return <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>{segment.content}</text>;
@@ -121,7 +121,7 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
     case 'listitem':
       return (
         <box key={key} flexDirection="row">
-          <text fg="#ffca38">• </text>
+          <text fg="#2596be">• </text>
           <text>{segment.content}</text>
         </box>
       );
