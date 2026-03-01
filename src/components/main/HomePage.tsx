@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 import { VERSION } from "../../utils/version";
 import { CustomInput } from "../CustomInput";
 
@@ -146,9 +146,7 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
   return (
     <box flexDirection="column" width="100%" height="100%" justifyContent="center" alignItems="center">
       <box flexDirection="column" alignItems="center" marginBottom={2}>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╗   ███╗</text>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>████╗ ████║</text>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╔████╔███║</text>
+        <ascii-font text="Mosaic" font="tiny" color="#1a1a1a" />
       </box>
 
       <box width="80%" maxWidth={80}>
@@ -171,9 +169,9 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
       </box>
 
       <box width="80%" maxWidth={80} marginTop={3} flexDirection="row" justifyContent="center">
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>● TIPS: </text>
+        <text fg="#2596be" attributes={TextAttributes.BOLD}>● TIPS: </text>
         <text fg="gray">{displayedText}</text>
-        <text fg="#ffca38">{cursorVisible ? "█" : " "}</text>
+        <text fg="#2596be">{cursorVisible ? "█" : " "}</text>
       </box>
 
       <box position="absolute" bottom={1} right={2}>
