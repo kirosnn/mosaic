@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "@cascadetui/core";
 import { CustomInput } from "../CustomInput";
 import type { ImageAttachment } from "../../utils/images";
 
@@ -104,7 +104,7 @@ export function UserMessageModal({
                       onCloseEdit();
                     }}
                   >
-                    <text fg="#ffca38">{'\u203A'} </text>
+                    <text fg="#2596be">{'\u203A'} </text>
                     <text>Back to actions</text>
                   </box>
                 </box>
@@ -146,7 +146,7 @@ export function UserMessageModal({
                         action.onActivate();
                       }}
                     >
-                      <text fg="#ffca38">{'\u203A'} </text>
+                      <text fg="#2596be">{'\u203A'} </text>
                       <text>{action.label}</text>
                     </box>
                   );
