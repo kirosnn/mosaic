@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { TextAttributes } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { TextAttributes } from "@cascadetui/core";
+import { useKeyboard } from "@cascadetui/react";
 import type { SelectOption } from "../../utils/commands/types";
 
 interface CommandSelectMenuProps {
