@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import { Agent, type AgentMessage } from "../../agent";
 import { buildSmartConversationHistory, type SmartContextMessage } from "../../agent/context";
+import { buildAgentRuntimeContext } from "../../agent/runtimeContext";
 import { readConfig } from "../../utils/config";
 
 interface InputMessage {
@@ -127,18 +128,21 @@ async function runChat(active: ActiveRun, request: WorkerRequest): Promise<void>
     }
 
     const normalized = normalizeMessages(request.messages);
+    const runtimeContext = buildAgentRuntimeContext(normalized);
     const history = buildSmartConversationHistory({
       messages: normalized,
       includeImages: false,
       maxContextTokens: config.maxContextTokens,
       provider: config.provider,
+      taskModeDecision: runtimeContext.taskModeDecision,
+      repoSummary: runtimeContext.repoSummary,
     });
     const streamInput: AgentMessage[] = history.map((message) => ({
       role: message.role,
       content: message.content,
     }));
 
-    const agent = new Agent();
+    const agent = new Agent(runtimeContext);
     for await (const event of agent.streamMessages(streamInput, {
       alreadyCompacted: true,
       abortSignal: active.abortController.signal,
