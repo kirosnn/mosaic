@@ -407,6 +407,26 @@ function parseRetryAfter(value: string | undefined): number | undefined {
   return undefined;
 }
 
+const USAGE_LIMIT_RETRY_THRESHOLD_SECONDS = 120;
+
+function getErrorBody(error: unknown): Record<string, unknown> | undefined {
+  const e: any = error as any;
+  const body = e?.body ?? e?.error ?? e?.response?.data ?? e?.responseBody;
+  if (body && typeof body === 'object') return body as Record<string, unknown>;
+  if (typeof body === 'string') {
+    try { return JSON.parse(body); } catch { return undefined; }
+  }
+  return undefined;
+}
+
+function getUsageLimitResetsInSeconds(error: unknown): number | undefined {
+  const body = getErrorBody(error);
+  const inner = (body?.error as Record<string, unknown>) ?? body;
+  if (!inner || inner['type'] !== 'usage_limit_reached') return undefined;
+  const resets = inner['resets_in_seconds'];
+  return typeof resets === 'number' ? resets : undefined;
+}
+
 function getRetryAfterMsFromRateLimitHeaders(error: unknown): number | undefined {
   const retryAfter = parseRetryAfter(getHeader(error, 'retry-after'));
   if (retryAfter !== undefined) return retryAfter;
@@ -442,6 +462,14 @@ export function getRetryDecision(error: unknown): RetryDecision {
   const status = getStatus(error);
   const message = toErrorMessage(error);
   if (status === 429) {
+    const resetsInSeconds = getUsageLimitResetsInSeconds(error);
+    if (resetsInSeconds !== undefined) {
+      const shouldRetry = resetsInSeconds <= USAGE_LIMIT_RETRY_THRESHOLD_SECONDS;
+      debugLog(`[rate-limit] usage_limit_reached | resets_in_seconds=${resetsInSeconds} | shouldRetry=${shouldRetry} | msg=${message.slice(0, 200)}`);
+      return shouldRetry
+        ? { shouldRetry: true, retryAfterMs: resetsInSeconds * 1000 }
+        : { shouldRetry: false };
+    }
     const retryAfterMs = getRetryAfterMsFromRateLimitHeaders(error);
     const retryAfterHeader = getHeader(error, 'retry-after');
     const resetRequests = getHeader(error, 'x-ratelimit-reset-requests');
