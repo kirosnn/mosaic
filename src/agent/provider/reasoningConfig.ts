@@ -1,6 +1,7 @@
 import { extractReasoningMiddleware, type LanguageModel, wrapLanguageModel } from 'ai';
 import { getReasoningDecision } from './reasoning';
 import { debugLog } from '../../utils/debug';
+import type { ReasoningEffort } from '../../utils/config';
 
 export type ReasoningDecision = {
   enabled: boolean;
@@ -12,16 +13,35 @@ export async function resolveReasoningEnabled(providerId: string, modelId: strin
   return { enabled: decision.enabled };
 }
 
-export function getOpenAIReasoningOptions(enabled: boolean): { reasoningEffort: 'medium' } | undefined {
-  if (!enabled) return undefined;
-  debugLog('[reasoning][openai] reasoningEffort=medium');
-  return { reasoningEffort: 'medium' };
+function resolveReasoningEffort(effort?: ReasoningEffort): ReasoningEffort {
+  return effort ?? 'medium';
 }
 
-export function getXaiReasoningOptions(enabled: boolean): { reasoningEffort: 'medium' } | undefined {
+function getAnthropicBudgetTokens(effort: ReasoningEffort): number {
+  switch (effort) {
+    case 'low':
+      return 1024;
+    case 'medium':
+      return 4000;
+    case 'high':
+      return 12000;
+    case 'xhigh':
+      return 24000;
+  }
+}
+
+export function getOpenAIReasoningOptions(enabled: boolean, effort?: ReasoningEffort): { reasoningEffort: ReasoningEffort } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][xai] reasoningEffort=medium');
-  return { reasoningEffort: 'medium' };
+  const resolved = resolveReasoningEffort(effort);
+  debugLog(`[reasoning][openai] reasoningEffort=${resolved}`);
+  return { reasoningEffort: resolved };
+}
+
+export function getXaiReasoningOptions(enabled: boolean, effort?: ReasoningEffort): { reasoningEffort: ReasoningEffort } | undefined {
+  if (!enabled) return undefined;
+  const resolved = resolveReasoningEffort(effort);
+  debugLog(`[reasoning][xai] reasoningEffort=${resolved}`);
+  return { reasoningEffort: resolved };
 }
 
 export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: { includeThoughts: false } } | undefined {
@@ -34,13 +54,15 @@ export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: {
   };
 }
 
-export function getAnthropicReasoningOptions(enabled: boolean): { thinking: { type: 'enabled'; budgetTokens: number } } | undefined {
+export function getAnthropicReasoningOptions(enabled: boolean, effort?: ReasoningEffort): { thinking: { type: 'enabled'; budgetTokens: number } } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][anthropic] thinking=enabled budgetTokens=4000');
+  const resolved = resolveReasoningEffort(effort);
+  const budgetTokens = getAnthropicBudgetTokens(resolved);
+  debugLog(`[reasoning][anthropic] thinking=enabled budgetTokens=${budgetTokens} effort=${resolved}`);
   return {
     thinking: {
       type: 'enabled',
-      budgetTokens: 4000,
+      budgetTokens,
     },
   };
 }
