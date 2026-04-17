@@ -2,6 +2,9 @@ import http from 'http';
 import { randomBytes, createHash } from 'crypto';
 import { URL } from 'url';
 import { createInterface } from 'readline';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { OAuthTokenState, setOAuthTokenForProvider, setOAuthModelsForProvider, setFirstRunComplete, readConfig, getProviderById } from '../utils/config';
 import { debugLog, maskToken } from '../utils/debug';
 
@@ -32,19 +35,39 @@ const OPENAI_AUTHORIZE_URL = 'https://auth.openai.com/oauth/authorize';
 const OPENAI_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OPENAI_REDIRECT_URI = 'http://localhost:1455/auth/callback';
 const OPENAI_SCOPE = 'openid profile email offline_access';
-const OPENAI_CODEX_MODELS_URL = 'https://developers.openai.com/codex/models';
+export const OPENAI_CHATGPT_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+const OPENAI_CODEX_CACHE_PATH = join(homedir(), '.codex', 'models_cache.json');
 
 const OPENAI_CODEX_FALLBACK_MODELS = [
+  'gpt-5.4',
   'gpt-5.2-codex',
-  'gpt-5.1-codex',
-  'gpt-5.1-codex-mini',
   'gpt-5.1-codex-max',
-  'gpt-5-codex',
-  'gpt-5-codex-mini',
-  'gpt-5.2-2025-12-11',
-  'gpt-5.1-2025-11-13',
-  'gpt-5-2025-08-07',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex',
+  'gpt-5.2',
+  'gpt-5.1-codex-mini',
 ];
+
+const OPENAI_CODEX_EXPANDED_MODELS = [
+  'gpt-5.4',
+  'gpt-5.2-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex',
+  'gpt-5.2',
+  'gpt-5.1-codex-mini',
+  'gpt-5.1-codex',
+  'codex-mini-latest',
+];
+
+interface CachedCodexModel {
+  slug?: string;
+  supported_in_api?: boolean;
+}
+
+interface CachedCodexModelsPayload {
+  models?: CachedCodexModel[];
+}
 
 const GOOGLE_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = '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';
@@ -457,40 +480,32 @@ async function refreshOAuthTokenGeneric(
   return null;
 }
 
-async function fetchOpenAICodexModels(): Promise<string[]> {
+function readOpenAICodexModelsFromCache(): string[] {
   try {
-    const res = await fetch(OPENAI_CODEX_MODELS_URL, {
-      headers: { 'Accept': 'text/html' },
-    });
-    if (!res.ok) return OPENAI_CODEX_FALLBACK_MODELS;
-    const text = await res.text();
-    const matches = new Set<string>();
-    const pattern = /codex\s+-m\s+([a-z0-9._-]+)/gi;
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(text)) !== null) {
-      if (m[1]) matches.add(m[1]);
-    }
-    if (matches.size === 0) {
-      const alt = /gpt-[a-z0-9._-]+/gi;
-      while ((m = alt.exec(text)) !== null) {
-        if (m[0]) matches.add(m[0]);
-      }
-    }
-    const out = [...matches];
-    return out.length > 0 ? out : OPENAI_CODEX_FALLBACK_MODELS;
+    const raw = readFileSync(OPENAI_CODEX_CACHE_PATH, 'utf8');
+    const parsed = JSON.parse(raw) as CachedCodexModelsPayload;
+    return (parsed.models ?? [])
+      .filter(model => model.supported_in_api !== false && typeof model.slug === 'string' && model.slug.trim().length > 0)
+      .map(model => model.slug!.trim());
   } catch {
-    return OPENAI_CODEX_FALLBACK_MODELS;
+    return [];
   }
 }
 
 async function syncOpenAICodexModels(): Promise<Array<{ id: string; name: string; description: string }>> {
-  const ids = await fetchOpenAICodexModels();
+  const ids = Array.from(new Set([
+    ...readOpenAICodexModelsFromCache(),
+    ...OPENAI_CODEX_EXPANDED_MODELS,
+    ...OPENAI_CODEX_FALLBACK_MODELS,
+  ]));
   if (ids.length === 0) return [];
-  const models = ids.map(id => ({
-    id,
-    name: id,
-    description: 'Codex model',
-  }));
+  const models = ids
+    .filter(id => id.toLowerCase().startsWith('gpt-') || id.toLowerCase().includes('codex'))
+    .map(id => ({
+      id,
+      name: id,
+      description: 'OpenAI OAuth model',
+    }));
   setOAuthModelsForProvider('openai', models);
   return models;
 }
@@ -523,6 +538,26 @@ export function decodeJwt(token: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+export function getOpenAIChatGPTAccountId(token: string): string | undefined {
+  const payload = decodeJwt(token);
+  if (!payload) return undefined;
+
+  const direct = payload.chatgpt_account_id;
+  if (typeof direct === 'string' && direct.length > 0) {
+    return direct;
+  }
+
+  const auth = payload['https://api.openai.com/auth'];
+  if (auth && typeof auth === 'object' && auth !== null) {
+    const nested = (auth as Record<string, unknown>).chatgpt_account_id;
+    if (typeof nested === 'string' && nested.length > 0) {
+      return nested;
+    }
+  }
+
+  return undefined;
 }
 
 export function getSupportedOAuthProviders(): string[] {
