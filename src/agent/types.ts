@@ -1,4 +1,5 @@
 import { CoreMessage, CoreTool, UserContent } from 'ai';
+import type { ReasoningEffort } from '../utils/config';
 
 export type AgentEventType =
   | 'text-delta'
@@ -120,6 +121,7 @@ export type AgentEvent =
 export interface ProviderConfig {
   provider: string;
   model: string;
+  modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   auth?: ProviderAuth;
   systemPrompt: string;
