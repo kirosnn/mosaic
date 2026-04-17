@@ -1,4 +1,5 @@
 import { Agent, type AgentMessage } from "../../agent";
+import type { AgentRuntimeContext } from "../../agent/types";
 import { saveConversation, type ConversationHistory, type ConversationStep } from "../../utils/history";
 import { getModelReasoningEffort, readConfig } from "../../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from "../../utils/toolFormatting";
@@ -14,15 +15,17 @@ import { debugLog } from "../../utils/debug";
 import { hasPendingChanges, cancelReview, isInReviewMode, startReview } from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
 import { shouldEnableReasoning } from "../../agent/provider/reasoning";
+import { finishRuntimeMetrics, markFirstUsefulAnswer, recordPromptTokens, recordToolMetrics, startRuntimeMetrics } from "../../agent/runtimeMetrics";
+import { runTaskLifecycleStage } from "../../agent/lifecycle";
 
 const MAX_CONTINUATIONS = 3;
 const MAX_CONTINUATION_TOOL_MESSAGES = 8;
 const MAX_CONTINUATION_TOOL_RESULT_CHARS = 900;
 const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
 const CONTINUATION_LEDGER_PREFIX = 'TOOL LEDGER (continuation context):';
-const CONTINUATION_TOOL_PRIORITY = ['plan', 'explore', 'grep', 'glob', 'read', 'write', 'edit'];
+const CONTINUATION_TOOL_PRIORITY = ['explore', 'grep', 'glob', 'read', 'write', 'edit', 'plan'];
 const CONTINUATION_TOOL_SKIP = new Set(['title', 'question', 'abort', 'review']);
-const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['grep', 'glob', 'fetch', 'list']);
+const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['plan', 'grep', 'glob', 'fetch', 'list']);
 
 function stringifyUnknown(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -134,6 +137,17 @@ function summarizeContinuationHistory(history: AgentMessage[]): string {
     else other++;
   }
   return `len=${history.length} roles={user:${user},assistant:${assistant},tool:${tool},other:${other}}`;
+}
+
+function countDiscoveredFiles(result: unknown): number {
+  try {
+    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    if (Array.isArray(parsed)) return parsed.length;
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { files?: unknown[] }).files)) {
+      return ((parsed as { files: unknown[] }).files).length;
+    }
+  } catch {}
+  return 0;
 }
 
 function pushContinuationToolContext(
@@ -277,6 +291,7 @@ export interface AgentStreamParams {
   baseMessages: Message[];
   userMessage: Message;
   conversationHistory: AgentMessage[];
+  runtimeContext?: AgentRuntimeContext;
   abortMessage: string;
   userStepContent: string;
   userStepImages?: ImageAttachment[];
@@ -291,6 +306,7 @@ export async function runAgentStream(
     baseMessages,
     userMessage,
     conversationHistory,
+    runtimeContext,
     abortMessage,
     userStepContent,
     userStepImages,
@@ -524,6 +540,8 @@ export async function runAgentStream(
   let responseBlendWord: string | undefined = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
 
   try {
+    startRuntimeMetrics(runtimeContext?.taskModeDecision, runtimeContext?.repoSummary);
+    await runTaskLifecycleStage('pre_run', { runtimeContext });
     const providerStatus = await Agent.ensureProviderReady();
     if (!providerStatus.ready) {
       const providerError = providerStatus.error || 'Provider is not ready. Check your local runtime and credentials.';
@@ -537,7 +555,7 @@ export async function runAgentStream(
       return;
     }
 
-    const agent = new Agent();
+    const agent = new Agent(runtimeContext);
     let assistantChunk = '';
     let thinkingChunk = '';
     const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
@@ -574,6 +592,9 @@ export async function runAgentStream(
           return newMessages;
         });
       } else if (event.type === 'text-delta') {
+        if (event.content.trim()) {
+          markFirstUsefulAnswer();
+        }
         assistantChunk += event.content;
         totalChars += event.content.length;
         outputChars += event.content.length;
@@ -720,6 +741,11 @@ export async function runAgentStream(
           event.result,
           { maxLines: DEFAULT_MAX_TOOL_LINES }
         );
+        recordToolMetrics(toolName, success, {
+          filesDiscovered: toolName === 'glob' || toolName === 'list'
+            ? countDiscoveredFiles(event.result)
+            : undefined,
+        });
 
         const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
         totalChars += toolResultStr.length;
@@ -748,6 +774,12 @@ export async function runAgentStream(
           toolResult: event.result,
           timestamp: Date.now()
         });
+        if ((toolName === 'write' || toolName === 'edit') && success) {
+          await runTaskLifecycleStage('post_edit', {
+            runtimeContext,
+            changedPaths: typeof toolArgs.path === 'string' ? [toolArgs.path] : undefined,
+          });
+        }
         pushContinuationToolContext(
           continuationHistory,
           continuationToolLedger,
@@ -833,6 +865,7 @@ export async function runAgentStream(
       } else if (event.type === 'finish') {
         lastFinishReason = event.finishReason || 'stop';
         if (event.usage && event.usage.totalTokens > 0) {
+          recordPromptTokens(event.usage.promptTokens);
           const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
           const completionTokens = Math.max(
             0,
@@ -892,7 +925,7 @@ export async function runAgentStream(
 
     const needsContinuation = (): boolean => {
       if (lastFinishReason === 'length') return true;
-      if (hasPendingStepsInConversation(conversationSteps)) return true;
+      if (runtimeContext?.taskModeDecision?.mode !== 'explore_readonly' && hasPendingStepsInConversation(conversationSteps)) return true;
       if (hasForcedSkillInvocation && lastFinishReason === 'stop') {
         const hasToolStep = conversationSteps.some((step) => step.type === 'tool');
         if (!hasToolStep) return true;
@@ -953,7 +986,7 @@ export async function runAgentStream(
         break;
       }
 
-      const continuationAgent = new Agent();
+      const continuationAgent = new Agent(runtimeContext);
       assistantChunk = '';
       thinkingChunk = '';
       assistantMessageId = null;
@@ -984,6 +1017,9 @@ export async function runAgentStream(
             return newMessages;
           });
         } else if (event.type === 'text-delta') {
+          if (event.content.trim()) {
+            markFirstUsefulAnswer();
+          }
           assistantChunk += event.content;
           totalChars += event.content.length;
           outputChars += event.content.length;
@@ -1063,6 +1099,11 @@ export async function runAgentStream(
           }
 
           const { content: toolContent, success } = formatToolMessage(toolName, toolArgs, event.result, { maxLines: DEFAULT_MAX_TOOL_LINES });
+          recordToolMetrics(toolName, success, {
+            filesDiscovered: toolName === 'glob' || toolName === 'list'
+              ? countDiscoveredFiles(event.result)
+              : undefined,
+          });
           const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
           totalChars += toolResultStr.length;
           toolChars += toolResultStr.length;
@@ -1090,6 +1131,12 @@ export async function runAgentStream(
             toolResult: event.result,
             timestamp: Date.now()
           });
+          if ((toolName === 'write' || toolName === 'edit') && success) {
+            await runTaskLifecycleStage('post_edit', {
+              runtimeContext,
+              changedPaths: typeof toolArgs.path === 'string' ? [toolArgs.path] : undefined,
+            });
+          }
           pushContinuationToolContext(
             continuationHistory,
             continuationToolLedger,
@@ -1165,10 +1212,11 @@ export async function runAgentStream(
           assistantMessageId = null;
           streamHadError = true;
           break;
-        } else if (event.type === 'finish') {
-          lastFinishReason = event.finishReason || 'stop';
-          if (event.usage && event.usage.totalTokens > 0) {
-            const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
+      } else if (event.type === 'finish') {
+        lastFinishReason = event.finishReason || 'stop';
+        if (event.usage && event.usage.totalTokens > 0) {
+          recordPromptTokens(event.usage.promptTokens);
+          const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
             const completionTokens = Math.max(0, (event.usage.completionTokens ?? 0) || (event.usage.totalTokens - promptTokens));
             const allocatedTokens = allocateTokensByWeight(completionTokens, [reasoningChars, outputChars, toolChars]);
             totalTokens = { prompt: event.usage.promptTokens, completion: event.usage.completionTokens, total: event.usage.totalTokens };
@@ -1225,6 +1273,7 @@ export async function runAgentStream(
 
     responseDuration = Date.now() - localStartTime;
     applyAssistantRunMetadataToSteps(responseDuration, responseBlendWord);
+    await runTaskLifecycleStage('post_verify', { runtimeContext });
 
     const conversationData: ConversationHistory = {
       id: conversationId,
@@ -1263,7 +1312,7 @@ export async function runAgentStream(
             content: autoCompactDisplay,
             success: true
           };
-          return [compactNotice, ...compacted.messages];
+          return [compactNotice, ...prev];
         });
         setCurrentTokensMonotonic(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
       }
@@ -1283,6 +1332,8 @@ export async function runAgentStream(
     });
     setChatError(errorContent);
   } finally {
+    await runTaskLifecycleStage('end_task', { runtimeContext });
+    finishRuntimeMetrics();
     if (abortControllerRef.current === abortController) {
       abortControllerRef.current = null;
     }
