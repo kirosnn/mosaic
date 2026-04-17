@@ -7,10 +7,10 @@ import { createXai } from '@ai-sdk/xai';
 import { stat } from 'fs/promises';
 import { resolve } from 'path';
 import { z } from 'zod';
-import { readConfig, getAuthForProvider, setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
+import { readConfig, getAuthForProvider, getSupportedOpenAIOAuthModels, isSupportedOpenAIOAuthModel, setOAuthTokenForProvider } from '../../utils/config';
 import { executeTool } from './executor';
 import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext, addExploreSummary, getExploreSummaries, getConversationMemory } from '../../utils/exploreBridge';
-import { refreshOpenAIOAuthToken, refreshGoogleOAuthToken, decodeJwt } from '../../auth/oauth';
+import { refreshOpenAIOAuthToken, refreshGoogleOAuthToken, getOpenAIChatGPTAccountId, OPENAI_CHATGPT_OAUTH_BASE_URL } from '../../auth/oauth';
 import { debugLog, maskToken } from '../../utils/debug';
 import {
   waitForRateLimit,
@@ -122,8 +122,44 @@ const persistentExploreState: {
 } = gbl[PERSISTENT_CACHE_KEY];
 
 let exploreCallCache: Map<string, string> = persistentExploreState.callCache;
+let currentExploreReadPaths = new Set<string>();
+let currentExploreToolCallCount = 0;
+let currentExploreSearchCallCount = 0;
+let currentExploreFetchCallCount = 0;
 
 const DOMAIN_FAIL_THRESHOLD = 3;
+const MAX_EXPLORE_TOOL_CALLS = 12;
+const MAX_EXPLORE_SEARCH_CALLS = 2;
+const MAX_EXPLORE_FETCH_CALLS = 2;
+const MAX_PREVIOUS_EXPLORE_SUMMARY_CHARS = 900;
+const MAX_PARENT_CONTEXT_CHARS = 1200;
+const MAX_ALREADY_READ_FILES = 12;
+
+function normalizeOAuthErrorResponse(res: Response, text: string): Response {
+  try {
+    const parsed = JSON.parse(text) as { detail?: string; error?: { message?: string } };
+    if (typeof parsed.error?.message === 'string' && parsed.error.message.length > 0) {
+      return res;
+    }
+    if (typeof parsed.detail !== 'string' || parsed.detail.length === 0) {
+      return res;
+    }
+    const headers = new Headers(res.headers);
+    headers.set('content-type', 'application/json');
+    return new Response(JSON.stringify({
+      error: {
+        message: parsed.detail,
+        type: 'invalid_request_error',
+      },
+    }), {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  } catch {
+    return res;
+  }
+}
 
 function extractDomain(url: string): string {
   try {
@@ -255,30 +291,20 @@ Your goal is to explore the codebase and external documentation to fulfill the g
 
 IMPORTANT grep clarification: "pattern" filters WHICH FILES to search in (e.g. "*.ts"), "query" is the REGEX to find inside those files. Do NOT put file globs in "query".
 
-# PARALLEL TOOL EXECUTION - CRITICAL
+# EXECUTION STRATEGY - DIRECT AND PRECISE
 
-When you need to perform multiple independent operations, ALWAYS call multiple tools in a SINGLE response. Do NOT wait for one tool to complete before calling another if they are independent.
+Use the minimum number of tool calls needed to answer the goal.
+Prefer a short logical chain over broad exploration.
 
-PARALLEL EXECUTION RULES:
-1. Call multiple tools simultaneously when operations are independent (e.g., reading different files, searching different patterns, fetching multiple URLs)
-2. Batch related operations together - if you need to read 3 files, call read 3 times in the SAME response
-3. Combine different tool types - you can call glob + grep + fetch + list all at once
-4. Only wait for results when the next operation depends on a previous result
-
-Examples of GOOD parallel usage:
-- Need to read src/auth.ts, src/user.ts, src/api.ts -> call read 3 times in one response
-- Need to search for "authentication" AND "authorization" -> call grep 2 times in one response  
-- Need to fetch React docs AND Vue docs -> call fetch 2 times in one response
-- Need to glob for *.ts AND grep for "import" -> call both in one response
-
-Examples of BAD sequential usage:
-- Call read(src/auth.ts) -> wait -> call read(src/user.ts) -> wait -> call read(src/api.ts)
-- Call glob(**/*.ts) -> wait -> call grep for each file individually
-
-EFFICIENCY PRIORITY:
-- The more tools you can batch together, the faster the exploration completes
-- Prefer calling 5-10 tools at once over individual calls when possible
-- The system handles parallel execution efficiently - use it!
+EXECUTION RULES:
+1. Start narrow. Use one precise discovery step, then follow the strongest lead.
+2. Batch tools only when the calls are high-confidence and truly independent.
+3. Prefer 1-3 tightly scoped tool calls over broad fan-out.
+4. After you find the likely relevant file, continue sequentially and stay on that path.
+5. Do not branch into adjacent areas unless the current lead is exhausted.
+6. Do not re-open old branches once a better lead exists.
+7. Expect a strict budget: at most 12 total tool calls, at most 2 web searches, and at most 2 fetches.
+8. After 2 discovery steps, commit to the best lead and finish directly.
 
 # STANDARD RULES
 1. Be thorough but efficient - don't repeat the same searches
@@ -294,7 +320,8 @@ EFFICIENCY PRIORITY:
 # NO DUPLICATE CALLS - ENFORCED
 NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
 If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
-For read, if a file changed or you intentionally need a re-read, use force_refresh=true.
+Within a single exploration, once a file has been read, do NOT read that same file again, even with a different line range. The system will block the re-read.
+If you intentionally need a re-read because the file changed, use force_refresh=true.
 If you receive a "[DOMAIN BLOCKED]" response, the domain has too many failures. Do NOT try other URLs on the same domain - use a different source entirely.
 
 # SEARCH STRATEGY
@@ -302,6 +329,7 @@ If you receive a "[DOMAIN BLOCKED]" response, the domain has too many failures. 
 - To find content inside files: use grep with a broad query term
 - If grep returns "no matches", do NOT retry with slight variations of the same query. Instead: try a completely different search term, OR read the file directly, OR use glob to find relevant files first
 - Prefer reading a file directly over doing 5 grep variations
+- Once a file is read, extract what you need from that result and continue to the next precise step instead of reading the same file again
 
 # FETCH STRATEGY - CRITICAL
 - If a URL returns 404, do NOT try variations of that URL (adding /create, /stream, ?start_index, etc). The page does not exist.
@@ -320,7 +348,7 @@ Include these sections in plain text:
 5. Gaps, uncertainty, or what was not verified
 Do not return a short generic summary.`;
 
-const MAX_STEPS = 50;
+const MAX_STEPS = 18;
 
 interface ExploreResult {
   success: boolean;
@@ -396,10 +424,7 @@ async function refreshGoogleOAuthIfNeeded(force = false): Promise<OAuthState | n
 const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const active = await refreshOAuthIfNeeded();
   const accessToken = active?.accessToken;
-  const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
-  const accountId = typeof tokenPayload?.chatgpt_account_id === 'string'
-    ? tokenPayload.chatgpt_account_id
-    : undefined;
+  const accountId = accessToken ? getOpenAIChatGPTAccountId(accessToken) : undefined;
 
   const headers = new Headers(input instanceof Request ? input.headers : undefined);
   if (init?.headers) {
@@ -415,12 +440,6 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
 
   let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
   const originalUrl = url;
-  if (url.includes('/v1/responses')) {
-    url = url.replace('/v1/responses', '/codex/responses');
-  } else if (!url.includes('/codex/responses')) {
-    url = url.replace('/responses', '/codex/responses');
-  }
-
   let nextInit: RequestInit = {
     ...init,
     headers,
@@ -461,6 +480,7 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
   if (!res.ok) {
     const text = await res.clone().text();
     debugLog(`[oauth][explore] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`);
+    return normalizeOAuthErrorResponse(res, text);
   }
   return res;
 };
@@ -923,8 +943,12 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
   const auth = getAuthForProvider(config.provider);
   const isOAuth = auth?.type === 'oauth';
 
+  if (isOAuth && config.provider === 'openai' && !isSupportedOpenAIOAuthModel(cleanModel)) {
+    const supported = getSupportedOpenAIOAuthModels().join(', ');
+    throw new Error(`OpenAI OAuth with a ChatGPT account does not support model "${cleanModel}". Supported models: ${supported}. Use an OpenAI API key to use GPT-5.4.`);
+  }
+
   if (isOAuth && config.provider === 'openai') {
-    cleanModel = mapModelForOAuth(cleanModel);
     currentOAuthState = {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
@@ -957,7 +981,7 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       if (isOAuth) {
         const openai = createOpenAI({
           apiKey: 'oauth',
-          baseURL: 'https://chatgpt.com/backend-api',
+          baseURL: OPENAI_CHATGPT_OAUTH_BASE_URL,
           fetch: fetchWithOAuth as typeof fetch,
           compatibility: 'compatible',
         });
@@ -1037,6 +1061,17 @@ function createExploreTools() {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
         const forceRefresh = args.force_refresh === true;
         const readArgs = buildReadArgs(args);
+        const budgetBlocked = consumeExploreBudget('read');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('read', readArgs, budgetBlocked);
+        }
+        if (!forceRefresh && currentExploreReadPaths.has(readArgs.path)) {
+          const blocked = `[RE-READ BLOCKED] Already read ${readArgs.path} in this exploration. Use the previous result and continue with the next precise step.`;
+          const logArgs: Record<string, unknown> = { ...readArgs };
+          exploreLogs.push({ tool: 'read', args: logArgs, success: false, resultPreview: blocked });
+          notifyExploreTool('read', logArgs, { success: false, preview: blocked }, 0);
+          return { error: blocked };
+        }
         const fileState = await getReadFileState(readArgs.path);
         const sig = makeReadCallSignature(readArgs, fileState);
         if (!forceRefresh) {
@@ -1059,6 +1094,7 @@ function createExploreTools() {
           mem.recordToolCall('read', logArgs, preview, true);
         }
         if (!result.success) return { error: result.error };
+        currentExploreReadPaths.add(readArgs.path);
         return result.result;
       },
     }),
@@ -1070,6 +1106,10 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const budgetBlocked = consumeExploreBudget('glob');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('glob', args, budgetBlocked);
+        }
         const sig = makeCallSignature('glob', args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
@@ -1111,6 +1151,10 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const budgetBlocked = consumeExploreBudget('grep');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('grep', args, budgetBlocked);
+        }
         const sig = makeCallSignature('grep', args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
@@ -1155,6 +1199,10 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const budgetBlocked = consumeExploreBudget('list');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('list', args, budgetBlocked);
+        }
         const sig = makeCallSignature('list', args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
@@ -1186,6 +1234,10 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const budgetBlocked = consumeExploreBudget('fetch');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('fetch', args, budgetBlocked);
+        }
         const sig = makeCallSignature('fetch', args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
@@ -1219,6 +1271,10 @@ function createExploreTools() {
       }),
       execute: async (args) => {
         if (isExploreAborted()) return { error: 'Exploration aborted' };
+        const budgetBlocked = consumeExploreBudget('search');
+        if (budgetBlocked) {
+          return createBudgetBlockedResult('search', args, budgetBlocked);
+        }
         const sig = makeCallSignature('search', args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
@@ -1282,6 +1338,12 @@ function formatDuration(ms: number): string {
 
 function normalizeExploreLine(text: string, maxLen = 180): string {
   const clean = text.replace(/[\r\n]+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  return `${clean.slice(0, maxLen)}...`;
+}
+
+function truncateExplorePromptText(text: string, maxLen: number): string {
+  const clean = text.trim();
   if (clean.length <= maxLen) return clean;
   return `${clean.slice(0, maxLen)}...`;
 }
@@ -1406,6 +1468,29 @@ function buildContextualExploreSummary(purpose: string, modelSummary: string | n
   return lines.join('\n');
 }
 
+function createBudgetBlockedResult(tool: string, args: Record<string, unknown>, message: string): { error: string } {
+  exploreLogs.push({ tool, args, success: false, resultPreview: message });
+  notifyExploreTool(tool, args, { success: false, preview: message }, 0);
+  return { error: message };
+}
+
+function consumeExploreBudget(tool: 'read' | 'glob' | 'grep' | 'list' | 'fetch' | 'search'): string | null {
+  if (currentExploreToolCallCount + 1 > MAX_EXPLORE_TOOL_CALLS) {
+    return `[BUDGET BLOCKED] Explore reached the tool-call budget (${MAX_EXPLORE_TOOL_CALLS}). Use the evidence already gathered and call done now.`;
+  }
+  if (tool === 'search' && currentExploreSearchCallCount + 1 > MAX_EXPLORE_SEARCH_CALLS) {
+    return `[BUDGET BLOCKED] Explore reached the web-search budget (${MAX_EXPLORE_SEARCH_CALLS}). Use the search results you already have or finish now.`;
+  }
+  if (tool === 'fetch' && currentExploreFetchCallCount + 1 > MAX_EXPLORE_FETCH_CALLS) {
+    return `[BUDGET BLOCKED] Explore reached the fetch budget (${MAX_EXPLORE_FETCH_CALLS}). Use the fetched evidence you already have or finish now.`;
+  }
+
+  currentExploreToolCallCount += 1;
+  if (tool === 'search') currentExploreSearchCallCount += 1;
+  if (tool === 'fetch') currentExploreFetchCallCount += 1;
+  return null;
+}
+
 export async function executeExploreTool(purpose: string): Promise<ExploreResult> {
   const startTime = Date.now();
   const userConfig = readConfig();
@@ -1420,6 +1505,10 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
   exploreDoneResult = null;
   exploreLogs = [];
   exploreThoughtSignatures = [];
+  currentExploreReadPaths = new Set();
+  currentExploreToolCallCount = 0;
+  currentExploreSearchCallCount = 0;
+  currentExploreFetchCallCount = 0;
 
   exploreCallCache = persistentExploreState.callCache;
 
@@ -1467,7 +1556,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     if (previousSummaries.length > 0) {
       let summariesText = '';
-      let charBudget = 2000;
+      let charBudget = MAX_PREVIOUS_EXPLORE_SUMMARY_CHARS;
       for (let i = previousSummaries.length - 1; i >= 0 && charBudget > 0; i--) {
         const entry = `[Explore #${i + 1}] ${previousSummaries[i]!}`;
         if (entry.length <= charBudget) {
@@ -1483,14 +1572,14 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     if (exploreKnowledge.readFiles.size > 0) {
       const fileList = [...exploreKnowledge.readFiles.entries()]
-        .slice(0, 30)
+        .slice(0, MAX_ALREADY_READ_FILES)
         .map(([p, info]) => `  - ${p} (${info})`)
         .join('\n');
       dynamicSections += `\n\n# FILES ALREADY READ\nThese files were read in previous explorations. Do NOT re-read them unless you need a specific section.\n${fileList}`;
     }
 
     if (parentContext) {
-      dynamicSections += `\n\nCONTEXT FROM PARENT CONVERSATION:\n${parentContext}`;
+      dynamicSections += `\n\nCONTEXT FROM PARENT CONVERSATION:\n${truncateExplorePromptText(parentContext, MAX_PARENT_CONTEXT_CHARS)}`;
     }
 
     const systemPrompt = EXPLORE_SYSTEM_PROMPT + dynamicSections;
@@ -1644,7 +1733,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     if (exploreDoneResult !== null) {
       addExploreSummary(contextualSummary);
 
-      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`);
+      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} countedCalls=${currentExploreToolCallCount} searches=${currentExploreSearchCallCount} fetches=${currentExploreFetchCallCount}`);
       return {
         success: true,
         result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${contextualSummary}`,
