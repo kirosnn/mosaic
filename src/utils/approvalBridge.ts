@@ -1,3 +1,5 @@
+import { recordApprovalTriggered } from '../agent/runtimeMetrics';
+
 export interface ApprovalRequest {
   id: string;
   toolName: string;
@@ -81,6 +83,7 @@ export async function requestApproval(
   args: Record<string, unknown>,
   preview: { title: string; content: string; details?: string[] }
 ): Promise<{ approved: boolean; customResponse?: string }> {
+  recordApprovalTriggered();
   const mcpMeta = (args as any).__mcpMeta;
   const cleanArgs = { ...args };
   delete (cleanArgs as any).__mcpMeta;
