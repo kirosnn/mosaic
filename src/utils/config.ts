@@ -5,6 +5,7 @@ import { VERSION } from './version';
 
 const CONFIG_DIR = join(homedir(), '.mosaic');
 const CONFIG_FILE = join(CONFIG_DIR, 'mosaic.jsonc');
+const CODEX_CONFIG_FILE = join(homedir(), '.codex', 'config.toml');
 
 export interface AIProvider {
   id: string;
@@ -31,11 +32,14 @@ export interface RecentProject {
   lastOpened: number;
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+
 export interface MosaicConfig {
   firstRun: boolean;
   version: string;
   provider?: string;
   model?: string;
+  modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   apiKeys?: Record<string, string>;
   oauthTokens?: Record<string, OAuthTokenState>;
@@ -57,6 +61,129 @@ export interface OAuthTokenState {
   scope?: string;
 }
 
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+
+const OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS = [
+  'codex-auto-review',
+  'gpt-5.4',
+  'gpt-5.2-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex',
+  'gpt-5.2',
+  'gpt-5.1-codex-mini',
+] as const;
+
+const OPENAI_CHATGPT_OAUTH_MODEL_DETAILS: Record<string, AIModel> = {
+  'codex-auto-review': {
+    id: 'codex-auto-review',
+    name: 'Codex Auto Review',
+    description: 'Automated Codex review model available with ChatGPT Plus',
+  },
+  'gpt-5.4': {
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
+    description: 'Latest frontier agentic coding model',
+  },
+  'gpt-5.2-codex': {
+    id: 'gpt-5.2-codex',
+    name: 'GPT-5.2 Codex',
+    description: 'Frontier agentic coding model',
+  },
+  'gpt-5.1-codex': {
+    id: 'gpt-5.1-codex',
+    name: 'GPT-5.1 Codex',
+    description: 'Codex model for OpenAI OAuth with a ChatGPT account',
+  },
+  'gpt-5.1-codex-mini': {
+    id: 'gpt-5.1-codex-mini',
+    name: 'GPT-5.1 Codex Mini',
+    description: 'Fast supported Codex model for OpenAI OAuth with a ChatGPT account',
+  },
+  'gpt-5.1-codex-max': {
+    id: 'gpt-5.1-codex-max',
+    name: 'GPT-5.1 Codex Max',
+    description: 'Codex-optimized flagship for deep and fast reasoning',
+  },
+  'gpt-5.4-mini': {
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
+    description: 'Smaller frontier agentic coding model',
+  },
+  'gpt-5.3-codex': {
+    id: 'gpt-5.3-codex',
+    name: 'GPT-5.3 Codex',
+    description: 'Frontier Codex-optimized agentic coding model',
+  },
+  'gpt-5.2': {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    description: 'Optimized for professional work and long-running agents',
+  },
+  'codex-mini-latest': {
+    id: 'codex-mini-latest',
+    name: 'Codex Mini Latest',
+    description: 'Fast reasoning model optimized for Codex CLI',
+  },
+};
+
+function createOpenAIOAuthModel(modelId: string): AIModel {
+  return OPENAI_CHATGPT_OAUTH_MODEL_DETAILS[modelId] || {
+    id: modelId,
+    name: modelId,
+    description: 'Supported Codex model for OpenAI OAuth with a ChatGPT account',
+  };
+}
+
+function getOpenAIOAuthFallbackModels(): AIModel[] {
+  return OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS.map(modelId => createOpenAIOAuthModel(modelId));
+}
+
+function getConfiguredOpenAIOAuthModels(config: MosaicConfig): AIModel[] {
+  return (config.oauthModels?.openai || [])
+    .filter(model => typeof model?.id === 'string' && model.id.trim().length > 0)
+    .map(model => createOpenAIOAuthModel(model.id.trim()));
+}
+
+function getSupportedOpenAIOAuthModelIdsFromConfig(config: MosaicConfig): string[] {
+  const configured = getConfiguredOpenAIOAuthModels(config).map(model => model.id);
+  return Array.from(new Set([...OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS, ...configured]));
+}
+
+function getSupportedOpenAIOAuthModelsFromConfig(config: MosaicConfig): AIModel[] {
+  return getSupportedOpenAIOAuthModelIdsFromConfig(config).map(modelId => createOpenAIOAuthModel(modelId));
+}
+
+function isReasoningEffort(value: string): value is ReasoningEffort {
+  return REASONING_EFFORTS.includes(value as ReasoningEffort);
+}
+
+function sanitizeLoadedConfig(config: MosaicConfig): MosaicConfig {
+  if (config.modelReasoningEffort && !isReasoningEffort(config.modelReasoningEffort)) {
+    delete config.modelReasoningEffort;
+  }
+
+  if (config.oauthTokens?.openai?.accessToken) {
+    if (!config.oauthModels) {
+      config.oauthModels = {};
+    }
+    const supportedIds = getSupportedOpenAIOAuthModelIdsFromConfig(config);
+    config.oauthModels.openai = supportedIds.map(modelId => createOpenAIOAuthModel(modelId));
+
+    if (config.provider === 'openai') {
+      const supported = new Set(supportedIds.map(id => id.toLowerCase()));
+      const current = normalizeOpenAIOAuthModelId(config.model, supportedIds);
+      if (!current || !supported.has(current.toLowerCase())) {
+        config.model = supportedIds[0];
+      } else if (config.model !== current) {
+        config.model = current;
+      }
+    }
+  }
+
+  return config;
+}
+
 export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'openai',
@@ -64,6 +191,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     description: 'GPT models from OpenAI',
     requiresApiKey: true,
     models: [
+      { id: 'gpt-5.4-2026-03-25', name: 'GPT-5.4', description: 'Latest GPT-5.4 model from OpenAI for coding and agentic tasks' },
       { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', description: 'The best model for coding and agentic tasks across industries' },
       { id: 'gpt-5.1-2025-11-13', name: 'GPT-5.1', description: 'The best model for coding and agentic tasks with configurable reasoning effort' },
       { id: 'gpt-5-2025-08-07', name: 'GPT-5', description: 'The first model GPT 5 series from OpenAI' },
@@ -181,7 +309,7 @@ export function readConfig(): MosaicConfig {
 
   try {
     const content = readFileSync(CONFIG_FILE, 'utf-8');
-    const config = JSON.parse(content);
+    const config = sanitizeLoadedConfig(JSON.parse(content));
 
     if (config.requireApprovals === undefined) {
       config.requireApprovals = true;
@@ -207,6 +335,59 @@ export function readConfig(): MosaicConfig {
 export function writeConfig(config: MosaicConfig): void {
   ensureConfigDir();
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+function readCodexModelReasoningEffort(): ReasoningEffort | undefined {
+  try {
+    const content = readFileSync(CODEX_CONFIG_FILE, 'utf-8');
+    const match = content.match(/^\s*model_reasoning_effort\s*=\s*"([^"]+)"/m);
+    const value = match?.[1]?.trim().toLowerCase();
+    if (value && isReasoningEffort(value)) {
+      return value;
+    }
+  } catch {
+  }
+  return undefined;
+}
+
+export function getAvailableReasoningEfforts(): readonly ReasoningEffort[] {
+  return REASONING_EFFORTS;
+}
+
+export function getCodexModelReasoningEffort(): ReasoningEffort | undefined {
+  return readCodexModelReasoningEffort();
+}
+
+export function getDefaultModelReasoningEffort(): ReasoningEffort {
+  return readCodexModelReasoningEffort() ?? 'medium';
+}
+
+export function getModelReasoningEffort(): ReasoningEffort {
+  const configured = readConfig().modelReasoningEffort;
+  if (configured && isReasoningEffort(configured)) {
+    return configured;
+  }
+  return getDefaultModelReasoningEffort();
+}
+
+export function getModelReasoningEffortSource(): 'mosaic' | 'codex' | 'default' {
+  const configured = readConfig().modelReasoningEffort;
+  if (configured && isReasoningEffort(configured)) {
+    return 'mosaic';
+  }
+  return readCodexModelReasoningEffort() ? 'codex' : 'default';
+}
+
+export function setModelReasoningEffort(effort: ReasoningEffort): void {
+  const config = readConfig();
+  config.modelReasoningEffort = effort;
+  writeConfig(config);
+}
+
+export function clearModelReasoningEffort(): void {
+  const config = readConfig();
+  delete config.modelReasoningEffort;
+  writeConfig(config);
 }
 
 export function markFirstRunComplete(provider: string, model: string, apiKey?: string): void {
@@ -245,9 +426,24 @@ export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIP
   const oauthModels = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
 
   const providersWithCustomModels = AI_PROVIDERS.map(provider => {
+    const hasOAuthToken = provider.id !== 'anthropic' && !!config.oauthTokens?.[provider.id]?.accessToken;
+    const openaiOAuthModels =
+      provider.id === 'openai' && hasOAuthToken
+        ? getConfiguredOpenAIOAuthModels(config).length > 0
+          ? getConfiguredOpenAIOAuthModels(config)
+          : getOpenAIOAuthFallbackModels()
+        : [];
+    const baseModels =
+      provider.id === 'openai' && hasOAuthToken
+        ? openaiOAuthModels
+        : provider.models;
     const customModelsForProvider = customModels[provider.id] || [];
-    const oauthModelsForProvider = provider.id === 'anthropic' ? [] : (oauthModels[provider.id] || []);
-    const mergedModels = [...provider.models, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
+    const oauthModelsForProvider = provider.id === 'anthropic'
+      ? []
+      : provider.id === 'openai'
+        ? []
+        : (oauthModels[provider.id] || []);
+    const mergedModels = [...baseModels, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
       list.findIndex(m => m.id === model.id) === index
     );
     if (customModelsForProvider.length > 0) {
@@ -269,6 +465,26 @@ export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIP
 
 export function getProviderById(id: string): AIProvider | undefined {
   return getAllProviders().find(p => p.id === id);
+}
+
+export function getPreferredModelForProvider(providerId: string): string | undefined {
+  const provider = getProviderById(providerId);
+  return provider?.models[0]?.id;
+}
+
+export function normalizeModelForProvider(providerId: string, modelId?: string): string | undefined {
+  const provider = getProviderById(providerId);
+  if (!provider) return modelId;
+  if (providerId === 'openai' && readConfig().oauthTokens?.openai?.accessToken) {
+    const normalizedOAuthModel = normalizeOpenAIOAuthModelId(modelId, getSupportedOpenAIOAuthModelIdsFromConfig(readConfig()));
+    if (normalizedOAuthModel) {
+      return normalizedOAuthModel;
+    }
+  }
+  if (modelId && provider.models.some(model => model.id === modelId)) {
+    return modelId;
+  }
+  return provider.models[0]?.id ?? modelId;
 }
 
 export function getModelById(providerId: string, modelId: string): AIModel | undefined {
@@ -466,15 +682,44 @@ export function getAuthForProvider(providerId: string):
 }
 
 export function mapModelForOAuth(modelId: string): string {
+  return normalizeOpenAIOAuthModelId(modelId, getSupportedOpenAIOAuthModelIdsFromConfig(readConfig())) ?? modelId;
+}
+
+export function getSupportedOpenAIOAuthModels(): readonly string[] {
+  return getSupportedOpenAIOAuthModelIdsFromConfig(readConfig());
+}
+
+export function isSupportedOpenAIOAuthModel(modelId: string): boolean {
   const id = modelId.toLowerCase().trim();
+  return getSupportedOpenAIOAuthModels().some(model => model.toLowerCase() === id);
+}
 
-  if (id.includes('codex')) return modelId;
+function normalizeOpenAIOAuthModelId(modelId: string | undefined, supportedModels: readonly string[]): string | undefined {
+  const raw = modelId?.trim();
+  if (!raw) return undefined;
+  const supported = new Set(supportedModels.map(model => model.toLowerCase()));
 
-  if (id.startsWith('gpt-5.2') || id === 'gpt-5.2') return 'gpt-5.2-codex';
-  if (id.startsWith('gpt-5.1') || id === 'gpt-5.1') return 'gpt-5.1-codex';
-  if (id.startsWith('gpt-5') || id === 'gpt-5') return 'gpt-5-codex';
+  if (supported.has(raw.toLowerCase())) {
+    return raw;
+  }
 
-  return modelId;
+  const datedAlias = raw.match(/^(gpt-\d+(?:\.\d+)?)(?:-\d{4}-\d{2}-\d{2})$/i);
+  if (datedAlias && supported.has(datedAlias[1]!.toLowerCase())) {
+    return datedAlias[1]!;
+  }
+
+  const lowered = raw.toLowerCase();
+  const aliases: Record<string, string> = {
+    'gpt-5.4-2026-03-25': 'gpt-5.4',
+    'gpt-5.2-2025-12-11': 'gpt-5.2',
+    'gpt-5.1-2025-11-13': 'gpt-5.1-codex-max',
+  };
+  const mapped = aliases[lowered];
+  if (mapped && supported.has(mapped.toLowerCase())) {
+    return mapped;
+  }
+
+  return undefined;
 }
 export function setApiKeyForProvider(providerId: string, key: string): void {
   const config = readConfig();
