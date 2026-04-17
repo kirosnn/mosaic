@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { requestApproval } from '../utils/approvalBridge';
 import type { McpApprovalCacheEntry, McpRiskHint, McpServerConfig } from './types';
 import { isNativeMcpServer } from './types';
+import { classifyToolCapability, resolveCapabilityApproval } from '../agent/capabilities';
 
 const READ_KEYWORDS = ['read', 'get', 'list', 'search', 'find', 'show', 'describe', 'query', 'fetch', 'inspect', 'view', 'ls', 'cat'];
 const WRITE_KEYWORDS = ['write', 'set', 'create', 'update', 'put', 'save', 'modify', 'patch', 'upsert', 'insert', 'append'];
@@ -42,11 +43,17 @@ export class McpApprovalPolicy {
     args: Record<string, unknown>;
     approvalMode: McpServerConfig['approval'];
   }): Promise<{ approved: boolean; customResponse?: string }> {
-    if (request.approvalMode === 'never') {
+    const riskHint = this.inferRiskHint(request.toolName, request.args);
+    const capability = classifyToolCapability(request.canonicalId.replace(/^mcp:[^:]+:/, 'mcp__'), { mcpRiskHint: riskHint });
+    const approvalDecision = resolveCapabilityApproval(capability, request.approvalMode !== 'never');
+
+    if (!approvalDecision.requiresApproval && request.approvalMode === 'never') {
       return { approved: true };
     }
 
-    const riskHint = this.inferRiskHint(request.toolName, request.args);
+    if (!approvalDecision.requiresApproval && approvalDecision.policy === 'auto_allow') {
+      return { approved: true };
+    }
 
     if (this.checkCache(request.serverId, request.toolName, request.args)) {
       return { approved: true };
@@ -63,12 +70,16 @@ export class McpApprovalPolicy {
         ? [
             `Tool: ${request.toolName}`,
             `Risk: ${riskHint}`,
+            `Capability: ${capability}`,
+            `Approval policy: ${approvalDecision.policy}`,
             `Payload: ${payloadSize} bytes`,
           ]
         : [
             `Server: ${request.serverName} (${request.serverId})`,
             `Tool: ${request.toolName}`,
             `Risk: ${riskHint}`,
+            `Capability: ${capability}`,
+            `Approval policy: ${approvalDecision.policy}`,
             `Payload: ${payloadSize} bytes`,
           ],
     };
@@ -87,7 +98,7 @@ export class McpApprovalPolicy {
       preview
     );
 
-    if (result.approved && request.approvalMode !== 'always') {
+    if (result.approved && request.approvalMode !== 'always' && approvalDecision.policy !== 'strong_required') {
       this.addToCache(request.serverId, request.toolName, request.args, request.approvalMode);
     }
 
