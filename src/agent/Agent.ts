@@ -6,7 +6,7 @@ import {
   Provider,
   ProviderSendOptions,
 } from './types';
-import { readConfig, getApiKeyForProvider, getAuthForProvider } from '../utils/config';
+import { readConfig, getApiKeyForProvider, getAuthForProvider, getModelReasoningEffort, normalizeModelForProvider, setActiveModel } from '../utils/config';
 import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
 import { getTools } from './tools/definitions';
 import { AnthropicProvider } from './provider/anthropic';
@@ -381,6 +381,15 @@ export class Agent {
       throw new Error('No provider or model configured. Please run setup first.');
     }
 
+    const normalizedModel = normalizeModelForProvider(userConfig.provider, userConfig.model);
+    if (!normalizedModel) {
+      throw new Error(`No compatible model configured for provider "${userConfig.provider}".`);
+    }
+    if (normalizedModel !== userConfig.model) {
+      setActiveModel(normalizedModel);
+      userConfig.model = normalizedModel;
+    }
+
     const rawSystemPrompt = userConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
 
     let mcpToolInfos: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }> | undefined;
@@ -400,6 +409,7 @@ export class Agent {
     this.config = {
       provider: userConfig.provider,
       model: userConfig.model,
+      modelReasoningEffort: getModelReasoningEffort(),
       apiKey: auth?.type === 'api_key' ? auth.apiKey : getApiKeyForProvider(userConfig.provider) ?? userConfig.apiKey,
       auth,
       systemPrompt,
