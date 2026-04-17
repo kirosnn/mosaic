@@ -229,6 +229,8 @@ function convertStepsToMessages(steps: ConversationStep[]): Message[] {
         content: step.content,
         thinkingContent: step.thinkingContent,
         responseDuration: step.responseDuration,
+        responseModel: step.responseModel,
+        responseReasoningEffort: step.responseReasoningEffort,
         blendWord: step.blendWord,
         timestamp: step.timestamp
       };
