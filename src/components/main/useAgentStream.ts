@@ -1,6 +1,6 @@
 import { Agent, type AgentMessage } from "../../agent";
 import { saveConversation, type ConversationHistory, type ConversationStep } from "../../utils/history";
-import { readConfig } from "../../utils/config";
+import { getModelReasoningEffort, readConfig } from "../../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from "../../utils/toolFormatting";
 import { setExploreAbortController } from "../../utils/exploreBridge";
 import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
@@ -13,6 +13,7 @@ import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
 import { debugLog } from "../../utils/debug";
 import { hasPendingChanges, cancelReview, isInReviewMode, startReview } from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
+import { shouldEnableReasoning } from "../../agent/provider/reasoning";
 
 const MAX_CONTINUATIONS = 3;
 const MAX_CONTINUATION_TOOL_MESSAGES = 8;
@@ -393,6 +394,51 @@ export async function runAgentStream(
   };
   setCurrentTokensMonotonic(estimateTokens());
   const config = readConfig();
+  const responseModel = config.model;
+  let responseReasoningEffort: string | undefined;
+  if (responseModel) {
+    try {
+      responseReasoningEffort = await shouldEnableReasoning(config.provider ?? '', responseModel)
+        ? getModelReasoningEffort()
+        : undefined;
+    } catch {
+      responseReasoningEffort = undefined;
+    }
+  }
+
+  const applyAssistantRunMetadataToSteps = (duration: number, blendWord?: string) => {
+    for (let i = conversationSteps.length - 1; i >= 0; i--) {
+      if (conversationSteps[i]?.type === 'assistant') {
+        conversationSteps[i] = {
+          ...conversationSteps[i]!,
+          responseDuration: duration,
+          responseModel,
+          responseReasoningEffort,
+          blendWord,
+        };
+        break;
+      }
+    }
+  };
+
+  const applyAssistantRunMetadataToMessages = (duration: number, blendWord?: string) => {
+    setMessages((prev: Message[]) => {
+      const newMessages = [...prev];
+      for (let i = newMessages.length - 1; i >= 0; i--) {
+        if (newMessages[i]?.role === 'assistant') {
+          newMessages[i] = {
+            ...newMessages[i]!,
+            responseDuration: duration,
+            responseModel,
+            responseReasoningEffort,
+            blendWord,
+          };
+          break;
+        }
+      }
+      return newMessages;
+    });
+  };
 
   const resolveMaxContextTokens = async () => {
     if (config.maxContextTokens) return config.maxContextTokens;
@@ -475,7 +521,7 @@ export async function runAgentStream(
   });
 
   let responseDuration: number | null = null;
-  let responseBlendWord: string | undefined = undefined;
+  let responseBlendWord: string | undefined = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
 
   try {
     const providerStatus = await Agent.ensureProviderReady();
@@ -1178,19 +1224,7 @@ export async function runAgentStream(
     }
 
     responseDuration = Date.now() - localStartTime;
-    if (responseDuration >= 60000) {
-      responseBlendWord = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-      for (let i = conversationSteps.length - 1; i >= 0; i--) {
-        if (conversationSteps[i]?.type === 'assistant') {
-          conversationSteps[i] = {
-            ...conversationSteps[i]!,
-            responseDuration,
-            blendWord: responseBlendWord
-          };
-          break;
-        }
-      }
-    }
+    applyAssistantRunMetadataToSteps(responseDuration, responseBlendWord);
 
     const conversationData: ConversationHistory = {
       id: conversationId,
@@ -1256,19 +1290,8 @@ export async function runAgentStream(
     debugLog(`[agent] stream end conversationId=${conversationId} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`);
     if (!disposedRef.current) {
       const duration = finalDuration;
-      if (duration >= 60000) {
-        const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
-        setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          for (let i = newMessages.length - 1; i >= 0; i--) {
-            if (newMessages[i]?.role === 'assistant') {
-              newMessages[i] = { ...newMessages[i]!, responseDuration: duration, blendWord };
-              break;
-            }
-          }
-          return newMessages;
-        });
-      }
+      const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+      applyAssistantRunMetadataToMessages(duration, blendWord);
 
       if (hasPendingChanges()) {
         await processPendingReviews();
