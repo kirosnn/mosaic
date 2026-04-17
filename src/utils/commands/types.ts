@@ -10,6 +10,16 @@ export interface SelectOption {
   badge?: string;
 }
 
+export interface SelectMenuConfig {
+  title: string;
+  options: SelectOption[];
+  onSelect: (value: string) => void | {
+    nextMenu?: SelectMenuConfig | null;
+    confirmationMessage?: string | null;
+    closeMenu?: boolean;
+  };
+}
+
 export interface CommandResult {
   success: boolean;
   content: string;
@@ -17,11 +27,7 @@ export interface CommandResult {
   shouldClearMessages?: boolean;
   shouldCompactMessages?: boolean;
   compactMaxTokens?: number;
-  showSelectMenu?: {
-    title: string;
-    options: SelectOption[];
-    onSelect: (value: string) => void;
-  };
+  showSelectMenu?: SelectMenuConfig;
   errorBanner?: string;
 }
 
