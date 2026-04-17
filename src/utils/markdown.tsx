@@ -1,7 +1,7 @@
 import { TextAttributes } from "@opentui/core";
 
 export interface MarkdownSegment {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem' | 'link';
+  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem' | 'link' | 'blockquote';
   content: string;
   level?: number;
   href?: string;
@@ -85,6 +85,14 @@ function parseInline(text: string): MarkdownSegment[] {
   return segments.length > 0 ? segments : [{ type: 'text', content: text }];
 }
 
+export function getListContinuationIndent(line: string): number {
+  const unordered = line.match(/^(\s*)[-*+]\s/);
+  if (unordered) return (unordered[1]?.length ?? 0) + 2;
+  const ordered = line.match(/^(\s*)(\d+)\.\s/);
+  if (ordered) return (ordered[1]?.length ?? 0) + (ordered[2]?.length ?? 1) + 2;
+  return 0;
+}
+
 export function parseMarkdownLine(line: string): MarkdownSegment[] {
   if (line.match(/^#{1,6}\s/)) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
@@ -93,9 +101,27 @@ export function parseMarkdownLine(line: string): MarkdownSegment[] {
     }
   }
 
-  if (line.match(/^[-*+]\s/)) {
-    const content = line.replace(/^[-*+]\s+/, '');
-    return [{ type: 'text', content: '• ' }, ...parseInline(content)];
+  const blockquoteMatch = line.match(/^(>\s*)+/);
+  if (blockquoteMatch) {
+    const depth = (line.match(/>/g) || []).length;
+    const content = line.replace(/^(>\s*)+/, '');
+    const prefix = '│ '.repeat(depth);
+    return [{ type: 'blockquote', content: prefix }, ...parseInline(content)];
+  }
+
+  const unorderedMatch = line.match(/^(\s*)([-*+])\s(.*)$/);
+  if (unorderedMatch) {
+    const indent = unorderedMatch[1] ?? '';
+    const content = unorderedMatch[3] ?? '';
+    return [{ type: 'text', content: `${indent}• ` }, ...parseInline(content)];
+  }
+
+  const orderedMatch = line.match(/^(\s*)(\d+)\.\s(.*)$/);
+  if (orderedMatch) {
+    const indent = orderedMatch[1] ?? '';
+    const num = orderedMatch[2] ?? '1';
+    const content = orderedMatch[3] ?? '';
+    return [{ type: 'text', content: `${indent}${num}. ` }, ...parseInline(content)];
   }
 
   return parseInline(line);
@@ -126,6 +152,9 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
         </box>
       );
 
+    case 'blockquote':
+      return <text key={key} fg="#5a8a6a">{segment.content}</text>;
+
     case 'text':
     default:
       return <text key={key} fg="white">{segment.content}</text>;
@@ -154,6 +183,7 @@ export function parseMarkdownContent(content: string): ParsedMarkdownLine[] {
 export function wrapMarkdownText(text: string, maxWidth: number): { text: string; segments: MarkdownSegment[] }[] {
   if (!text || maxWidth <= 0) return [{ text: '', segments: [] }];
 
+  const continuationIndent = getListContinuationIndent(text);
   const segments = parseMarkdownLine(text);
   const lines: { text: string; segments: MarkdownSegment[] }[] = [];
   let currentLine = '';
@@ -168,10 +198,18 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
 
   const pushLine = () => {
     if (!currentLine) return;
-    lines.push({ text: currentLine, segments: currentSegments });
+    const first = lines.length === 0;
+    const prefix = (!first && continuationIndent > 0) ? ' '.repeat(continuationIndent) : '';
+    const prefixSegs: MarkdownSegment[] = prefix ? [{ type: 'text', content: prefix }] : [];
+    lines.push({ text: prefix + currentLine, segments: [...prefixSegs, ...currentSegments] });
     currentLine = '';
     currentSegments = [];
   };
+
+  const isFirstLine = () => lines.length === 0;
+
+  const effectiveMaxWidth = (first: boolean) =>
+    first ? maxWidth : Math.max(1, maxWidth - continuationIndent);
 
   const addPiece = (piece: MarkdownSegment) => {
     let remaining = piece.content;
@@ -180,18 +218,21 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
         if (remaining.trim() === '') {
           return;
         }
-        if (remaining.length <= maxWidth) {
+        const limit = effectiveMaxWidth(isFirstLine());
+        if (remaining.length <= limit) {
           currentLine = remaining;
           currentSegments = [{ ...piece, content: remaining }];
           return;
         }
-        const chunk = remaining.slice(0, maxWidth);
-        lines.push({ text: chunk, segments: [{ ...piece, content: chunk }] });
-        remaining = remaining.slice(maxWidth);
+        const chunk = remaining.slice(0, limit);
+        const pfx = isFirstLine() ? '' : ' '.repeat(continuationIndent);
+        lines.push({ text: pfx + chunk, segments: pfx ? [{ type: 'text', content: pfx }, { ...piece, content: chunk }] : [{ ...piece, content: chunk }] });
+        remaining = remaining.slice(limit);
         continue;
       }
 
-      if ((currentLine + remaining).length <= maxWidth) {
+      const limit = effectiveMaxWidth(isFirstLine());
+      if ((currentLine + remaining).length <= limit) {
         currentLine += remaining;
         currentSegments.push({ ...piece, content: remaining });
         return;
@@ -209,7 +250,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
   }
 
   if (currentLine) {
-    lines.push({ text: currentLine, segments: currentSegments });
+    pushLine();
   }
 
   for (const line of lines) {
@@ -365,7 +406,7 @@ function reflowParagraphs(text: string): string {
       continue;
     }
 
-    if (/^#{1,6}\s/.test(line) || /^[-*+]\s/.test(line) || /^\d+\.\s/.test(line) || isTableSeparator(line) || line.includes('|')) {
+    if (/^#{1,6}\s/.test(line) || /^\s*[-*+]\s/.test(line) || /^\s*\d+\.\s/.test(line) || /^(>\s*)+/.test(line) || isTableSeparator(line) || line.includes('|')) {
       result.push(line);
       continue;
     }
@@ -374,8 +415,9 @@ function reflowParagraphs(text: string): string {
     const prevIsText = prev.trim() !== '' &&
       !/^```/.test(prev) &&
       !/^#{1,6}\s/.test(prev) &&
-      !/^[-*+]\s/.test(prev) &&
-      !/^\d+\.\s/.test(prev);
+      !/^\s*[-*+]\s/.test(prev) &&
+      !/^\s*\d+\.\s/.test(prev) &&
+      !/^(>\s*)+/.test(prev);
 
     if (prevIsText) {
       result[result.length - 1] = prev + ' ' + line;
