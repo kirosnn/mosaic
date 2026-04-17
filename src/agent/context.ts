@@ -2,6 +2,11 @@ import type { ImagePart, TextPart, UserContent } from 'ai';
 import { estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
 import type { ImageAttachment } from '../utils/images';
 import { debugLog } from '../utils/debug';
+import { compileContextSnapshot } from './contextCompiler';
+import type { RepositorySummary } from './repoScan';
+import { scanRepository } from './repoScan';
+import { detectTaskMode, type TaskModeDecision } from './taskMode';
+import { recordContextCompilation, recordRepoScanMetrics } from './runtimeMetrics';
 
 type SmartRole = 'user' | 'assistant' | 'tool' | 'slash';
 
@@ -21,6 +26,8 @@ export interface BuildSmartConversationHistoryOptions {
   maxContextTokens?: number;
   provider?: string;
   reserveTokens?: number;
+  repoSummary?: RepositorySummary;
+  taskModeDecision?: TaskModeDecision;
 }
 
 interface AgentHistoryMessage {
@@ -40,10 +47,11 @@ interface SnapshotFact {
 interface SnapshotBuildResult {
   text: string;
   stats: {
-    planSteps: number;
-    pinnedFacts: number;
+    repoRoots: number;
+    importantFiles: number;
     workingSet: number;
-    toolMemory: number;
+    findings: number;
+    unknowns: number;
     chars: number;
   };
 }
@@ -347,62 +355,13 @@ function compactDialogueHistory(messages: AgentHistoryMessage[], budgetTokens: n
   return fallback.length > 0 ? fallback : messages.slice(-2);
 }
 
-function buildSnapshotMessage(messages: SmartContextMessage[], maxChars: number): SnapshotBuildResult {
-  const userMessages = messages.filter((m) => m.role === 'user');
-  const originalTask = userMessages[0]?.content ? normalizeWhitespace(userMessages[0].content) : '';
-  const currentTask = userMessages[userMessages.length - 1]?.content
-    ? normalizeWhitespace(userMessages[userMessages.length - 1]!.content)
-    : '';
-
-  const plan = getLatestPlanState(messages);
-  const pinnedFacts = buildPinnedFacts(messages, 6, 900);
-  const workingSet = buildWorkingSet(messages, 18);
-  const toolMemory = buildToolMemoryLines(messages, 8);
-
-  const sections: string[] = [];
-  sections.push('Codebase context snapshot:');
-
-  if (originalTask) {
-    sections.push(`Original task:\n- ${truncateText(originalTask, 700)}`);
-  }
-
-  if (currentTask && currentTask !== originalTask) {
-    sections.push(`Current user request:\n- ${truncateText(currentTask, 700)}`);
-  }
-
-  if (plan.length > 0) {
-    const lines = plan.map((p) => {
-      const marker = p.status === 'completed' ? '[DONE]' : p.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
-      return `${marker} ${p.step}`;
-    });
-    sections.push(`Plan state:\n${lines.join('\n')}`);
-  }
-
-  if (pinnedFacts.length > 0) {
-    sections.push(`Pinned facts:\n${pinnedFacts.map((line) => `- ${line}`).join('\n')}`);
-  }
-
-  if (workingSet.length > 0) {
-    sections.push(`Working set files:\n${workingSet.map((file) => `- ${file}`).join('\n')}`);
-  }
-
-  if (toolMemory.length > 0) {
-    sections.push(`Recent tool outcomes:\n${toolMemory.join('\n')}`);
-  }
-
-  sections.push('Use this snapshot to avoid repeated discovery and redundant tool calls.');
-
-  const text = truncateText(sections.join('\n\n'), maxChars);
-  return {
-    text,
-    stats: {
-      planSteps: plan.length,
-      pinnedFacts: pinnedFacts.length,
-      workingSet: workingSet.length,
-      toolMemory: toolMemory.length,
-      chars: text.length,
-    },
-  };
+function buildSnapshotMessage(
+  messages: SmartContextMessage[],
+  maxChars: number,
+  taskModeDecision: TaskModeDecision,
+  repoSummary: RepositorySummary,
+): SnapshotBuildResult {
+  return compileContextSnapshot(messages, taskModeDecision, repoSummary, maxChars);
 }
 
 function buildDialogueHistory(
@@ -455,6 +414,9 @@ function buildDialogueHistory(
 
     if (msg.role === 'assistant') {
       const text = msg.content || '';
+      if (text.startsWith('TOOL LEDGER (continuation context):')) {
+        continue;
+      }
       history.push({
         role: 'assistant',
         content: text,
@@ -475,7 +437,10 @@ export function buildSmartConversationHistory(
   const reserveTokens = options.reserveTokens ?? Math.max(1200, Math.floor(budget * 0.2));
   const historyBudget = Math.max(800, budget - reserveTokens);
   const snapshotCharBudget = Math.min(SMART_HISTORY_SNAPSHOT_CHAR_CAP, Math.max(900, Math.floor(historyBudget * 1.2)));
-  const snapshot = buildSnapshotMessage(options.messages, snapshotCharBudget);
+  const taskModeDecision = options.taskModeDecision ?? detectTaskMode(options.messages);
+  const repoSummary = options.repoSummary ?? scanRepository();
+  recordRepoScanMetrics(repoSummary);
+  const snapshot = buildSnapshotMessage(options.messages, snapshotCharBudget, taskModeDecision, repoSummary);
   const snapshotMessage: AgentHistoryMessage[] = snapshot.text
     ? [{
       role: 'assistant',
@@ -492,8 +457,9 @@ export function buildSmartConversationHistory(
   const dialogueTokensAfter = estimateHistoryTokens(compactedDialogue);
 
   const combined = [...snapshotMessage, ...compactedDialogue];
+  recordContextCompilation(snapshot.stats.chars, combined.length);
   const inputRoles = countSmartRoles(options.messages);
-  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} includeImages=${options.includeImages} budgetTokens={requested:${requestedBudget},effective:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},planSteps:${snapshot.stats.planSteps},pinnedFacts:${snapshot.stats.pinnedFacts},workingSet:${snapshot.stats.workingSet},toolOutcomes:${snapshot.stats.toolMemory}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length}`);
+  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} mode=${taskModeDecision.mode} includeImages=${options.includeImages} budgetTokens={requested:${requestedBudget},effective:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},repoRoots:${snapshot.stats.repoRoots},importantFiles:${snapshot.stats.importantFiles},workingSet:${snapshot.stats.workingSet},findings:${snapshot.stats.findings},unknowns:${snapshot.stats.unknowns}} repo={cacheHit:${repoSummary.cacheHit},roots:${repoSummary.projectRoots.length},manifests:${repoSummary.manifests.length},entrypoints:${repoSummary.entrypoints.length}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length}`);
 
   return combined.map((msg) => ({
     role: msg.role,
