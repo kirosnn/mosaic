@@ -31,7 +31,7 @@ import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, g
 import { ReviewPanel } from "./main/ReviewPanel";
 import { revertChange } from "../utils/revertChanges";
 import { CommandSelectMenu } from "./main/CommandSelectMenu";
-import type { CommandExecutionContext, SelectOption } from "../utils/commands/types";
+import type { CommandExecutionContext, SelectMenuConfig, SelectOption } from "../utils/commands/types";
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
@@ -49,7 +49,7 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [currentTitle, setCurrentTitle] = useState<string | null>(initialTitle ?? null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [imagesSupported, setImagesSupported] = useState(false);
-  const [selectMenu, setSelectMenu] = useState<{ title: string; options: SelectOption[]; onSelect: (value: string) => void } | null>(null);
+  const [selectMenu, setSelectMenu] = useState<SelectMenuConfig | null>(null);
   const currentTitleRef = useRef<string | null>(initialTitle ?? null);
   const lastAppliedTerminalTitleRef = useRef<string | null>(null);
   const titleExtractedRef = useRef(false);
@@ -849,14 +849,28 @@ Analyze the output and continue. Do not run the same command again unless I expl
       shortcutsOpen={shortcutsOpen}
       onSelect={(value) => {
         const option = selectMenu.options.find(opt => opt.value === value);
-        selectMenu.onSelect(value);
-        setSelectMenu(null);
+        const selectionResult = selectMenu.onSelect(value);
+        const nextMenu = selectionResult && typeof selectionResult === "object" ? selectionResult.nextMenu : undefined;
+        const closeMenu = !(selectionResult && typeof selectionResult === "object" && selectionResult.closeMenu === false);
+        const confirmationText =
+          selectionResult && typeof selectionResult === "object" && "confirmationMessage" in selectionResult
+            ? selectionResult.confirmationMessage
+            : (option ? `${option.name} selected` : null);
 
-        if (option) {
+        if (nextMenu) {
+          setSelectMenu(nextMenu);
+          return;
+        }
+
+        if (closeMenu) {
+          setSelectMenu(null);
+        }
+
+        if (confirmationText) {
           const confirmationMessage: Message = {
             id: createId(),
             role: "slash",
-            content: `${option.name} selected`,
+            content: confirmationText,
           };
           setMessages(prev => [...prev, confirmationMessage]);
         }
