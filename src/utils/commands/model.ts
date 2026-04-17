@@ -1,12 +1,59 @@
 import type { Command, SelectOption } from './types';
-import { readConfig, getProviderById, setActiveModel } from '../config';
+import { shouldEnableReasoning } from '../../agent/provider/reasoning';
+import {
+  clearModelReasoningEffort,
+  getAvailableReasoningEfforts,
+  getCodexModelReasoningEffort,
+  getDefaultModelReasoningEffort,
+  getModelReasoningEffort,
+  getModelReasoningEffortSource,
+  getProviderById,
+  normalizeModelForProvider,
+  readConfig,
+  setActiveModel,
+  setModelReasoningEffort,
+  type ReasoningEffort,
+} from '../config';
+
+function isReasoningEffort(value: string): value is ReasoningEffort {
+  return getAvailableReasoningEfforts().includes(value as ReasoningEffort);
+}
+
+function buildReasoningOptions(): SelectOption[] {
+  const effective = getModelReasoningEffort();
+  const source = getModelReasoningEffortSource();
+  const codex = getCodexModelReasoningEffort();
+  const fallback = getDefaultModelReasoningEffort();
+
+  const options: SelectOption[] = [
+    {
+      name: `default`,
+      description: codex ? `Use Codex local setting (${codex})` : `Use Mosaic default (${fallback})`,
+      value: 'default',
+      active: source !== 'mosaic',
+      badge: source !== 'mosaic' ? 'Active' : undefined,
+    },
+  ];
+
+  for (const effort of getAvailableReasoningEfforts()) {
+    options.push({
+      name: effort,
+      description: effort === effective && source === 'mosaic' ? 'Current custom effort' : 'Set this reasoning effort',
+      value: effort,
+      active: source === 'mosaic' && effort === effective,
+      badge: source === 'mosaic' && effort === effective ? 'Active' : undefined,
+    });
+  }
+
+  return options;
+}
 
 export const modelCommand: Command = {
   name: 'model',
   description: 'List or switch AI models for the current provider',
   usage: '/model [id]',
   aliases: ['mod'],
-  execute: (args: string[]) => {
+  execute: async (args: string[]) => {
     const config = readConfig();
 
     if (!config.provider) {
@@ -26,12 +73,34 @@ export const modelCommand: Command = {
     }
 
     if (args.length === 0) {
+      const normalizedCurrentModel = normalizeModelForProvider(config.provider, config.model);
+      if (normalizedCurrentModel && normalizedCurrentModel !== config.model) {
+        setActiveModel(normalizedCurrentModel);
+        config.model = normalizedCurrentModel;
+      }
+
       if (provider.models.length === 0) {
         return {
           success: true,
           content: `No models available for ${provider.name}.`,
         };
       }
+
+      const modelsToProbe = provider.models.map(model => model.id);
+      if (config.model && !modelsToProbe.includes(config.model)) {
+        modelsToProbe.unshift(config.model);
+      }
+
+      const reasoningSupportEntries = await Promise.all(
+        modelsToProbe.map(async (modelId) => {
+          try {
+            return [modelId, await shouldEnableReasoning(provider.id, modelId)] as const;
+          } catch {
+            return [modelId, false] as const;
+          }
+        })
+      );
+      const reasoningSupport = new Map<string, boolean>(reasoningSupportEntries);
 
       const options: SelectOption[] = provider.models.map(m => {
         const isActive = m.id === config.model;
@@ -63,7 +132,36 @@ export const modelCommand: Command = {
           title: `Select Model for ${provider.name}`,
           options,
           onSelect: (value: string) => {
-            setActiveModel(value);
+            const chosenModel = provider.models.find(model => model.id === value);
+            if (!reasoningSupport.get(value)) {
+              setActiveModel(value);
+              return {
+                confirmationMessage: `Model set to ${chosenModel ? `${chosenModel.name} (${value})` : value}.`,
+              };
+            }
+            return {
+              nextMenu: {
+                title: `Reasoning Effort for ${chosenModel?.name ?? value}`,
+                options: buildReasoningOptions(),
+                onSelect: (reasoningValue: string) => {
+                  setActiveModel(value);
+                  if (reasoningValue === 'default') {
+                    clearModelReasoningEffort();
+                  } else if (isReasoningEffort(reasoningValue)) {
+                    setModelReasoningEffort(reasoningValue);
+                  }
+                  const reasoningLabel =
+                    reasoningValue === 'default'
+                      ? `default (${getDefaultModelReasoningEffort()})`
+                      : reasoningValue;
+                  return {
+                    confirmationMessage: `Model set to ${chosenModel ? `${chosenModel.name} (${value})` : value}. Reasoning effort set to ${reasoningLabel}.`,
+                  };
+                },
+              },
+              closeMenu: false,
+              confirmationMessage: null,
+            };
           },
         },
       };
