@@ -1,5 +1,7 @@
 import { CoreMessage, CoreTool, UserContent } from 'ai';
 import type { ReasoningEffort } from '../utils/config';
+import type { RepositorySummary } from './repoScan';
+import type { TaskModeDecision } from './taskMode';
 
 export type AgentEventType =
   | 'text-delta'
@@ -164,6 +166,11 @@ export interface AgentMessage {
 export interface ProviderSendOptions {
   abortSignal?: AbortSignal;
   alreadyCompacted?: boolean;
+}
+
+export interface AgentRuntimeContext {
+  repoSummary?: RepositorySummary;
+  taskModeDecision?: TaskModeDecision;
 }
 
 export interface Provider {
