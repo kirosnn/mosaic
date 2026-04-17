@@ -4,14 +4,40 @@ import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../ty
 import { z } from 'zod';
 import { getOpenAIReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
-import { refreshOpenAIOAuthToken, decodeJwt } from '../../auth/oauth';
-import { setOAuthTokenForProvider, mapModelForOAuth } from '../../utils/config';
+import { refreshOpenAIOAuthToken, getOpenAIChatGPTAccountId, OPENAI_CHATGPT_OAUTH_BASE_URL } from '../../auth/oauth';
+import { getSupportedOpenAIOAuthModels, isSupportedOpenAIOAuthModel, setOAuthTokenForProvider } from '../../utils/config';
 import { debugLog, maskToken } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
 import { ContextGuard } from './contextGuard';
 import { createWebSocketFetch } from 'ai-sdk-openai-websocket-fetch';
 
 const wsFetch = createWebSocketFetch();
+
+function normalizeOAuthErrorResponse(res: Response, text: string): Response {
+  try {
+    const parsed = JSON.parse(text) as { detail?: string; error?: { message?: string } };
+    if (typeof parsed.error?.message === 'string' && parsed.error.message.length > 0) {
+      return res;
+    }
+    if (typeof parsed.detail !== 'string' || parsed.detail.length === 0) {
+      return res;
+    }
+    const headers = new Headers(res.headers);
+    headers.set('content-type', 'application/json');
+    return new Response(JSON.stringify({
+      error: {
+        message: parsed.detail,
+        type: 'invalid_request_error',
+      },
+    }), {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  } catch {
+    return res;
+  }
+}
 
 function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (schema instanceof z.ZodOptional) {
@@ -98,12 +124,17 @@ export class OpenAIProvider implements Provider {
 
     let oauthAuth = config.auth?.type === 'oauth' ? config.auth : undefined;
 
-    if (oauthAuth) {
-      cleanModel = mapModelForOAuth(cleanModel);
+    if (oauthAuth && !isSupportedOpenAIOAuthModel(cleanModel)) {
+      const supported = getSupportedOpenAIOAuthModels().join(', ');
+      yield {
+        type: 'error',
+        error: `OpenAI OAuth with a ChatGPT account does not support model "${cleanModel}". Supported models: ${supported}. Use an OpenAI API key to use GPT-5.4.`,
+      };
+      return;
     }
 
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    const openaiReasoning = getOpenAIReasoningOptions(reasoningEnabled);
+    const openaiReasoning = getOpenAIReasoningOptions(reasoningEnabled, config.modelReasoningEffort);
     debugLog(`[openai] reasoning=${reasoningEnabled}`);
 
     const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
@@ -134,9 +165,7 @@ export class OpenAIProvider implements Provider {
     const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const active = await refreshOauthIfNeeded();
       const accessToken = active?.accessToken;
-      const tokenPayload = accessToken ? decodeJwt(accessToken) : null;
-      const accountId =
-        typeof tokenPayload?.chatgpt_account_id === 'string' ? tokenPayload.chatgpt_account_id : undefined;
+      const accountId = accessToken ? getOpenAIChatGPTAccountId(accessToken) : undefined;
 
       const headers = new Headers(input instanceof Request ? input.headers : undefined);
       if (init?.headers) {
@@ -152,12 +181,6 @@ export class OpenAIProvider implements Provider {
 
       let url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const originalUrl = url;
-      if (url.includes('/v1/responses')) {
-        url = url.replace('/v1/responses', '/codex/responses');
-      } else if (!url.includes('/codex/responses')) {
-        url = url.replace('/responses', '/codex/responses');
-      }
-
       let nextInit: RequestInit = {
         ...init,
         headers,
@@ -212,6 +235,7 @@ export class OpenAIProvider implements Provider {
       if (!res.ok) {
         const text = await res.clone().text();
         debugLog(`[oauth][openai] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`);
+        return normalizeOAuthErrorResponse(res, text);
       }
       return res;
     };
@@ -222,7 +246,7 @@ export class OpenAIProvider implements Provider {
 
     const openai = createOpenAI({
       apiKey: oauthAuth ? 'oauth' : cleanApiKey,
-      baseURL: oauthAuth ? 'https://chatgpt.com/backend-api' : undefined,
+      baseURL: oauthAuth ? OPENAI_CHATGPT_OAUTH_BASE_URL : undefined,
       fetch: transportFetch,
       compatibility: oauthAuth ? 'compatible' : undefined,
     });
