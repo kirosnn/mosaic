@@ -19,7 +19,14 @@ export const list: CoreTool = tool({
     const result = await executeTool('list', args);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     let count = 0;
-    try { count = JSON.parse(result.result!).length; } catch {}
+    try {
+      const parsed = JSON.parse(result.result!);
+      if (Array.isArray(parsed)) {
+        count = parsed.length;
+      } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { files?: unknown[] }).files)) {
+        count = ((parsed as { files: unknown[] }).files).length;
+      }
+    } catch {}
     recordCall('list', args, result.result!, `${count} items`);
     return result.result;
   },
