@@ -10,16 +10,17 @@ import { subscribeFileChanges } from "../../utils/fileChangesBridge";
 import type { FileChanges } from "../../utils/fileChangeTracker";
 import { notifyNotification } from "../../utils/notificationBridge";
 import { CustomInput } from "../CustomInput";
-import type { Message, TokenBreakdown } from "./types";
+import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
 import type { ImageAttachment } from "../../utils/images";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel, type RuleAction } from "./ApprovalPanel";
 import { addAutoRunRule } from "../../utils/localRules";
-import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines, formatElapsedTime } from "./ThinkingIndicator";
+import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines } from "./ThinkingIndicator";
 import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
 import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuilder";
 import { UserMessageModal, type UserMessageModalState } from "./UserMessageModal";
 import { wrapText } from "./wrapText";
+import { getAllProviders } from "../../utils/config";
 
 const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
   keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
@@ -233,6 +234,84 @@ function renderSlashText(content: string, indent: number) {
   }
 
   return <text fg="white">{padded}</text>;
+}
+
+function formatAssistantResponseDuration(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || ms < 0) return '';
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h${minutes}min${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}min${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function formatModelToken(token: string): string {
+  if (!token) return '';
+  if (/^\d+(\.\d+)?$/.test(token)) return token;
+  if (/^[a-z]+$/i.test(token)) {
+    if (token.length <= 3) return token.toUpperCase();
+    return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+  }
+  return token;
+}
+
+function formatModelIdFallback(modelId: string): string {
+  const normalized = modelId
+    .replace(/^openai\//i, '')
+    .replace(/^x-ai\//i, '')
+    .replace(/^anthropic\//i, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/i, '')
+    .trim();
+
+  return normalized
+    .split(/[-_/]+/)
+    .filter(Boolean)
+    .map(formatModelToken)
+    .join(' ');
+}
+
+function formatAssistantModelName(modelId: string | null | undefined): string {
+  const raw = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!raw) return '';
+
+  const providers = getAllProviders();
+  for (const provider of providers) {
+    const match = provider.models.find(model => model.id === raw);
+    if (match?.name) {
+      return match.name.replace(/^GPT-/i, 'GPT ').trim();
+    }
+  }
+
+  return formatModelIdFallback(raw);
+}
+
+function formatAssistantMetaLine(
+  blendWord: string | null | undefined,
+  responseDuration: number | null | undefined,
+  responseModel: string | null | undefined,
+  responseReasoningEffort: string | null | undefined,
+): string {
+  const time = formatAssistantResponseDuration(responseDuration);
+  const modelName = formatAssistantModelName(responseModel);
+  const reasoning = typeof responseReasoningEffort === 'string' ? responseReasoningEffort.trim() : '';
+  const modelLabel = [modelName, reasoning].filter(Boolean).join(' ');
+  const brewWord = blendWord?.trim() || BLEND_WORDS[0] || 'Brewed';
+  if (modelLabel && time) {
+    return `${modelLabel} · ${brewWord} in ${time}`;
+  }
+  if (modelLabel) {
+    return modelLabel;
+  }
+  if (time) {
+    return `${brewWord} in ${time}`;
+  }
+  return brewWord;
 }
 
 interface ChatPageProps {
@@ -520,20 +599,6 @@ export function ChatPage({
           }
 
           if (item.type === 'blend') {
-            if (item.blendDuration && item.blendDuration > 60000) {
-              const timeStr = formatElapsedTime(item.blendDuration, false);
-              const label = `${item.blendWord} for ${timeStr}`;
-              const innerWidth = Math.max(10, terminalWidth - 2);
-              const leftSegment = `─ `;
-              const rightCount = Math.max(0, innerWidth - (leftSegment.length + label.length + 1));
-              return (
-                <box key={item.key} flexDirection="row" width="100%" marginBottom={1}>
-                  <text attributes={TextAttributes.DIM}>{leftSegment}</text>
-                  <text attributes={TextAttributes.DIM}>{label} </text>
-                  <text attributes={TextAttributes.DIM}>{'─'.repeat(rightCount)}</text>
-                </box>
-              );
-            }
             return null;
           }
 
@@ -673,6 +738,25 @@ export function ChatPage({
                 <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.role === "slash" ? (
                 renderSlashText(item.content || ' ', item.indent || 0)
+              ) : item.isAssistantMeta ? (
+                (() => {
+                  const label = formatAssistantMetaLine(
+                    item.blendWord,
+                    item.responseDuration,
+                    item.responseModel,
+                    item.responseReasoningEffort,
+                  );
+                  const innerWidth = Math.max(10, terminalWidth - 2);
+                  const leftSegment = `─ `;
+                  const rightCount = Math.max(0, innerWidth - (leftSegment.length + label.length + 1));
+                  return (
+                    <box flexDirection="row" width="100%" marginTop={1} marginBottom={1}>
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{leftSegment}</text>
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{label} </text>
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{'─'.repeat(rightCount)}</text>
+                    </box>
+                  );
+                })()
               ) : item.segments && item.segments.length > 0 ? (
                 <box flexDirection="row">
                   {item.segments.map((segment, segIndex) => {
