@@ -4,6 +4,7 @@ import {
   getAllProviders,
   getProviderById,
   getApiKeyForProvider,
+  normalizeModelForProvider,
   setActiveProvider,
   setActiveModel,
 } from '../config';
@@ -59,12 +60,14 @@ export const providerCommand: Command = {
 
             setActiveProvider(provider.id);
 
-            const currentModel = config.model;
+            const currentModel = normalizeModelForProvider(provider.id, config.model);
             const modelExists = provider.models.some(m => m.id === currentModel);
 
             if (!modelExists && provider.models.length > 0) {
               const firstModel = provider.models[0]!;
               setActiveModel(firstModel.id);
+            } else if (currentModel && currentModel !== config.model) {
+              setActiveModel(currentModel);
             }
           },
         },
@@ -91,7 +94,7 @@ export const providerCommand: Command = {
 
     setActiveProvider(provider.id);
 
-    const currentModel = config.model;
+    const currentModel = normalizeModelForProvider(provider.id, config.model);
     const modelExists = provider.models.some(m => m.id === currentModel);
 
     if (!modelExists && provider.models.length > 0) {
@@ -100,6 +103,14 @@ export const providerCommand: Command = {
       return {
         success: true,
         content: `Switched to ${provider.name}. Model set to ${firstModel.name} (${firstModel.id}).`,
+      };
+    }
+
+    if (currentModel && currentModel !== config.model) {
+      setActiveModel(currentModel);
+      return {
+        success: true,
+        content: `Switched to ${provider.name}. Model set to ${currentModel}.`,
       };
     }
 
