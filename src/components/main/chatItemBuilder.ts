@@ -39,6 +39,10 @@ export interface RenderItem {
   tableRowIndex?: number;
   isPadding?: boolean;
   isHorizontalRule?: boolean;
+  isAssistantMeta?: boolean;
+  responseModel?: string;
+  responseReasoningEffort?: string;
+  responseDuration?: number;
   planStatus?: 'pending' | 'in_progress' | 'completed';
   isCompactTool?: boolean;
   compactLabel?: string;
@@ -47,6 +51,14 @@ export interface RenderItem {
   messageIndex?: number;
   userMessageText?: string;
   userMessageImages?: ImageAttachment[];
+}
+
+function shouldShowAssistantMeta(message: Message, messageRole: Message['role'] | Message['displayRole']): boolean {
+  return messageRole === 'assistant'
+    && typeof message.responseDuration === 'number'
+    && message.responseDuration >= 0
+    && typeof message.responseModel === 'string'
+    && message.responseModel.trim().length > 0;
 }
 
 export function isCompactTool(toolName?: string): boolean {
@@ -197,7 +209,6 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
   const { messages, maxWidth, viewportHeight, questionRequest, approvalRequest } = params;
   const allItems: RenderItem[] = [];
-  let pendingBlend: { key: string; blendDuration: number; blendWord: string } | null = null;
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
@@ -215,19 +226,6 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
     const shouldPadMessage = (messageRole === 'user' || messageRole === 'slash')
       && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
       && !compactTool;
-
-    if (messageRole === 'user' && pendingBlend) {
-      allItems.push({
-        key: pendingBlend.key,
-        type: 'blend',
-        role: 'assistant',
-        isFirst: false,
-        visualLines: 1,
-        blendDuration: pendingBlend.blendDuration,
-        blendWord: pendingBlend.blendWord
-      });
-      pendingBlend = null;
-    }
 
     if (shouldPadMessage) {
       allItems.push({
@@ -550,12 +548,19 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       });
     }
 
-    if (message.responseDuration && messageRole === 'assistant' && message.responseDuration > 60000) {
-      pendingBlend = {
-        key: `${messageKey}-blend`,
-        blendDuration: message.responseDuration,
-        blendWord: message.blendWord || 'Blended'
-      };
+    if (shouldShowAssistantMeta(message, messageRole)) {
+      allItems.push({
+        key: `${messageKey}-assistant-meta`,
+        type: 'line',
+        role: 'assistant',
+        isFirst: false,
+        isAssistantMeta: true,
+        blendWord: message.blendWord,
+        responseModel: message.responseModel,
+        responseReasoningEffort: message.responseReasoningEffort,
+        responseDuration: message.responseDuration,
+        visualLines: 1,
+      });
     }
 
     const nextMessage = messageIndex + 1 < messages.length ? messages[messageIndex + 1] : null;
@@ -575,18 +580,6 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         visualLines: 1
       });
     }
-  }
-
-  if (pendingBlend) {
-    allItems.push({
-      key: pendingBlend.key,
-      type: 'blend',
-      role: 'assistant',
-      isFirst: false,
-      visualLines: 1,
-      blendDuration: pendingBlend.blendDuration,
-      blendWord: pendingBlend.blendWord
-    });
   }
 
   if (questionRequest) {
