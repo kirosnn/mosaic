@@ -40,6 +40,8 @@ export interface Message {
   success?: boolean;
   isError?: boolean;
   responseDuration?: number;
+  responseModel?: string;
+  responseReasoningEffort?: string;
   blendWord?: string;
   thinkingContent?: string;
   isRunning?: boolean;
