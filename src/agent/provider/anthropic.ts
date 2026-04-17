@@ -16,7 +16,7 @@ export class AnthropicProvider implements Provider {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    const anthropicReasoning = getAnthropicReasoningOptions(reasoningEnabled);
+    const anthropicReasoning = getAnthropicReasoningOptions(reasoningEnabled, config.modelReasoningEffort);
 
     const anthropic = createAnthropic({
       apiKey: cleanApiKey,
