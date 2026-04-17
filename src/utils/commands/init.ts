@@ -2,12 +2,12 @@ import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import type { Command } from './types';
 
-const INIT_PROMPT = `Analyze the codebase and create or update the MOSAIC.md file in the root of the current workspace.
+const INIT_PROMPT = `Analyze the codebase and create or update the AGENTS.md file in the root of the current workspace.
 
-IMPORTANT: MOSAIC.md is NOT a README. It's a specialized context file that helps AI agents (like me) understand this project better when working in this workspace in the future. 
-MANDATORY: You have to create or modify MOSAIC.md file before finishing the task, that's the most important user's request.
+IMPORTANT: AGENTS.md is NOT a README. It's a specialized context file that helps AI agents (like me) understand this project better when working in this workspace in the future.
+MANDATORY: You have to create or modify AGENTS.md file before finishing the task, that's the most important user's request.
 
-The MOSAIC.md file should contain:
+The AGENTS.md file should contain:
 
 1. **Project Overview** - What this project does and its main purpose
 2. **Architecture** - Key architectural patterns, design decisions, and how the codebase is organized
@@ -26,10 +26,10 @@ Step 2 - Dive deeper based on what you found:
 - Read main entry points and key source files
 - grep for patterns, frameworks, conventions
 
-Step 3 - Create or update MOSAIC.md:
+Step 3 - Create or update AGENTS.md:
 
-**If MOSAIC.md already exists:**
-- Read the existing MOSAIC.md file first
+**If AGENTS.md already exists:**
+- Read the existing AGENTS.md file first
 - Analyze if any sections need updates based on current codebase state
 - Add any missing architectural patterns, new tools, or important workflows discovered
 - Update outdated information (dependencies versions, file paths, deprecated patterns)
@@ -37,8 +37,8 @@ Step 3 - Create or update MOSAIC.md:
 - Keep the existing structure and relevant information
 - DO NOT recreate the file from scratch - use the edit tool to make targeted improvements
 
-**If MOSAIC.md does not exist:**
-- Create a comprehensive MOSAIC.md file that will serve as a contextual guide for AI agents working in this workspace
+**If AGENTS.md does not exist:**
+- Create a comprehensive AGENTS.md file that will serve as a contextual guide for AI agents working in this workspace
 
 Even if the file seems complete, always look for potential improvements:
 - Are there new features or patterns in the code not documented?
@@ -52,7 +52,7 @@ DO NOT create a .mosaic directory - it has already been created automatically.`;
 
 export const initCommand: Command = {
   name: 'init',
-  description: 'Initialize the current workspace with Mosaic configuration (creates or updates MOSAIC.md and .mosaic folder)',
+  description: 'Initialize the current workspace with Mosaic configuration (creates or updates AGENTS.md and .mosaic folder)',
   usage: '/init',
   aliases: ['i'],
   execute: async (): Promise<{ success: boolean; content: string; shouldAddToHistory?: boolean }> => {
