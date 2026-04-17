@@ -27,6 +27,7 @@ import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
 import { Agent } from "../agent";
 import { buildSmartConversationHistory } from "../agent/context";
+import { buildAgentRuntimeContext } from "../agent/runtimeContext";
 import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, respondReview, acceptAllReview, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
 import { revertChange } from "../utils/revertChanges";
@@ -413,22 +414,37 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }
   });
 
+  const normalizeContextMessages = (base: Message[]) => (
+    base.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+      images: msg.images,
+      toolName: msg.toolName,
+      toolArgs: msg.toolArgs,
+      toolResult: msg.toolResult,
+      success: msg.success,
+    }))
+  );
+
+  const buildRuntimeContextForMessages = (base: Message[]) => {
+    const normalizedMessages = normalizeContextMessages(base);
+    return {
+      normalizedMessages,
+      runtimeContext: buildAgentRuntimeContext(normalizedMessages),
+    };
+  };
+
   const buildConversationHistory = (base: Message[], includeImages: boolean) => {
     const config = readConfig();
     const maxContextTokens = config.maxContextTokens ?? getDefaultContextBudget(config.provider);
+    const { normalizedMessages, runtimeContext } = buildRuntimeContextForMessages(base);
     return buildSmartConversationHistory({
-      messages: base.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-        images: msg.images,
-        toolName: msg.toolName,
-        toolArgs: msg.toolArgs,
-        toolResult: msg.toolResult,
-        success: msg.success,
-      })),
+      messages: normalizedMessages,
       includeImages,
       maxContextTokens,
       provider: config.provider,
+      taskModeDecision: runtimeContext.taskModeDecision,
+      repoSummary: runtimeContext.repoSummary,
     });
   };
 
@@ -607,11 +623,14 @@ Analyze the output and continue. Do not run the same command again unless I expl
       setProcessingStartTime(Date.now());
       shouldAutoScroll.current = true;
 
-      const convHistory = buildConversationHistory([...baseMessages, userMessageForAgent], imagesSupported);
+      const conversationBase = [...baseMessages, userMessageForAgent];
+      const convHistory = buildConversationHistory(conversationBase, imagesSupported);
+      const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
       await runAgentStream({
         baseMessages,
         userMessage: userMessageForAgent,
         conversationHistory: convHistory,
+        runtimeContext,
         abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
         userStepContent: composedShellContent,
         autoCompact: true,
@@ -680,7 +699,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
               success: true
             };
             nextTokens = compacted.estimatedTokens;
-            return [compactNotice, ...compacted.messages];
+            return [compactNotice, ...prev];
           });
           setCurrentTokens(nextTokens);
           return;
@@ -701,11 +720,14 @@ Analyze the output and continue. Do not run the same command again unless I expl
           setProcessingStartTime(Date.now());
           shouldAutoScroll.current = true;
 
-          const convHistory = buildConversationHistory([...baseMessages, userMessage], imagesSupported);
+          const conversationBase = [...baseMessages, userMessage];
+          const convHistory = buildConversationHistory(conversationBase, imagesSupported);
+          const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
           await runAgentStream({
             baseMessages,
             userMessage,
             conversationHistory: convHistory,
+            runtimeContext,
             abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
             userStepContent: result.content,
             autoCompact: false,
@@ -752,11 +774,14 @@ Analyze the output and continue. Do not run the same command again unless I expl
     setProcessingStartTime(Date.now());
     shouldAutoScroll.current = true;
 
-    const convHistory = buildConversationHistory([...baseMessages, userMessage], imagesSupported);
+    const conversationBase = [...baseMessages, userMessage];
+    const convHistory = buildConversationHistory(conversationBase, imagesSupported);
+    const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
     await runAgentStream({
       baseMessages,
       userMessage,
       conversationHistory: convHistory,
+      runtimeContext,
       abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
       userStepContent: composedContent,
       userStepImages: imagesForMessage.length > 0 ? imagesForMessage : undefined,
