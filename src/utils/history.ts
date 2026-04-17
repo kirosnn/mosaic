@@ -6,6 +6,8 @@ export interface ConversationStep {
   type: 'user' | 'assistant' | 'tool';
   content: string;
   thinkingContent?: string;
+  responseModel?: string;
+  responseReasoningEffort?: string;
   images?: import("./images").ImageAttachment[];
   toolName?: string;
   toolArgs?: Record<string, unknown>;
