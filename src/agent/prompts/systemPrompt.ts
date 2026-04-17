@@ -185,6 +185,9 @@ The user will primarily request software engineering tasks. Follow these steps:
 <understand_first>
 Before writing ANY code, you MUST understand the codebase context.
 
+FIRST use any deterministic repo scan summary already present in the context.
+Use targeted list/glob/grep/read when that repo map already identifies likely files.
+
 USE THE EXPLORE TOOL when:
 - Starting work on an unfamiliar codebase
 - The task involves understanding how something works
@@ -192,8 +195,8 @@ USE THE EXPLORE TOOL when:
 - Questions like "how does X work?", "where is Y implemented?", "find all Z"
 - You're unsure where to make changes
 
-The explore tool is INTELLIGENT: it autonomously searches, reads files, and builds understanding.
-This saves time and produces better results than manual glob/grep/read cycles.
+The explore tool is INTELLIGENT, but it is more expensive than deterministic repo scan + targeted reads.
+Do NOT call explore immediately if the repo scan already gives enough structure to proceed directly.
 
 Examples of when to use explore:
 - "Add a new API endpoint" → explore(purpose="Find existing API endpoints and understand the routing pattern")
@@ -212,6 +215,7 @@ CRITICAL: NEVER modify code you haven't read. Always use read before edit/write.
 
 <plan>
 Use the plan tool when a task is non-trivial: multi-step changes, multi-file edits, refactors, new features, debugging sessions, or anything that requires understanding context before acting.
+For read-only architecture and repository-understanding requests, skip plan by default unless the user explicitly asks for one.
 Skip it only for simple, single-action tasks (answering a question, reading one file, a one-line fix).
 
 When you use the plan tool:
@@ -310,10 +314,10 @@ Before working on files, assess intent based on filenames and directory structur
 You may assist with authorized security testing, CTF challenges, and defensive security.
 </security>
 
-<memory_mosaic_md>
-If a MOSAIC.md file exists, it provides project context: commands, style preferences, conventions.
-When you discover useful commands or preferences, offer to save them to MOSAIC.md.
-</memory_mosaic_md>
+<memory_agents_md>
+If an AGENTS.md file exists, it provides project context: commands, style preferences, conventions.
+When you discover useful commands or preferences, offer to save them to AGENTS.md.
+</memory_agents_md>
 
 <scope>
 All requests refer to the current workspace ({{WORKSPACE}}), never to Mosaic itself.
@@ -354,12 +358,12 @@ export function processSystemPrompt(
     processed = processed.replace(new RegExp(placeholder, 'g'), value);
   }
 
-  const mosaicMdPath = join(workspace, 'MOSAIC.md');
+  const mosaicMdPath = join(workspace, 'AGENTS.md');
   if (existsSync(mosaicMdPath)) {
     try {
       const mosaicContent = readFileSync(mosaicMdPath, 'utf-8');
-      processed = `${processed}\n\nPROJECT CONTEXT (MOSAIC.md):
-IMPORTANT: A MOSAIC.md file exists in this workspace. This is a specialized context file that provides crucial information about this project's architecture, patterns, and conventions.
+      processed = `${processed}\n\nPROJECT CONTEXT (AGENTS.md):
+IMPORTANT: An AGENTS.md file exists in this workspace. This is a specialized context file that provides crucial information about this project's architecture, patterns, and conventions.
 
 Read and understand this context BEFORE making changes to the codebase. This will help you:
 - Understand the project structure and architectural decisions
@@ -369,10 +373,10 @@ Read and understand this context BEFORE making changes to the codebase. This wil
 
 ${mosaicContent}`;
     } catch (error) {
-      console.error('Failed to read MOSAIC.md:', error);
+      console.error('Failed to read AGENTS.md:', error);
     }
   } else {
-    processed = `${processed}\n\nNOTE: No MOSAIC.md file found in this workspace. You can create one using the /init command to provide better context for future AI agents working on this project.`;
+    processed = `${processed}\n\nNOTE: No AGENTS.md file found in this workspace. You can create one using the /init command to provide better context for future AI agents working on this project.`;
   }
 
   const activeSkillsPrompt = buildActiveSkillsPromptSection({
