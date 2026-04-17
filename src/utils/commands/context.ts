@@ -292,12 +292,12 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function isMosaicPath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/').toLowerCase();
-  return normalized === 'mosaic.md' || normalized.endsWith('/mosaic.md');
+  return normalized === 'agents.md' || normalized.endsWith('/agents.md');
 }
 
 function getWorkspaceMosaicFile(): WorkspaceMosaicFile | null {
   const workspace = process.cwd();
-  const candidates = ['MOSAIC.md', 'mosaic.md'];
+  const candidates = ['AGENTS.md', 'agents.md'];
 
   for (const candidate of candidates) {
     const fullPath = join(workspace, candidate);
