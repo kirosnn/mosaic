@@ -103,7 +103,7 @@ export class OpenRouterProvider implements Provider {
 
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
     const openaiReasoning = supportsReasoningEffort(cleanModel)
-      ? getOpenAIReasoningOptions(reasoningEnabled)
+      ? getOpenAIReasoningOptions(reasoningEnabled, config.modelReasoningEffort)
       : undefined;
 
     debugLog(`[openrouter] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
