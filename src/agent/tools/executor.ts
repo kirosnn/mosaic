@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, stat, mkdir, realpath, unlink } from 'fs/promises';
+import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'fs/promises';
 import { join, resolve, dirname, extname, sep } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -12,6 +12,15 @@ import { addPendingChange, clearPendingChanges, hasPendingChanges, isInReviewMod
 import TurndownService from 'turndown';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
+import {
+  EXCLUDED_DISCOVERY_DIRECTORIES as EXCLUDED_DIRECTORIES,
+  findFilesByGlob,
+  getFileStatSummary,
+  validateWorkspacePath,
+  walkWorkspace,
+} from '../repoDiscovery';
+import { classifyShellCapability, resolveCapabilityApproval } from '../capabilities';
+import { recordToolMetrics } from '../runtimeMetrics';
 
 const execAsync = promisify(exec);
 
@@ -80,6 +89,16 @@ const DANGEROUS_BASH_PATTERNS = [
 
 const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
 
+const GIT_READONLY_PATTERN =
+  /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)|^git\s+stash\s+list\b|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
+
+function isGitReadOnlyCommand(command: string): boolean {
+  const normalized = command.trim().replace(/\s+/g, ' ');
+  if (normalized.includes('\n') || normalized.includes('\r') || normalized.includes('\0')) return false;
+  if (/[|&;`$(<>]/.test(normalized)) return false;
+  return GIT_READONLY_PATTERN.test(normalized);
+}
+
 function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
@@ -88,6 +107,8 @@ function isSafeBashCommand(command: string): boolean {
   const lower = normalized.toLowerCase();
 
   if (lower.includes('\n') || lower.includes('\r') || lower.includes('\0')) return false;
+
+  if (isGitReadOnlyCommand(normalized)) return true;
 
   const firstToken = normalized.split(' ')[0] ?? '';
   const firstWord = firstToken.toLowerCase();
@@ -482,49 +503,6 @@ export interface ExecuteToolOptions {
 
 const globPatternCache = new Map<string, RegExp>();
 
-async function validatePath(fullPath: string, workspace: string): Promise<boolean> {
-  const normalizedWorkspace = workspace.endsWith(sep) ? workspace : workspace + sep;
-
-  try {
-    const resolved = await realpath(fullPath);
-    return resolved === workspace || resolved.startsWith(normalizedWorkspace);
-  } catch {
-    const parent = dirname(fullPath);
-    try {
-      const resolvedParent = await realpath(parent);
-      return resolvedParent === workspace || resolvedParent.startsWith(normalizedWorkspace);
-    } catch {
-      return fullPath === workspace || fullPath.startsWith(normalizedWorkspace);
-    }
-  }
-}
-
-const EXCLUDED_DIRECTORIES = new Set([
-  'node_modules',
-  '.git',
-  '.svn',
-  '.hg',
-  'dist',
-  'build',
-  '.next',
-  '.nuxt',
-  '.output',
-  'coverage',
-  '.cache',
-  '.parcel-cache',
-  '.turbo',
-  '__pycache__',
-  '.pytest_cache',
-  'venv',
-  '.venv',
-  'env',
-  '.env',
-  'vendor',
-  'target',
-  '.idea',
-  '.vscode',
-]);
-
 const BASH_REVIEW_MAX_FILES = 2000;
 const BASH_REVIEW_MAX_FILE_BYTES = 512 * 1024;
 const BASH_REVIEW_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
@@ -730,17 +708,21 @@ function matchGlob(filename: string, pattern: string): boolean {
 
   if (!regex) {
     const normalizedPattern = pattern.replace(/\\/g, '/');
+    const variants = normalizedPattern.startsWith('**/')
+      ? [normalizedPattern, normalizedPattern.slice(3)]
+      : [normalizedPattern];
+    const compiled = variants.map((variant) => {
+      let regexPattern = variant.replace(/[.+^${}()|[\]\\*?]/g, '\\$&');
+      regexPattern = regexPattern
+        .replace(/\\\*\\\*\\\//g, '(?:(?:[^/]+/)*)')
+        .replace(/\\\/\*\\\*$/g, '(?:/.*)?')
+        .replace(/\\\*\\\*/g, '.*')
+        .replace(/\\\*/g, '[^/]*')
+        .replace(/\\\?/g, '[^/]');
+      return regexPattern;
+    });
 
-    let regexPattern = normalizedPattern.replace(/[.+^${}()|[\]\\*?]/g, '\\$&');
-
-    regexPattern = regexPattern
-      .replace(/\\\*\\\*\\\//g, '(?:(?:[^/]+/)*)')
-      .replace(/\\\/\*\\\*$/g, '(?:/.*)?')
-      .replace(/\\\*\\\*/g, '.*')
-      .replace(/\\\*/g, '[^/]*')
-      .replace(/\\\?/g, '[^/]');
-
-    regex = new RegExp(`^${regexPattern}$`, 'i');
+    regex = new RegExp(`^(?:${compiled.join('|')})$`, 'i');
     globPatternCache.set(pattern, regex);
 
     if (globPatternCache.size > 100) {
@@ -951,95 +933,26 @@ interface WalkOutput {
   errors: string[];
 }
 
-async function walkDirectory(dir: string, filePattern?: string, includeHidden = false): Promise<WalkOutput> {
-  const results: WalkResult[] = [];
-  const errors: string[] = [];
-
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const subDirPromises: Promise<WalkOutput>[] = [];
-
-    for (const entry of entries) {
-      if (!includeHidden && entry.name.startsWith('.')) continue;
-
-      const fullPath = join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(entry.name)) {
-          results.push({ path: fullPath, isDirectory: true, excluded: true });
-        } else {
-          subDirPromises.push(walkDirectory(fullPath, filePattern, includeHidden));
-        }
-      } else {
-        if (!filePattern || matchGlob(entry.name, filePattern)) {
-          results.push({ path: fullPath, isDirectory: false });
-        }
-      }
-    }
-
-    if (subDirPromises.length > 0) {
-      const subOutputs = await Promise.all(subDirPromises);
-      for (const sub of subOutputs) {
-        results.push(...sub.results);
-        errors.push(...sub.errors);
-      }
-    }
-  } catch (e) {
-    errors.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  return { results, errors };
-}
-
 async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkOutput> {
-  const fullPath = resolve(workspace, dirPath);
-  const { results, errors } = await walkDirectory(fullPath, filterPattern, includeHidden);
-  const separator = workspace.endsWith(sep) ? '' : sep;
-
+  const { entries, errors } = await walkWorkspace(workspace, dirPath, {
+    includeFiles: true,
+    includeDirectories: true,
+    includeHidden,
+    filter: filterPattern,
+    relativeTo: 'workspace',
+  });
   return {
-    results: results.map(file => ({
-      ...file,
-      path: file.path.replace(workspace + separator, '')
+    results: entries.map((entry) => ({
+      path: entry.path,
+      isDirectory: entry.type === 'directory',
+      excluded: entry.excluded,
     })),
     errors,
   };
 }
 
 async function findFilesByPattern(pattern: string, searchPath: string): Promise<string[]> {
-  const results: string[] = [];
-
-  const hasDoubleStar = pattern.includes('**');
-
-  if (hasDoubleStar) {
-    const { results: files } = await walkDirectory(searchPath, undefined, false);
-    const separator = searchPath.endsWith(sep) ? '' : sep;
-    const root = searchPath + separator;
-
-    for (const file of files) {
-      if (file.excluded) continue;
-
-      let relativePath = file.path;
-      if (file.path.startsWith(root)) {
-        relativePath = file.path.slice(root.length);
-      } else if (file.path.toLowerCase().startsWith(root.toLowerCase())) {
-        relativePath = file.path.slice(root.length);
-      }
-
-      if (matchGlob(relativePath, pattern)) {
-        results.push(relativePath);
-      }
-    }
-  } else {
-    const entries = await readdir(searchPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue;
-      if (matchGlob(entry.name, pattern) && entry.isFile()) {
-        results.push(entry.name);
-      }
-    }
-  }
-
-  return results;
+  return findFilesByGlob(searchPath, '.', pattern);
 }
 
 async function generatePreview(toolName: string, args: Record<string, unknown>, workspace: string) {
@@ -1161,11 +1074,17 @@ export async function executeTool(toolName: string, args: Record<string, unknown
     const approvalsEnabled = shouldRequireApprovals();
     const localBashDecision = isBashTool ? getLocalBashDecision(bashCommand) : null;
     const bypassBashApproval = isBashTool && options.skipApproval === true;
+    const bashCapability = isBashTool
+      ? classifyShellCapability(bashCommand, isSafeBashCommand(bashCommand))
+      : 'unknown';
+    const bashApprovalDecision = isBashTool
+      ? resolveCapabilityApproval(bashCapability, approvalsEnabled)
+      : null;
 
     if (isBashTool) {
       const commandPreview = bashCommand.replace(/\s+/g, ' ').trim().slice(0, 180);
       debugLog(
-        `[review] bash gate setup approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval} localDecision=${localBashDecision ?? 'none'} command="${commandPreview}"`,
+        `[review] bash gate setup approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval} localDecision=${localBashDecision ?? 'none'} capability=${bashCapability} policy=${bashApprovalDecision?.policy ?? 'n/a'} command="${commandPreview}"`,
       );
     }
 
@@ -1181,7 +1100,7 @@ export async function executeTool(toolName: string, args: Record<string, unknown
       }
     }
 
-    const bashNeedsApproval = isBashTool && !bypassBashApproval && !isSafeBashCommand(bashCommand) && approvalsEnabled
+    const bashNeedsApproval = isBashTool && !bypassBashApproval && (bashApprovalDecision?.requiresApproval === true)
       && localBashDecision !== 'auto-run';
     const shouldTrackBashChanges = isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
     let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
@@ -1268,7 +1187,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const endLine = args.end_line as number | undefined;
         const fullPath = resolve(workspace, path);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1309,7 +1228,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const append = args.append === true;
         const fullPath = resolve(workspace, path);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1425,7 +1344,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const includeHidden = args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined);
         const fullPath = resolve(workspace, path);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1434,6 +1353,34 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         if (recursive) {
           const { results: files, errors: walkErrors } = await listFilesRecursive(path, workspace, filter, includeHidden);
+
+          const RECURSIVE_LIST_ENTRY_CAP = 300;
+          if (files.length > RECURSIVE_LIST_ENTRY_CAP) {
+            const dirCounts = new Map<string, { files: number; dirs: number }>();
+            for (const entry of files) {
+              const normalized = entry.path.replace(/\\/g, '/');
+              const slash = normalized.indexOf('/');
+              const topSegment = slash === -1 ? normalized : normalized.slice(0, slash);
+              const key = topSegment || '.';
+              if (!dirCounts.has(key)) dirCounts.set(key, { files: 0, dirs: 0 });
+              const counts = dirCounts.get(key)!;
+              if (entry.isDirectory) counts.dirs++;
+              else counts.files++;
+            }
+            recordToolMetrics('list', true, { filesDiscovered: files.length });
+            const summary = {
+              truncated: true,
+              totalEntries: files.length,
+              note: `Recursive listing truncated at ${RECURSIVE_LIST_ENTRY_CAP} entries (${files.length} total). Use targeted paths or glob/grep patterns instead of broad recursive listing.`,
+              topLevelBreakdown: Object.fromEntries(
+                [...dirCounts.entries()]
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([dir, counts]) => [dir, counts]),
+              ),
+            };
+            return { success: true, result: JSON.stringify(summary, null, 2) };
+          }
+
           const fileStats = await Promise.all(
             files.map(async (file) => {
               if (file.excluded) {
@@ -1443,23 +1390,28 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                   excluded: true
                 };
               }
-              const filePath = resolve(workspace, file.path);
-              try {
-                const stats = await stat(filePath);
+              const summary = await getFileStatSummary(resolve(workspace, file.path));
+              if (summary.type === 'file') {
                 return {
                   path: file.path,
-                  type: stats.isDirectory() ? 'directory' : 'file',
-                  size: stats.size,
-                };
-              } catch {
-                return {
-                  path: file.path,
-                  type: 'unknown',
-                  error: 'access denied',
+                  type: 'file',
+                  size: summary.size,
                 };
               }
+              if (summary.type === 'directory') {
+                return {
+                  path: file.path,
+                  type: 'directory',
+                };
+              }
+              return {
+                path: file.path,
+                type: 'unknown',
+                error: 'access denied',
+              };
             })
           );
+          recordToolMetrics('list', true, { filesDiscovered: fileStats.length });
           const output: Record<string, unknown> = { files: fileStats };
           if (walkErrors.length > 0) {
             output.errors = walkErrors.slice(0, 10);
@@ -1621,7 +1573,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
         const fullPath = resolve(workspace, searchPath);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1659,7 +1611,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const fullPath = resolve(workspace, searchPath);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1853,7 +1805,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
         const fullPath = resolve(workspace, path);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
@@ -1981,7 +1933,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
         const fullPath = resolve(workspace, path);
 
-        if (!await validatePath(fullPath, workspace)) {
+        if (!await validateWorkspacePath(fullPath, workspace)) {
           return {
             success: false,
             error: 'Access denied: path is outside workspace'
