@@ -2,6 +2,7 @@ import { CoreMessage } from 'ai';
 import {
   AgentEvent,
   AgentMessage,
+  AgentRuntimeContext,
   ProviderConfig,
   Provider,
   ProviderSendOptions,
@@ -22,6 +23,8 @@ import { setExploreContext, getExploreSummaries, setConversationMemory, resetExp
 import { debugLog } from '../utils/debug';
 import { resetTracker, clearPersistentCache } from './tools/toolCallTracker';
 import { ConversationMemory, getGlobalMemory, resetGlobalMemory } from './memory';
+import { clearRepositoryScanCache, formatRepositorySummary, formatArchitectureSummary } from './repoScan';
+import { buildTaskModePrompt } from './taskMode';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -338,11 +341,13 @@ export class Agent {
   private resolvedMaxOutputTokens?: number;
   private memory: ConversationMemory;
   private pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
+  private runtimeContext?: AgentRuntimeContext;
 
   static resetSessionState(): void {
     resetGlobalMemory();
     resetTracker();
     clearPersistentCache();
+    clearRepositoryScanCache();
     resetExploreSummaries();
     try {
       const { resetExploreKnowledge } = require('./tools/exploreExecutor');
@@ -374,7 +379,7 @@ export class Agent {
     return { ready: true };
   }
 
-  constructor() {
+  constructor(runtimeContext?: AgentRuntimeContext) {
     const userConfig = readConfig();
 
     if (!userConfig.provider || !userConfig.model) {
@@ -402,7 +407,19 @@ export class Agent {
       // MCP not available
     }
 
-    const systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, { consumeOneShotSkills: true });
+    let systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, { consumeOneShotSkills: true });
+    if (runtimeContext?.taskModeDecision) {
+      const modePrompt = buildTaskModePrompt(runtimeContext.taskModeDecision.mode);
+      systemPrompt = `${systemPrompt}\n\nRUNTIME TASK MODE:\n${modePrompt}`;
+    }
+    if (runtimeContext?.repoSummary) {
+      const isArchMode = runtimeContext.taskModeDecision?.mode === 'explore_readonly';
+      const repoPrompt = isArchMode
+        ? formatArchitectureSummary(runtimeContext.repoSummary, 2400)
+        : formatRepositorySummary(runtimeContext.repoSummary, 1800);
+      const label = isArchMode ? 'ARCHITECTURE SUMMARY (authoritative — do not re-discover)' : 'DETERMINISTIC REPO SCAN';
+      systemPrompt = `${systemPrompt}\n\n${label}:\n${repoPrompt}`;
+    }
     const tools = getTools();
     const auth = getAuthForProvider(userConfig.provider);
 
@@ -420,8 +437,9 @@ export class Agent {
 
     this.provider = this.createProvider(userConfig.provider);
     this.memory = getGlobalMemory();
+    this.runtimeContext = runtimeContext;
 
-    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}}`);
+    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? 'default'} repoScan=${runtimeContext?.repoSummary ? 'yes' : 'no'}`);
   }
 
   private createProvider(providerName: string): Provider {
