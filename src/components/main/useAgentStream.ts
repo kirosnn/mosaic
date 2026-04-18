@@ -1,13 +1,13 @@
 import { Agent, type AgentMessage } from "../../agent";
 import type { AgentRuntimeContext } from "../../agent/types";
 import { saveConversation, type ConversationHistory, type ConversationStep } from "../../utils/history";
-import { getModelReasoningEffort, readConfig } from "../../utils/config";
+import { readConfig } from "../../utils/config";
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from "../../utils/toolFormatting";
 import { setExploreAbortController } from "../../utils/exploreBridge";
 import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
 import { extractTitle, extractTitleFromToolResult, setTerminalTitle } from "./titleUtils";
 import { buildCompactionDisplay, compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./compaction";
-import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
+import { buildAssistantCapabilitiesSystemPrompt, DEFAULT_SYSTEM_PROMPT, LIGHTWEIGHT_CHAT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../../utils/tokenEstimator";
 import { getModelsDevContextLimit } from "../../utils/models";
 import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
@@ -17,6 +17,7 @@ import type { ImageAttachment } from "../../utils/images";
 import { shouldEnableReasoning } from "../../agent/provider/reasoning";
 import { finishRuntimeMetrics, markFirstUsefulAnswer, recordPromptTokens, recordToolMetrics, startRuntimeMetrics } from "../../agent/runtimeMetrics";
 import { runTaskLifecycleStage } from "../../agent/lifecycle";
+import { isLightweightTaskMode } from "../../agent/taskMode";
 
 const MAX_CONTINUATIONS = 3;
 const MAX_CONTINUATION_TOOL_MESSAGES = 8;
@@ -410,17 +411,10 @@ export async function runAgentStream(
   };
   setCurrentTokensMonotonic(estimateTokens());
   const config = readConfig();
-  const responseModel = config.model;
+  const isLightweightChat = isLightweightTaskMode(runtimeContext?.taskModeDecision?.mode);
+  let responseProvider = config.provider;
+  let responseModel = config.model;
   let responseReasoningEffort: string | undefined;
-  if (responseModel) {
-    try {
-      responseReasoningEffort = await shouldEnableReasoning(config.provider ?? '', responseModel)
-        ? getModelReasoningEffort()
-        : undefined;
-    } catch {
-      responseReasoningEffort = undefined;
-    }
-  }
 
   const applyAssistantRunMetadataToSteps = (duration: number, blendWord?: string) => {
     for (let i = conversationSteps.length - 1; i >= 0; i--) {
@@ -458,14 +452,20 @@ export async function runAgentStream(
 
   const resolveMaxContextTokens = async () => {
     if (config.maxContextTokens) return config.maxContextTokens;
-    if (config.provider && config.model) {
-      const resolved = await getModelsDevContextLimit(config.provider, config.model);
+    if (responseProvider && responseModel) {
+      const resolved = await getModelsDevContextLimit(responseProvider, responseModel);
       if (typeof resolved === "number") return resolved;
     }
     return undefined;
   };
 
   const buildSystemPrompt = () => {
+    if (runtimeContext?.taskModeDecision?.mode === 'assistant_capabilities') {
+      return buildAssistantCapabilitiesSystemPrompt(runtimeContext.assistantCapabilitySummary);
+    }
+    if (isLightweightChat) {
+      return LIGHTWEIGHT_CHAT_SYSTEM_PROMPT;
+    }
     const rawSystemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
     return processSystemPrompt(rawSystemPrompt, true);
   };
@@ -540,7 +540,7 @@ export async function runAgentStream(
   let responseBlendWord: string | undefined = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
 
   try {
-    startRuntimeMetrics(runtimeContext?.taskModeDecision, runtimeContext?.repoSummary);
+    startRuntimeMetrics(runtimeContext);
     await runTaskLifecycleStage('pre_run', { runtimeContext });
     const providerStatus = await Agent.ensureProviderReady();
     if (!providerStatus.ready) {
@@ -556,6 +556,20 @@ export async function runAgentStream(
     }
 
     const agent = new Agent(runtimeContext);
+    const effectiveRun = agent.getRunMetadata();
+    responseProvider = effectiveRun.provider;
+    responseModel = effectiveRun.model;
+    if (responseModel && effectiveRun.reasoningEffort) {
+      try {
+        responseReasoningEffort = await shouldEnableReasoning(responseProvider ?? '', responseModel)
+          ? effectiveRun.reasoningEffort
+          : undefined;
+      } catch {
+        responseReasoningEffort = undefined;
+      }
+    } else {
+      responseReasoningEffort = undefined;
+    }
     let assistantChunk = '';
     let thinkingChunk = '';
     const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
@@ -924,6 +938,7 @@ export async function runAgentStream(
     };
 
     const needsContinuation = (): boolean => {
+      if (isLightweightChat) return false;
       if (lastFinishReason === 'length') return true;
       if (runtimeContext?.taskModeDecision?.mode !== 'explore_readonly' && hasPendingStepsInConversation(conversationSteps)) return true;
       if (hasForcedSkillInvocation && lastFinishReason === 'stop') {
@@ -943,10 +958,14 @@ export async function runAgentStream(
 
     const planCheck = extractPlanFromSteps(conversationSteps);
     const pendingSteps = planCheck ? planCheck.steps.filter(s => s.status !== 'completed') : [];
-    debugLog(`[continuation] check: lastFinishReason=${lastFinishReason} streamHadError=${streamHadError} planFound=${!!planCheck} pendingSteps=${pendingSteps.length} conversationSteps=${conversationSteps.length}`);
-    debugLog(`[context] continuation history ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`);
-    if (planCheck) {
-      debugLog(`[continuation] plan steps: ${planCheck.steps.map(s => `[${s.status}] ${s.step.slice(0, 40)}`).join(' | ')}`);
+    if (isLightweightChat) {
+      debugLog(`[continuation] skipped mode=${runtimeContext?.taskModeDecision?.mode ?? 'default'} lastFinishReason=${lastFinishReason} conversationSteps=${conversationSteps.length}`);
+    } else {
+      debugLog(`[continuation] check: lastFinishReason=${lastFinishReason} streamHadError=${streamHadError} planFound=${!!planCheck} pendingSteps=${pendingSteps.length} conversationSteps=${conversationSteps.length}`);
+      debugLog(`[context] continuation history ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`);
+      if (planCheck) {
+        debugLog(`[continuation] plan steps: ${planCheck.steps.map(s => `[${s.status}] ${s.step.slice(0, 40)}`).join(' | ')}`);
+      }
     }
 
     while (
@@ -1283,8 +1302,8 @@ export async function runAgentStream(
       title: currentTitleRef.current ?? currentTitle ?? null,
       workspace: process.cwd(),
       totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-      model: config.model,
-      provider: config.provider
+      model: responseModel,
+      provider: responseProvider
     };
 
     saveConversation(conversationData);
@@ -1292,7 +1311,7 @@ export async function runAgentStream(
 
     if (autoCompact) {
       const resolvedMax = await resolveMaxContextTokens();
-      const maxContextTokens = resolvedMax ?? getDefaultContextBudget(config.provider);
+      const maxContextTokens = resolvedMax ?? getDefaultContextBudget(responseProvider);
       if (!abortController.signal.aborted && !disposedRef.current) {
         const realPromptTokens = lastPromptTokensRef.current;
         const systemPrompt = buildSystemPrompt();
