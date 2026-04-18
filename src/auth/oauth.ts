@@ -5,7 +5,7 @@ import { createInterface } from 'readline';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { OAuthTokenState, setOAuthTokenForProvider, setOAuthModelsForProvider, setFirstRunComplete, readConfig, getProviderById } from '../utils/config';
+import { OAuthTokenState, OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS, isSupportedOpenAIOAuthCatalogModelId, setOAuthTokenForProvider, setOAuthModelsForProvider, setFirstRunComplete, readConfig, getProviderById } from '../utils/config';
 import { debugLog, maskToken } from '../utils/debug';
 
 interface OAuthTokenResponse {
@@ -37,28 +37,6 @@ const OPENAI_REDIRECT_URI = 'http://localhost:1455/auth/callback';
 const OPENAI_SCOPE = 'openid profile email offline_access';
 export const OPENAI_CHATGPT_OAUTH_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 const OPENAI_CODEX_CACHE_PATH = join(homedir(), '.codex', 'models_cache.json');
-
-const OPENAI_CODEX_FALLBACK_MODELS = [
-  'gpt-5.4',
-  'gpt-5.2-codex',
-  'gpt-5.1-codex-max',
-  'gpt-5.4-mini',
-  'gpt-5.3-codex',
-  'gpt-5.2',
-  'gpt-5.1-codex-mini',
-];
-
-const OPENAI_CODEX_EXPANDED_MODELS = [
-  'gpt-5.4',
-  'gpt-5.2-codex',
-  'gpt-5.1-codex-max',
-  'gpt-5.4-mini',
-  'gpt-5.3-codex',
-  'gpt-5.2',
-  'gpt-5.1-codex-mini',
-  'gpt-5.1-codex',
-  'codex-mini-latest',
-];
 
 interface CachedCodexModel {
   slug?: string;
@@ -494,13 +472,12 @@ function readOpenAICodexModelsFromCache(): string[] {
 
 async function syncOpenAICodexModels(): Promise<Array<{ id: string; name: string; description: string }>> {
   const ids = Array.from(new Set([
+    ...OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS,
     ...readOpenAICodexModelsFromCache(),
-    ...OPENAI_CODEX_EXPANDED_MODELS,
-    ...OPENAI_CODEX_FALLBACK_MODELS,
   ]));
   if (ids.length === 0) return [];
   const models = ids
-    .filter(id => id.toLowerCase().startsWith('gpt-') || id.toLowerCase().includes('codex'))
+    .filter(id => isSupportedOpenAIOAuthCatalogModelId(id))
     .map(id => ({
       id,
       name: id,
