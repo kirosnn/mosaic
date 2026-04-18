@@ -1,11 +1,32 @@
+import { buildAssistantCapabilitySummary } from './assistantCapabilities';
 import type { SmartContextMessage } from './context';
+import { collectGitWorkspaceState } from './gitWorkspaceState';
 import type { AgentRuntimeContext } from './types';
 import { scanRepository } from './repoScan';
-import { detectTaskMode } from './taskMode';
+import { isLightweightTaskMode } from './taskMode';
+import { detectTaskModeWithModel } from './taskModeModel';
 
-export function buildAgentRuntimeContext(messages: SmartContextMessage[]): AgentRuntimeContext {
+export async function buildAgentRuntimeContext(messages: SmartContextMessage[]): Promise<AgentRuntimeContext> {
+  const taskModeDecision = await detectTaskModeWithModel(messages);
+  if (isLightweightTaskMode(taskModeDecision.mode)) {
+    return {
+      taskModeDecision,
+      repoSummary: undefined,
+      gitWorkspaceState: undefined,
+      assistantCapabilitySummary: taskModeDecision.mode === 'assistant_capabilities'
+        ? buildAssistantCapabilitySummary()
+        : undefined,
+    };
+  }
+
+  const [repoSummary, gitWorkspaceState] = await Promise.all([
+    Promise.resolve(scanRepository()),
+    collectGitWorkspaceState().catch(() => undefined),
+  ]);
+
   return {
-    taskModeDecision: detectTaskMode(messages),
-    repoSummary: scanRepository(),
+    taskModeDecision,
+    repoSummary,
+    gitWorkspaceState,
   };
 }
