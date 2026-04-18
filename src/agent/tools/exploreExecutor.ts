@@ -468,6 +468,10 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
           json.instructions = exploreSystemPromptForOAuth;
           modified = true;
         }
+        if (json.temperature !== undefined) {
+          delete json.temperature;
+          modified = true;
+        }
         if (modified) {
           nextInit = { ...nextInit, body: JSON.stringify(json) };
           headers.set('content-type', 'application/json');
