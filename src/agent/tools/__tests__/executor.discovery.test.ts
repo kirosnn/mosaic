@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { executeTool } from '../executor';
+import { __test__ as executorTest, executeTool } from '../executor';
 
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
@@ -106,5 +106,57 @@ describe('executor discovery', () => {
 
     const parsed = JSON.parse(result.result || '[]') as string[];
     expect(parsed).toEqual(['nested/child.ts', 'root.ts']);
+  });
+
+  it('returns a structured local summary for common git inspection commands', () => {
+    const parsed = JSON.parse(executorTest.formatStructuredGitInspection([
+      {
+        command: 'git status --short --branch',
+        output: '## main...origin/main [ahead 2, behind 1]\n M tracked.txt\n?? new.txt\n',
+      },
+      {
+        command: 'git remote -v',
+        output: 'origin\thttps://example.com/repo.git (fetch)\norigin\thttps://example.com/repo.git (push)\n',
+      },
+      {
+        command: 'git branch -vv',
+        output: '* main a717c4e [origin/main: ahead 2, behind 1] init\n  feature 1234567 feature work\n',
+      },
+    ])) as {
+      summary?: {
+        currentBranch?: string;
+        upstreamBranch?: string;
+        aheadCount?: number;
+        behindCount?: number;
+        modifiedCount?: number;
+        untrackedCount?: number;
+        keyChangedPaths?: string[];
+        remotes?: Array<{ name: string; fetch?: string; push?: string }>;
+        branchTrackingInfo?: Array<{ branch: string; isCurrent?: boolean }>;
+      };
+      raw?: Array<{ command: string; output: string }>;
+    };
+
+    expect(parsed.summary?.currentBranch).toBe('main');
+    expect(parsed.summary?.upstreamBranch).toBe('origin/main');
+    expect(parsed.summary?.aheadCount).toBe(2);
+    expect(parsed.summary?.behindCount).toBe(1);
+    expect(parsed.summary?.modifiedCount).toBe(1);
+    expect(parsed.summary?.untrackedCount).toBe(1);
+    expect(parsed.summary?.keyChangedPaths).toContain('tracked.txt');
+    expect(parsed.summary?.keyChangedPaths).toContain('new.txt');
+    expect(parsed.summary?.remotes).toEqual([
+      {
+        name: 'origin',
+        fetch: 'https://example.com/repo.git',
+        push: 'https://example.com/repo.git',
+      },
+    ]);
+    expect(parsed.summary?.branchTrackingInfo?.some((entry) => entry.branch === 'main' && entry.isCurrent)).toBe(true);
+    expect(parsed.raw?.map((entry) => entry.command)).toEqual([
+      'git status --short --branch',
+      'git remote -v',
+      'git branch -vv',
+    ]);
   });
 });
