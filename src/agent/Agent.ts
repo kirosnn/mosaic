@@ -7,8 +7,8 @@ import {
   Provider,
   ProviderSendOptions,
 } from './types';
-import { readConfig, getApiKeyForProvider, getAuthForProvider, getModelReasoningEffort, normalizeModelForProvider, setActiveModel } from '../utils/config';
-import { DEFAULT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
+import { readConfig, getApiKeyForProvider, getAuthForProvider, getLightweightRoute, getModelReasoningEffort, normalizeModelForProvider, setActiveModel } from '../utils/config';
+import { buildAssistantCapabilitiesSystemPrompt, DEFAULT_SYSTEM_PROMPT, LIGHTWEIGHT_CHAT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
 import { getTools } from './tools/definitions';
 import { AnthropicProvider } from './provider/anthropic';
 import { OpenAIProvider } from './provider/openai';
@@ -16,6 +16,7 @@ import { OpenRouterProvider } from './provider/openrouter';
 import { GoogleProvider } from './provider/google';
 import { MistralProvider } from './provider/mistral';
 import { XaiProvider } from './provider/xai';
+import { GroqProvider } from './provider/groq';
 import { OllamaProvider, checkAndStartOllama } from './provider/ollama';
 import { getModelsDevContextLimit, getModelsDevOutputLimit } from '../utils/models';
 import { estimateTokensFromText, estimateTokensForContent, getDefaultContextBudget } from '../utils/tokenEstimator';
@@ -24,7 +25,7 @@ import { debugLog } from '../utils/debug';
 import { resetTracker, clearPersistentCache } from './tools/toolCallTracker';
 import { ConversationMemory, getGlobalMemory, resetGlobalMemory } from './memory';
 import { clearRepositoryScanCache, formatRepositorySummary, formatArchitectureSummary } from './repoScan';
-import { buildTaskModePrompt } from './taskMode';
+import { buildTaskModePrompt, isLightweightTaskMode } from './taskMode';
 
 function contentToText(content: CoreMessage['content']): string {
   if (typeof content === 'string') return content;
@@ -342,6 +343,7 @@ export class Agent {
   private memory: ConversationMemory;
   private pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
   private runtimeContext?: AgentRuntimeContext;
+  private readonly isLightweightChat: boolean;
 
   static resetSessionState(): void {
     resetGlobalMemory();
@@ -396,23 +398,33 @@ export class Agent {
     }
 
     const rawSystemPrompt = userConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const taskMode = runtimeContext?.taskModeDecision?.mode;
+    const isLightweightChat = isLightweightTaskMode(taskMode);
+    this.isLightweightChat = isLightweightChat;
 
     let mcpToolInfos: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }> | undefined;
-    try {
-      const { getMcpCatalog, isMcpInitialized } = require('../mcp/index');
-      if (isMcpInitialized()) {
-        mcpToolInfos = getMcpCatalog().getMcpToolInfos();
+    if (!isLightweightChat) {
+      try {
+        const { getMcpCatalog, isMcpInitialized } = require('../mcp/index');
+        if (isMcpInitialized()) {
+          mcpToolInfos = getMcpCatalog().getMcpToolInfos();
+        }
+      } catch {
+        // MCP not available
       }
-    } catch {
-      // MCP not available
     }
 
-    let systemPrompt = processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, { consumeOneShotSkills: true });
-    if (runtimeContext?.taskModeDecision) {
+    let systemPrompt = isLightweightChat
+      ? taskMode === 'assistant_capabilities'
+        ? buildAssistantCapabilitiesSystemPrompt(runtimeContext?.assistantCapabilitySummary)
+        : LIGHTWEIGHT_CHAT_SYSTEM_PROMPT
+      : processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, { consumeOneShotSkills: true });
+
+    if (!isLightweightChat && runtimeContext?.taskModeDecision) {
       const modePrompt = buildTaskModePrompt(runtimeContext.taskModeDecision.mode);
       systemPrompt = `${systemPrompt}\n\nRUNTIME TASK MODE:\n${modePrompt}`;
     }
-    if (runtimeContext?.repoSummary) {
+    if (!isLightweightChat && runtimeContext?.repoSummary) {
       const isArchMode = runtimeContext.taskModeDecision?.mode === 'explore_readonly';
       const repoPrompt = isArchMode
         ? formatArchitectureSummary(runtimeContext.repoSummary, 2400)
@@ -420,26 +432,31 @@ export class Agent {
       const label = isArchMode ? 'ARCHITECTURE SUMMARY (authoritative — do not re-discover)' : 'DETERMINISTIC REPO SCAN';
       systemPrompt = `${systemPrompt}\n\n${label}:\n${repoPrompt}`;
     }
-    const tools = getTools();
-    const auth = getAuthForProvider(userConfig.provider);
+    const tools = isLightweightChat ? {} : getTools();
+    const lightweightRoute = isLightweightChat
+      ? getLightweightRoute(userConfig.provider, userConfig.model)
+      : undefined;
+    const effectiveProvider = lightweightRoute?.providerId ?? userConfig.provider;
+    const effectiveModel = lightweightRoute?.modelId ?? userConfig.model;
+    const auth = getAuthForProvider(effectiveProvider);
 
     this.config = {
-      provider: userConfig.provider,
-      model: userConfig.model,
-      modelReasoningEffort: getModelReasoningEffort(),
-      apiKey: auth?.type === 'api_key' ? auth.apiKey : getApiKeyForProvider(userConfig.provider) ?? userConfig.apiKey,
+      provider: effectiveProvider,
+      model: effectiveModel,
+      modelReasoningEffort: isLightweightChat ? undefined : getModelReasoningEffort(),
+      apiKey: auth?.type === 'api_key' ? auth.apiKey : getApiKeyForProvider(effectiveProvider) ?? (effectiveProvider === userConfig.provider ? userConfig.apiKey : undefined),
       auth,
       systemPrompt,
       tools,
-      maxSteps: userConfig.maxSteps ?? 100,
+      maxSteps: isLightweightChat ? 1 : (userConfig.maxSteps ?? 100),
       maxContextTokens: userConfig.maxContextTokens,
     };
 
-    this.provider = this.createProvider(userConfig.provider);
+    this.provider = this.createProvider(effectiveProvider);
     this.memory = getGlobalMemory();
     this.runtimeContext = runtimeContext;
 
-    debugLog(`[agent] initialized provider=${userConfig.provider} model=${userConfig.model} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? 'default'} repoScan=${runtimeContext?.repoSummary ? 'yes' : 'no'}`);
+    debugLog(`[agent] initialized provider=${effectiveProvider} model=${effectiveModel} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? 'default'} repoScan=${runtimeContext?.repoSummary ? 'yes' : 'no'}`);
   }
 
   private createProvider(providerName: string): Provider {
@@ -456,6 +473,8 @@ export class Agent {
         return new MistralProvider();
       case 'xai':
         return new XaiProvider();
+      case 'groq':
+        return new GroqProvider();
       case 'ollama':
         return new OllamaProvider();
       default:
@@ -506,9 +525,14 @@ export class Agent {
         : this.messageHistory;
       const postRoles = countRoles(compacted);
       debugLog(`[agent] sending to provider historyLen=${this.messageHistory.length} compactedLen=${compacted.length} compacted=${shouldCompact} contextLimit=${this.config.maxContextTokens ?? 'default'} outputLimit=${this.config.maxOutputTokens ?? 'default'} roles={user:${postRoles.user},assistant:${postRoles.assistant},tool:${postRoles.tool},other:${postRoles.other}} estTokens=${estimateTokensForMessages(compacted)}`);
-      const exploreContext = buildExploreContext(this.messageHistory);
-      setExploreContext(exploreContext);
-      debugLog(`[context] sendMessage exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
+      if (this.isLightweightChat) {
+        setExploreContext('');
+        debugLog(`[context] sendMessage exploreContext skipped mode=${this.runtimeContext?.taskModeDecision?.mode ?? 'default'} sourceHistoryLen=${this.messageHistory.length}`);
+      } else {
+        const exploreContext = buildExploreContext(this.messageHistory);
+        setExploreContext(exploreContext);
+        debugLog(`[context] sendMessage exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
+      }
       setConversationMemory(this.memory);
 
       for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
@@ -567,9 +591,14 @@ export class Agent {
         : this.messageHistory;
       const postRoles = countRoles(compacted);
       debugLog(`[agent] streamMessages historyLen=${this.messageHistory.length} compactedLen=${compacted.length} compacted=${shouldCompact} contextLimit=${this.config.maxContextTokens ?? 'default'} roles={user:${postRoles.user},assistant:${postRoles.assistant},tool:${postRoles.tool},other:${postRoles.other}} estTokens=${estimateTokensForMessages(compacted)}`);
-      const exploreContext = buildExploreContext(this.messageHistory);
-      setExploreContext(exploreContext);
-      debugLog(`[context] streamMessages exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
+      if (this.isLightweightChat) {
+        setExploreContext('');
+        debugLog(`[context] streamMessages exploreContext skipped mode=${this.runtimeContext?.taskModeDecision?.mode ?? 'default'} sourceHistoryLen=${this.messageHistory.length}`);
+      } else {
+        const exploreContext = buildExploreContext(this.messageHistory);
+        setExploreContext(exploreContext);
+        debugLog(`[context] streamMessages exploreContextChars=${exploreContext.length} sourceHistoryLen=${this.messageHistory.length}`);
+      }
       setConversationMemory(this.memory);
 
       for await (const event of this.provider.sendMessage(compacted, this.config, options)) {
@@ -590,6 +619,14 @@ export class Agent {
 
   getMemory(): ConversationMemory {
     return this.memory;
+  }
+
+  getRunMetadata(): { provider: string; model: string; reasoningEffort?: string } {
+    return {
+      provider: this.config.provider,
+      model: this.config.model,
+      reasoningEffort: this.config.modelReasoningEffort,
+    };
   }
 
   clearHistory(): void {
