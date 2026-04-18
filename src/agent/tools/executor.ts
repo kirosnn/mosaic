@@ -9,9 +9,6 @@ import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
 import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
 import { debugLog } from '../../utils/debug';
 import { addPendingChange, clearPendingChanges, hasPendingChanges, isInReviewMode, startReview } from '../../utils/pendingChangesBridge';
-import TurndownService from 'turndown';
-import { Readability } from '@mozilla/readability';
-import { parseHTML } from 'linkedom';
 import {
   EXCLUDED_DISCOVERY_DIRECTORIES as EXCLUDED_DIRECTORIES,
   findFilesByGlob,
@@ -20,6 +17,7 @@ import {
   walkWorkspace,
 } from '../repoDiscovery';
 import { classifyShellCapability, resolveCapabilityApproval } from '../capabilities';
+import { formatStructuredGitInspection, type GitCommandCapture } from '../gitWorkspaceState';
 import { recordToolMetrics } from '../runtimeMetrics';
 
 const execAsync = promisify(exec);
@@ -90,7 +88,7 @@ const DANGEROUS_BASH_PATTERNS = [
 const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
 
 const GIT_READONLY_PATTERN =
-  /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)|^git\s+stash\s+list\b|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
+  /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+rev-list\s+.*--left-right\s+.*--count(?:\s|$)|^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)(?:\s|$)|^git\s+stash\s+list(?:\s|$)|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)(?:\s|$)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
 
 function isGitReadOnlyCommand(command: string): boolean {
   const normalized = command.trim().replace(/\s+/g, ' ');
@@ -232,10 +230,42 @@ function normalizeCommandOutput(text: string): string {
   return s;
 }
 
-function extractContentFromHtml(html: string, url: string): { content: string; title: string | null; isSPA: boolean } {
-  const { document } = parseHTML(html);
+function truncateMiddle(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, Math.floor(maxChars / 2) - 3))}\n...\n${text.slice(-Math.max(0, Math.floor(maxChars / 2) - 3))}`;
+}
 
-  const turndown = new TurndownService({
+function shouldUseStructuredGitInspection(command: string): boolean {
+  const parsed = splitTopLevelBashSegments(command);
+  if (parsed.hasUnsupportedSyntax) {
+    return false;
+  }
+  const segments = parsed.segments.length > 0 ? parsed.segments : [command.trim()];
+  return segments.length > 0 && segments.every((segment) => isGitReadOnlyCommand(segment));
+}
+
+let turndownServiceCtor: (new (...args: any[]) => any) | null = null;
+let readabilityCtor: (new (...args: any[]) => any) | null = null;
+let parseHtmlFn: ((html: string) => { document: unknown }) | null = null;
+
+async function extractContentFromHtml(html: string, url: string): Promise<{ content: string; title: string | null; isSPA: boolean }> {
+  if (!turndownServiceCtor || !readabilityCtor || !parseHtmlFn) {
+    const [{ default: TurndownService }, { Readability }, { parseHTML }] = await Promise.all([
+      import('turndown'),
+      import('@mozilla/readability'),
+      import('linkedom'),
+    ]);
+    turndownServiceCtor = TurndownService;
+    readabilityCtor = Readability;
+    parseHtmlFn = parseHTML;
+  }
+
+  const { document } = parseHtmlFn!(html);
+  const documentAny = document as Document & { title?: string | null };
+
+  const turndown = new turndownServiceCtor({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     emDelimiter: '*',
@@ -248,7 +278,7 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
 
   turndown.addRule('preserveLinks', {
     filter: 'a',
-    replacement: (content, node) => {
+    replacement: (content: string, node: any) => {
       const element = node as HTMLAnchorElement;
       const href = element.getAttribute('href');
       if (!href || href.startsWith('#')) return content;
@@ -264,7 +294,7 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
 
   turndown.addRule('preserveImages', {
     filter: 'img',
-    replacement: (_content, node) => {
+    replacement: (_content: string, node: any) => {
       const element = node as HTMLImageElement;
       const src = element.getAttribute('src');
       const alt = element.getAttribute('alt') || '';
@@ -279,7 +309,7 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
     },
   });
 
-  const reader = new Readability(document as unknown as Document, {
+  const reader = new readabilityCtor!(documentAny, {
     charThreshold: 0,
   });
   const article = reader.parse();
@@ -289,7 +319,7 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
     if (content.length > 50) {
       return {
         content,
-        title: article.title || document.title || null,
+        title: article.title || documentAny.title || null,
         isSPA: false,
       };
     }
@@ -300,11 +330,11 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
   const markdownContent = turndown.turndown(bodyContent || '').trim();
 
   if (markdownContent.length > 50) {
-    return {
-      content: markdownContent,
-      title: document.title || null,
-      isSPA: false,
-    };
+      return {
+        content: markdownContent,
+        title: documentAny.title || null,
+        isSPA: false,
+      };
   }
 
   const isSPA = html.includes('id="root"') ||
@@ -342,7 +372,7 @@ function extractContentFromHtml(html: string, url: string): { content: string; t
 
   return {
     content,
-    title: document.title || null,
+    title: documentAny.title || null,
     isSPA,
   };
 }
@@ -386,7 +416,7 @@ async function fetchUrlContent(
       text.slice(0, 500).toLowerCase().includes('<!doctype html');
 
     if (isHtml && !raw) {
-      const { content, title, isSPA } = extractContentFromHtml(text, url);
+      const { content, title, isSPA } = await extractContentFromHtml(text, url);
       return { content, contentType, title, isSPA, status, statusText };
     }
 
@@ -1481,24 +1511,44 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
 
         const isWindows = process.platform === 'win32';
+        const execOptions = {
+          cwd: workspace,
+          timeout,
+          ...(isWindows && { shell: 'powershell.exe' as const }),
+          env: {
+            ...process.env,
+            CI: process.env.CI || '1',
+            TERM: process.env.TERM || 'dumb',
+            NO_COLOR: process.env.NO_COLOR || '1',
+            npm_config_loglevel: process.env.npm_config_loglevel || 'silent',
+            GIT_PAGER: process.env.GIT_PAGER || 'cat',
+            PAGER: process.env.PAGER || 'cat',
+          },
+        };
+        const structuredGitExecOptions = {
+          cwd: workspace,
+          timeout,
+          env: execOptions.env,
+        };
 
         try {
-          const { stdout, stderr } = await execAsync(command, {
-            cwd: workspace,
-            timeout,
-            ...(isWindows && { shell: 'powershell.exe' }),
-            env: {
-              ...process.env,
-              CI: process.env.CI || '1',
-              TERM: process.env.TERM || 'dumb',
-              NO_COLOR: process.env.NO_COLOR || '1',
-              npm_config_loglevel: process.env.npm_config_loglevel || 'silent',
-              GIT_PAGER: process.env.GIT_PAGER || 'cat',
-              PAGER: process.env.PAGER || 'cat',
-            },
-          });
-
-          const output = normalizeCommandOutput((stdout || '') + (stderr || ''));
+          let output = '';
+          if (shouldUseStructuredGitInspection(command)) {
+            const parsed = splitTopLevelBashSegments(command);
+            const segments = parsed.segments.length > 0 ? parsed.segments : [command];
+            const captures: GitCommandCapture[] = [];
+            for (const segment of segments) {
+              const { stdout, stderr } = await execAsync(segment, structuredGitExecOptions);
+              captures.push({
+                command: segment,
+                output: normalizeCommandOutput((stdout || '') + (stderr || '')),
+              });
+            }
+            output = formatStructuredGitInspection(captures);
+          } else {
+            const { stdout, stderr } = await execAsync(command, execOptions);
+            output = normalizeCommandOutput((stdout || '') + (stderr || ''));
+          }
           const reviewOutcome = await flushBashTrackedChanges();
           const reviewRejection = buildReviewRejectionResult(
             `executing command: ${command}`,
@@ -2060,4 +2110,5 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
 export const __test__ = {
   shouldTrackBashFileChanges,
+  formatStructuredGitInspection,
 };
