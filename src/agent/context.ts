@@ -3,9 +3,10 @@ import { estimateTokensForContent, getDefaultContextBudget } from '../utils/toke
 import type { ImageAttachment } from '../utils/images';
 import { debugLog } from '../utils/debug';
 import { compileContextSnapshot } from './contextCompiler';
+import type { GitWorkspaceState } from './gitWorkspaceState';
 import type { RepositorySummary } from './repoScan';
 import { scanRepository } from './repoScan';
-import { detectTaskMode, type TaskModeDecision } from './taskMode';
+import { detectTaskMode, isLightweightTaskMode, type TaskModeDecision } from './taskMode';
 import { recordContextCompilation, recordRepoScanMetrics } from './runtimeMetrics';
 
 type SmartRole = 'user' | 'assistant' | 'tool' | 'slash';
@@ -27,6 +28,7 @@ export interface BuildSmartConversationHistoryOptions {
   provider?: string;
   reserveTokens?: number;
   repoSummary?: RepositorySummary;
+  gitWorkspaceState?: GitWorkspaceState;
   taskModeDecision?: TaskModeDecision;
 }
 
@@ -56,9 +58,20 @@ interface SnapshotBuildResult {
   };
 }
 
+export interface ConversationHistoryBuildResult {
+  history: Array<{ role: 'user' | 'assistant'; content: UserContent }>;
+  metrics: {
+    compiledContextChars: number;
+    compactedContextSize: number;
+    historyStrategy: 'smart' | 'lightweight_chat' | 'assistant_capabilities';
+  };
+}
+
 const SMART_HISTORY_TOKEN_CAP = 22000;
 const SMART_HISTORY_DIALOGUE_TOKEN_CAP = 14000;
 const SMART_HISTORY_SNAPSHOT_CHAR_CAP = 9000;
+const LIGHTWEIGHT_CHAT_HISTORY_TOKEN_CAP = 1200;
+const LIGHTWEIGHT_CHAT_HISTORY_MESSAGE_CAP = 6;
 
 function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -303,6 +316,20 @@ function estimateHistoryTokens(messages: AgentHistoryMessage[]): number {
   return total;
 }
 
+function estimateHistoryChars(messages: AgentHistoryMessage[]): number {
+  let total = 0;
+  for (const msg of messages) total += msg.text.length;
+  return total;
+}
+
+function isCapabilityRelevantAssistantTurn(text: string): boolean {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized || normalized.length > 240) {
+    return false;
+  }
+  return /\b(?:tools?|skills?|capabilit(?:y|ies)|limits?|permissions?|approvals?|modes?|i can|i can't|i cannot|access|work)\b/i.test(normalized);
+}
+
 function compactDialogueHistory(messages: AgentHistoryMessage[], budgetTokens: number): AgentHistoryMessage[] {
   if (messages.length <= 2) return messages;
   if (estimateHistoryTokens(messages) <= budgetTokens) return messages;
@@ -360,8 +387,9 @@ function buildSnapshotMessage(
   maxChars: number,
   taskModeDecision: TaskModeDecision,
   repoSummary: RepositorySummary,
+  gitWorkspaceState?: GitWorkspaceState,
 ): SnapshotBuildResult {
-  return compileContextSnapshot(messages, taskModeDecision, repoSummary, maxChars);
+  return compileContextSnapshot(messages, taskModeDecision, repoSummary, maxChars, gitWorkspaceState);
 }
 
 function buildDialogueHistory(
@@ -429,18 +457,123 @@ function buildDialogueHistory(
   return history;
 }
 
-export function buildSmartConversationHistory(
-  options: BuildSmartConversationHistoryOptions
+export function buildLightweightChatConversationHistoryResult(
+  options: Pick<BuildSmartConversationHistoryOptions, 'messages' | 'includeImages'>
+): ConversationHistoryBuildResult {
+  const dialogue = buildDialogueHistory(options.messages, options.includeImages);
+  const recent: AgentHistoryMessage[] = [];
+  let tokens = 0;
+
+  for (let i = dialogue.length - 1; i >= 0; i--) {
+    const message = dialogue[i]!;
+    const nextTokens = tokens + message.tokens;
+    if (
+      recent.length > 0
+      && (recent.length >= LIGHTWEIGHT_CHAT_HISTORY_MESSAGE_CAP || nextTokens > LIGHTWEIGHT_CHAT_HISTORY_TOKEN_CAP)
+    ) {
+      break;
+    }
+    recent.unshift(message);
+    tokens = nextTokens;
+  }
+
+  const compiledContextChars = estimateHistoryChars(recent);
+  recordContextCompilation(compiledContextChars, recent.length);
+  const inputRoles = countSmartRoles(options.messages);
+  debugLog(`[context] lightweightChatHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} outputMessages=${recent.length} tokens=${tokens} chars=${compiledContextChars}`);
+
+  return {
+    history: recent.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    metrics: {
+      compiledContextChars,
+      compactedContextSize: recent.length,
+      historyStrategy: 'lightweight_chat',
+    },
+  };
+}
+
+export function buildLightweightChatConversationHistory(
+  options: Pick<BuildSmartConversationHistoryOptions, 'messages' | 'includeImages'>
 ): Array<{ role: 'user' | 'assistant'; content: UserContent }> {
+  return buildLightweightChatConversationHistoryResult(options).history;
+}
+
+export function buildAssistantCapabilitiesConversationHistoryResult(
+  options: Pick<BuildSmartConversationHistoryOptions, 'messages' | 'includeImages'>
+): ConversationHistoryBuildResult {
+  const dialogue = buildDialogueHistory(options.messages, options.includeImages);
+  const latestUserIndex = (() => {
+    for (let i = dialogue.length - 1; i >= 0; i--) {
+      if (dialogue[i]?.role === 'user') {
+        return i;
+      }
+    }
+    return -1;
+  })();
+
+  const selected: AgentHistoryMessage[] = [];
+  if (latestUserIndex >= 0) {
+    const previousAssistant = latestUserIndex > 0 ? dialogue[latestUserIndex - 1] : undefined;
+    if (previousAssistant?.role === 'assistant' && isCapabilityRelevantAssistantTurn(previousAssistant.text)) {
+      selected.push(previousAssistant);
+    }
+    selected.push(dialogue[latestUserIndex]!);
+  } else {
+    const latestAssistant = [...dialogue].reverse().find((message) => message.role === 'assistant');
+    if (latestAssistant) {
+      selected.push(latestAssistant);
+    }
+  }
+
+  const compiledContextChars = estimateHistoryChars(selected);
+  recordContextCompilation(compiledContextChars, selected.length);
+  const inputRoles = countSmartRoles(options.messages);
+  debugLog(`[context] assistantCapabilitiesHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} outputMessages=${selected.length} chars=${compiledContextChars}`);
+
+  return {
+    history: selected.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    metrics: {
+      compiledContextChars,
+      compactedContextSize: selected.length,
+      historyStrategy: 'assistant_capabilities',
+    },
+  };
+}
+
+export function buildSmartConversationHistoryResult(
+  options: BuildSmartConversationHistoryOptions
+): ConversationHistoryBuildResult {
   const requestedBudget = options.maxContextTokens ?? getDefaultContextBudget(options.provider);
   const budget = Math.min(requestedBudget, SMART_HISTORY_TOKEN_CAP);
   const reserveTokens = options.reserveTokens ?? Math.max(1200, Math.floor(budget * 0.2));
   const historyBudget = Math.max(800, budget - reserveTokens);
   const snapshotCharBudget = Math.min(SMART_HISTORY_SNAPSHOT_CHAR_CAP, Math.max(900, Math.floor(historyBudget * 1.2)));
   const taskModeDecision = options.taskModeDecision ?? detectTaskMode(options.messages);
-  const repoSummary = options.repoSummary ?? scanRepository();
-  recordRepoScanMetrics(repoSummary);
-  const snapshot = buildSnapshotMessage(options.messages, snapshotCharBudget, taskModeDecision, repoSummary);
+  const repoSummary = isLightweightTaskMode(taskModeDecision.mode)
+    ? undefined
+    : (options.repoSummary ?? scanRepository());
+  if (repoSummary) {
+    recordRepoScanMetrics(repoSummary);
+  }
+  const snapshot = repoSummary
+    ? buildSnapshotMessage(options.messages, snapshotCharBudget, taskModeDecision, repoSummary, options.gitWorkspaceState)
+    : {
+      text: '',
+      stats: {
+        repoRoots: 0,
+        importantFiles: 0,
+        workingSet: 0,
+        findings: 0,
+        unknowns: 0,
+        chars: 0,
+      },
+    };
   const snapshotMessage: AgentHistoryMessage[] = snapshot.text
     ? [{
       role: 'assistant',
@@ -457,12 +590,26 @@ export function buildSmartConversationHistory(
   const dialogueTokensAfter = estimateHistoryTokens(compactedDialogue);
 
   const combined = [...snapshotMessage, ...compactedDialogue];
-  recordContextCompilation(snapshot.stats.chars, combined.length);
+  const compiledContextChars = estimateHistoryChars(combined);
+  recordContextCompilation(compiledContextChars, combined.length);
   const inputRoles = countSmartRoles(options.messages);
-  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} mode=${taskModeDecision.mode} includeImages=${options.includeImages} budgetTokens={requested:${requestedBudget},effective:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},repoRoots:${snapshot.stats.repoRoots},importantFiles:${snapshot.stats.importantFiles},workingSet:${snapshot.stats.workingSet},findings:${snapshot.stats.findings},unknowns:${snapshot.stats.unknowns}} repo={cacheHit:${repoSummary.cacheHit},roots:${repoSummary.projectRoots.length},manifests:${repoSummary.manifests.length},entrypoints:${repoSummary.entrypoints.length}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length}`);
+  debugLog(`[context] smartHistory built input={total:${options.messages.length},user:${inputRoles.user},assistant:${inputRoles.assistant},tool:${inputRoles.tool},slash:${inputRoles.slash}} mode=${taskModeDecision.mode} includeImages=${options.includeImages} budgetTokens={requested:${requestedBudget},effective:${budget},reserve:${reserveTokens},history:${historyBudget},dialogue:${dialogueBudget}} snapshot={chars:${snapshot.stats.chars},tokens:${snapshotMessage[0]?.tokens ?? 0},repoRoots:${snapshot.stats.repoRoots},importantFiles:${snapshot.stats.importantFiles},workingSet:${snapshot.stats.workingSet},findings:${snapshot.stats.findings},unknowns:${snapshot.stats.unknowns}} repo={enabled:${repoSummary ? 'yes' : 'no'}${repoSummary ? `,cacheHit:${repoSummary.cacheHit},roots:${repoSummary.projectRoots.length},manifests:${repoSummary.manifests.length},entrypoints:${repoSummary.entrypoints.length}` : ''}} git={enabled:${options.gitWorkspaceState?.isGitRepository ? 'yes' : 'no'}} dialogue={beforeMsgs:${dialogue.length},afterMsgs:${compactedDialogue.length},beforeTokens:${dialogueTokensBefore},afterTokens:${dialogueTokensAfter}} outputMessages=${combined.length} chars=${compiledContextChars}`);
 
-  return combined.map((msg) => ({
-    role: msg.role,
-    content: msg.content,
-  }));
+  return {
+    history: combined.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    })),
+    metrics: {
+      compiledContextChars,
+      compactedContextSize: combined.length,
+      historyStrategy: 'smart',
+    },
+  };
+}
+
+export function buildSmartConversationHistory(
+  options: BuildSmartConversationHistoryOptions
+): Array<{ role: 'user' | 'assistant'; content: UserContent }> {
+  return buildSmartConversationHistoryResult(options).history;
 }
