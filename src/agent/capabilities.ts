@@ -46,10 +46,112 @@ const DESTRUCTIVE_PATTERNS = [
   /\bgit\s+(push|commit|add|reset|checkout|switch|merge|rebase|clean)\b/i,
 ];
 
+const READ_ONLY_GIT_PATTERNS = [
+  /^git\s+status(?:\s|$)/i,
+  /^git\s+diff(?:\s|$)/i,
+  /^git\s+rev-list\s+.*--left-right\s+.*--count(?:\s|$)/i,
+  /^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)(?:\s|$)/i,
+  /^git\s+log(?:\s|$)/i,
+  /^git\s+remote\s+(?:-v\b|--verbose\b|show\b)(?:\s|$)/i,
+  /^git\s+ls-files(?:\s|$)/i,
+  /^git\s+(?:show|describe|rev-parse|shortlog|blame|ls-tree|for-each-ref|cat-file|check-ignore)(?:\s|$)/i,
+  /^git\s+stash\s+list(?:\s|$)/i,
+  /^git\s+tag\s*(?:-l\b|--list\b|$)/i,
+];
+
+function splitCompoundShellCommand(command: string): { segments: string[]; hasUnsupportedSyntax: boolean } {
+  const segments: string[] = [];
+  let current = '';
+  let quote: '"' | '\'' | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i] ?? '';
+    const next = command[i + 1] ?? '';
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && quote !== '\'') {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === '\'') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '`' || (ch === '$' && next === '(') || ch === '<' || ch === '>') {
+      return { segments: [], hasUnsupportedSyntax: true };
+    }
+
+    if (ch === ';' || (ch === '&' && next === '&') || (ch === '|' && next === '|')) {
+      const segment = current.trim();
+      if (!segment) {
+        return { segments: [], hasUnsupportedSyntax: true };
+      }
+      segments.push(segment);
+      current = '';
+      if (ch !== ';') {
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === '&' || ch === '|') {
+      return { segments: [], hasUnsupportedSyntax: true };
+    }
+
+    current += ch;
+  }
+
+  if (escaped || quote) {
+    return { segments: [], hasUnsupportedSyntax: true };
+  }
+
+  const tail = current.trim();
+  if (tail) {
+    segments.push(tail);
+  }
+
+  return { segments, hasUnsupportedSyntax: false };
+}
+
+function isKnownReadOnlyShellSegment(command: string): boolean {
+  const normalized = command.trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return false;
+  }
+  return READ_ONLY_GIT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function isCompoundReadOnlyShellCommand(command: string): boolean {
+  const parsed = splitCompoundShellCommand(command);
+  if (parsed.hasUnsupportedSyntax || parsed.segments.length <= 1) {
+    return false;
+  }
+  return parsed.segments.every(isKnownReadOnlyShellSegment);
+}
+
 export function classifyShellCapability(command: string, readOnly: boolean): AgentCapability {
   const normalized = command.trim();
   if (!normalized) return 'unknown';
   if (readOnly) return 'shell_read_only';
+  if (isCompoundReadOnlyShellCommand(normalized)) return 'shell_read_only';
   if (INSTALL_PATTERNS.some((pattern) => pattern.test(normalized))) return 'install';
   if (NETWORK_PATTERNS.some((pattern) => pattern.test(normalized))) return 'network';
   if (DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'destructive';
