@@ -219,6 +219,10 @@ export class OpenAIProvider implements Provider {
               delete json.max_tokens;
               modified = true;
             }
+            if (json.temperature !== undefined) {
+              delete json.temperature;
+              modified = true;
+            }
             if (modified) {
               nextInit = { ...nextInit, body: JSON.stringify(json) };
               headers.set('content-type', 'application/json');
