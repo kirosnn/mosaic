@@ -26,8 +26,13 @@ import { getDefaultContextBudget } from "../utils/tokenEstimator";
 import { debugLog } from "../utils/debug";
 import { executeTool } from "../agent/tools/executor";
 import { Agent } from "../agent";
-import { buildSmartConversationHistory } from "../agent/context";
+import {
+  buildAssistantCapabilitiesConversationHistoryResult,
+  buildLightweightChatConversationHistoryResult,
+  buildSmartConversationHistoryResult,
+} from "../agent/context";
 import { buildAgentRuntimeContext } from "../agent/runtimeContext";
+import { isLightweightTaskMode } from "../agent/taskMode";
 import { subscribePendingChanges, subscribeReviewMode, getCurrentReviewChange, getReviewProgress, respondReview, acceptAllReview, type PendingChange } from "../utils/pendingChangesBridge";
 import { ReviewPanel } from "./main/ReviewPanel";
 import { revertChange } from "../utils/revertChanges";
@@ -426,26 +431,52 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }))
   );
 
-  const buildRuntimeContextForMessages = (base: Message[]) => {
+  const buildRuntimeContextForMessages = async (base: Message[]) => {
     const normalizedMessages = normalizeContextMessages(base);
     return {
       normalizedMessages,
-      runtimeContext: buildAgentRuntimeContext(normalizedMessages),
+      runtimeContext: await buildAgentRuntimeContext(normalizedMessages),
     };
   };
 
-  const buildConversationHistory = (base: Message[], includeImages: boolean) => {
+  const buildConversationContextForMessages = async (base: Message[], includeImages: boolean) => {
     const config = readConfig();
     const maxContextTokens = config.maxContextTokens ?? getDefaultContextBudget(config.provider);
-    const { normalizedMessages, runtimeContext } = buildRuntimeContextForMessages(base);
-    return buildSmartConversationHistory({
-      messages: normalizedMessages,
-      includeImages,
-      maxContextTokens,
-      provider: config.provider,
-      taskModeDecision: runtimeContext.taskModeDecision,
-      repoSummary: runtimeContext.repoSummary,
-    });
+    const built = await buildRuntimeContextForMessages(base);
+    const mode = built.runtimeContext.taskModeDecision?.mode;
+    const historyResult = mode === 'assistant_capabilities'
+      ? buildAssistantCapabilitiesConversationHistoryResult({
+        messages: built.normalizedMessages,
+        includeImages,
+      })
+      : isLightweightTaskMode(mode)
+        ? buildLightweightChatConversationHistoryResult({
+          messages: built.normalizedMessages,
+          includeImages,
+        })
+        : buildSmartConversationHistoryResult({
+          messages: built.normalizedMessages,
+          includeImages,
+          maxContextTokens,
+          provider: config.provider,
+          taskModeDecision: built.runtimeContext.taskModeDecision,
+          repoSummary: built.runtimeContext.repoSummary,
+          gitWorkspaceState: built.runtimeContext.gitWorkspaceState,
+        });
+
+    return {
+      runtimeContext: {
+        ...built.runtimeContext,
+        contextMetrics: {
+          ...historyResult.metrics,
+          compiledContextChars: historyResult.metrics.compiledContextChars
+            + (mode === 'assistant_capabilities'
+              ? built.runtimeContext.assistantCapabilitySummary?.length ?? 0
+              : 0),
+        },
+      },
+      conversationHistory: historyResult.history,
+    };
   };
 
   const getStreamCallbacks = (): AgentStreamCallbacks => ({
@@ -624,12 +655,11 @@ Analyze the output and continue. Do not run the same command again unless I expl
       shouldAutoScroll.current = true;
 
       const conversationBase = [...baseMessages, userMessageForAgent];
-      const convHistory = buildConversationHistory(conversationBase, imagesSupported);
-      const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
+      const { runtimeContext, conversationHistory } = await buildConversationContextForMessages(conversationBase, imagesSupported);
       await runAgentStream({
         baseMessages,
         userMessage: userMessageForAgent,
-        conversationHistory: convHistory,
+        conversationHistory,
         runtimeContext,
         abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
         userStepContent: composedShellContent,
@@ -721,12 +751,11 @@ Analyze the output and continue. Do not run the same command again unless I expl
           shouldAutoScroll.current = true;
 
           const conversationBase = [...baseMessages, userMessage];
-          const convHistory = buildConversationHistory(conversationBase, imagesSupported);
-          const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
+          const { runtimeContext, conversationHistory } = await buildConversationContextForMessages(conversationBase, imagesSupported);
           await runAgentStream({
             baseMessages,
             userMessage,
-            conversationHistory: convHistory,
+            conversationHistory,
             runtimeContext,
             abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
             userStepContent: result.content,
@@ -775,12 +804,11 @@ Analyze the output and continue. Do not run the same command again unless I expl
     shouldAutoScroll.current = true;
 
     const conversationBase = [...baseMessages, userMessage];
-    const convHistory = buildConversationHistory(conversationBase, imagesSupported);
-    const { runtimeContext } = buildRuntimeContextForMessages(conversationBase);
+    const { runtimeContext, conversationHistory } = await buildConversationContextForMessages(conversationBase, imagesSupported);
     await runAgentStream({
       baseMessages,
       userMessage,
-      conversationHistory: convHistory,
+      conversationHistory,
       runtimeContext,
       abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
       userStepContent: composedContent,
