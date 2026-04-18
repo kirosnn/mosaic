@@ -1,10 +1,11 @@
 import type { RepositorySummary } from './repoScan';
-import type { TaskModeDecision } from './taskMode';
+import type { AgentRuntimeContext } from './types';
 import { debugLog } from '../utils/debug';
 
 export interface RuntimeMetricsSnapshot {
   startedAt: number;
   taskMode?: string;
+  historyStrategy?: string;
   filesDiscovered: number;
   filesRead: number;
   toolFailures: number;
@@ -13,6 +14,7 @@ export interface RuntimeMetricsSnapshot {
   compiledContextChars: number;
   approvalsTriggered: number;
   compactedContextSize: number;
+  repoScanCacheHit?: boolean | null;
   firstUsefulAnswerMs?: number;
   totalTaskDurationMs?: number;
 }
@@ -26,21 +28,23 @@ function getState(): RuntimeMetricsSnapshot | null {
   return globalState[GLOBAL_KEY] ?? null;
 }
 
-export function startRuntimeMetrics(taskModeDecision?: TaskModeDecision, repoSummary?: RepositorySummary): void {
+export function startRuntimeMetrics(runtimeContext?: AgentRuntimeContext): void {
   globalState[GLOBAL_KEY] = {
     startedAt: Date.now(),
-    taskMode: taskModeDecision?.mode,
+    taskMode: runtimeContext?.taskModeDecision?.mode,
+    historyStrategy: runtimeContext?.contextMetrics?.historyStrategy,
     filesDiscovered: 0,
     filesRead: 0,
     toolFailures: 0,
     retries: 0,
     promptTokens: [],
-    compiledContextChars: 0,
+    compiledContextChars: runtimeContext?.contextMetrics?.compiledContextChars ?? 0,
     approvalsTriggered: 0,
-    compactedContextSize: 0,
+    compactedContextSize: runtimeContext?.contextMetrics?.compactedContextSize ?? 0,
+    repoScanCacheHit: runtimeContext?.repoSummary?.cacheHit ?? null,
   };
-  if (repoSummary) {
-    globalState[GLOBAL_KEY]!.filesDiscovered = repoSummary.importantFiles.length;
+  if (runtimeContext?.repoSummary) {
+    globalState[GLOBAL_KEY]!.filesDiscovered = runtimeContext.repoSummary.importantFiles.length;
   }
 }
 
@@ -48,6 +52,7 @@ export function recordRepoScanMetrics(summary: RepositorySummary): void {
   const state = getState();
   if (!state) return;
   state.filesDiscovered = summary.importantFiles.length;
+  state.repoScanCacheHit = summary.cacheHit;
 }
 
 export function recordContextCompilation(chars: number, compactedSize: number): void {
@@ -97,7 +102,7 @@ export function finishRuntimeMetrics(): RuntimeMetricsSnapshot | null {
   if (!state) return null;
   state.totalTaskDurationMs = Date.now() - state.startedAt;
   debugLog(
-    `[metrics] mode=${state.taskMode ?? 'unknown'} firstUsefulMs=${state.firstUsefulAnswerMs ?? -1} filesDiscovered=${state.filesDiscovered} filesRead=${state.filesRead} toolFailures=${state.toolFailures} retries=${state.retries} promptTokens=${state.promptTokens.join(',') || 'none'} contextChars=${state.compiledContextChars} compactedContextSize=${state.compactedContextSize} approvals=${state.approvalsTriggered} totalDurationMs=${state.totalTaskDurationMs}`,
+    `[metrics] mode=${state.taskMode ?? 'unknown'} historyStrategy=${state.historyStrategy ?? 'unknown'} repoScanCacheHit=${state.repoScanCacheHit == null ? 'n/a' : state.repoScanCacheHit} firstUsefulMs=${state.firstUsefulAnswerMs ?? -1} filesDiscovered=${state.filesDiscovered} filesRead=${state.filesRead} toolFailures=${state.toolFailures} retries=${state.retries} promptTokens=${state.promptTokens.join(',') || 'none'} contextChars=${state.compiledContextChars} compactedContextSize=${state.compactedContextSize} approvals=${state.approvalsTriggered} totalDurationMs=${state.totalTaskDurationMs}`,
   );
   return { ...state };
 }
