@@ -1,5 +1,6 @@
 import { CoreMessage, CoreTool, UserContent } from 'ai';
 import type { ReasoningEffort } from '../utils/config';
+import type { GitWorkspaceState } from './gitWorkspaceState';
 import type { RepositorySummary } from './repoScan';
 import type { TaskModeDecision } from './taskMode';
 
@@ -170,7 +171,14 @@ export interface ProviderSendOptions {
 
 export interface AgentRuntimeContext {
   repoSummary?: RepositorySummary;
+  gitWorkspaceState?: GitWorkspaceState;
   taskModeDecision?: TaskModeDecision;
+  assistantCapabilitySummary?: string;
+  contextMetrics?: {
+    compiledContextChars: number;
+    compactedContextSize: number;
+    historyStrategy: 'smart' | 'lightweight_chat' | 'assistant_capabilities';
+  };
 }
 
 export interface Provider {
