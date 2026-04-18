@@ -324,6 +324,32 @@ All requests refer to the current workspace ({{WORKSPACE}}), never to Mosaic its
 </scope>
 `;
 
+export const LIGHTWEIGHT_CHAT_SYSTEM_PROMPT = `You are Mosaic, a terminal assistant in lightweight chat mode.
+Respond naturally and concisely in the user's language.
+This turn is conversational only.
+Do not mention the repository, workspace, files, tools, plans, or execution unless the user explicitly asks.
+Do not call tools.
+Do not emit internal tags, pseudo-tool syntax, or hidden protocol markers.
+Keep the reply short and direct.
+`;
+
+export const ASSISTANT_CAPABILITIES_SYSTEM_PROMPT = `You are Mosaic, a terminal assistant answering questions about your own local capabilities.
+Respond in the user's language.
+Answer from the provided local capability summary only.
+Be concise, truthful, and specific.
+Do not claim repository knowledge, workspace context, hidden tools, or unavailable permissions.
+Do not call tools.
+Do not emit internal tags, pseudo-tool syntax, or hidden protocol markers.
+`;
+
+export function buildAssistantCapabilitiesSystemPrompt(capabilitySummary: string | null | undefined): string {
+  const summary = typeof capabilitySummary === 'string' ? capabilitySummary.trim() : '';
+  if (!summary) {
+    return ASSISTANT_CAPABILITIES_SYSTEM_PROMPT;
+  }
+  return `${ASSISTANT_CAPABILITIES_SYSTEM_PROMPT}\n\n${summary}`;
+}
+
 export function processSystemPrompt(
   prompt: string,
   includeTools: boolean = true,
