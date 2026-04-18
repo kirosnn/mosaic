@@ -1,4 +1,5 @@
 import type { SmartContextMessage } from './context';
+import { formatGitWorkspaceSummary, isReadOnlyGitInspectionCommand, type GitWorkspaceState } from './gitWorkspaceState';
 import type { RepositorySummary } from './repoScan';
 import { formatRepositorySummary } from './repoScan';
 import { getTaskModeLabel, type TaskModeDecision } from './taskMode';
@@ -78,6 +79,9 @@ function buildFindings(messages: SmartContextMessage[], maxItems: number): strin
     const message = messages[i];
     if (!message || message.role !== 'tool' || skipTools.has(message.toolName || '')) continue;
     if (message.success === false) continue;
+    if (message.toolName === 'bash' && typeof message.toolArgs?.command === 'string' && isReadOnlyGitInspectionCommand(message.toolArgs.command)) {
+      continue;
+    }
 
     const toolName = message.toolName || 'tool';
     const args = truncateText(normalizeWhitespace(safeStringify(message.toolArgs ?? {})), 80);
@@ -113,6 +117,7 @@ export function compileContextSnapshot(
   taskMode: TaskModeDecision,
   repoSummary: RepositorySummary,
   maxChars: number,
+  gitWorkspaceState?: GitWorkspaceState,
 ): CompiledContextResult {
   const userMessages = messages.filter((message) => message.role === 'user');
   const originalTask = normalizeWhitespace(userMessages[0]?.content || '');
@@ -135,6 +140,10 @@ export function compileContextSnapshot(
   }
 
   sections.push(`Repo map:\n${repoMap}`);
+
+  if (gitWorkspaceState?.isGitRepository) {
+    sections.push(`Git workspace:\n${formatGitWorkspaceSummary(gitWorkspaceState, 900)}`);
+  }
 
   if (planLines.length > 0 && taskMode.mode !== 'explore_readonly') {
     sections.push(`Plan state:\n${planLines.join('\n')}`);
