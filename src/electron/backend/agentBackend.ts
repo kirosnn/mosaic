@@ -78,7 +78,7 @@ async function run(): Promise<void> {
     }
 
     const normalized = normalizeMessages(payload.messages);
-    const runtimeContext = buildAgentRuntimeContext(normalized);
+    const runtimeContext = await buildAgentRuntimeContext(normalized);
     const history = buildSmartConversationHistory({
       messages: normalized,
       includeImages: false,
