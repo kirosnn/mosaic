@@ -128,7 +128,7 @@ async function runChat(active: ActiveRun, request: WorkerRequest): Promise<void>
     }
 
     const normalized = normalizeMessages(request.messages);
-    const runtimeContext = buildAgentRuntimeContext(normalized);
+    const runtimeContext = await buildAgentRuntimeContext(normalized);
     const history = buildSmartConversationHistory({
       messages: normalized,
       includeImages: false,
