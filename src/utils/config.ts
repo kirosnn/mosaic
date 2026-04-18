@@ -39,6 +39,10 @@ export interface MosaicConfig {
   version: string;
   provider?: string;
   model?: string;
+  lightweightRoute?: {
+    provider: string;
+    model: string;
+  };
   modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   apiKeys?: Record<string, string>;
@@ -61,17 +65,31 @@ export interface OAuthTokenState {
   scope?: string;
 }
 
+export interface LightweightRoute {
+  providerId: string;
+  modelId: string;
+  source: 'configured' | 'provider_default' | 'current_model' | 'provider_first';
+}
+
+const LIGHTWEIGHT_PROVIDER_MODELS: Partial<Record<string, string>> = {
+  openai: 'gpt-4.1-2025-04-14',
+  anthropic: 'claude-haiku-4-5',
+  mistral: 'mistral-medium-latest',
+  xai: 'grok-code-fast-1',
+  google: 'gemini-3-flash-preview',
+  groq: 'llama-3.1-8b-instant',
+  ollama: 'gpt-oss:120b',
+  openrouter: 'x-ai/grok-code-fast-1',
+};
+
 const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
 
-const OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS = [
+export const OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS = [
   'codex-auto-review',
-  'gpt-5.4',
-  'gpt-5.2-codex',
-  'gpt-5.1-codex-max',
-  'gpt-5.4-mini',
-  'gpt-5.3-codex',
   'gpt-5.2',
-  'gpt-5.1-codex-mini',
+  'gpt-5.3-codex',
+  'gpt-5.4',
+  'gpt-5.4-mini',
 ] as const;
 
 const OPENAI_CHATGPT_OAUTH_MODEL_DETAILS: Record<string, AIModel> = {
@@ -85,47 +103,36 @@ const OPENAI_CHATGPT_OAUTH_MODEL_DETAILS: Record<string, AIModel> = {
     name: 'GPT-5.4',
     description: 'Latest frontier agentic coding model',
   },
-  'gpt-5.2-codex': {
-    id: 'gpt-5.2-codex',
-    name: 'GPT-5.2 Codex',
-    description: 'Frontier agentic coding model',
-  },
-  'gpt-5.1-codex': {
-    id: 'gpt-5.1-codex',
-    name: 'GPT-5.1 Codex',
-    description: 'Codex model for OpenAI OAuth with a ChatGPT account',
-  },
-  'gpt-5.1-codex-mini': {
-    id: 'gpt-5.1-codex-mini',
-    name: 'GPT-5.1 Codex Mini',
-    description: 'Fast supported Codex model for OpenAI OAuth with a ChatGPT account',
-  },
-  'gpt-5.1-codex-max': {
-    id: 'gpt-5.1-codex-max',
-    name: 'GPT-5.1 Codex Max',
-    description: 'Codex-optimized flagship for deep and fast reasoning',
-  },
-  'gpt-5.4-mini': {
-    id: 'gpt-5.4-mini',
-    name: 'GPT-5.4 Mini',
-    description: 'Smaller frontier agentic coding model',
+  'gpt-5.2': {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    description: 'Optimized for professional work and long-running agents',
   },
   'gpt-5.3-codex': {
     id: 'gpt-5.3-codex',
     name: 'GPT-5.3 Codex',
     description: 'Frontier Codex-optimized agentic coding model',
   },
-  'gpt-5.2': {
-    id: 'gpt-5.2',
-    name: 'GPT-5.2',
-    description: 'Optimized for professional work and long-running agents',
-  },
-  'codex-mini-latest': {
-    id: 'codex-mini-latest',
-    name: 'Codex Mini Latest',
-    description: 'Fast reasoning model optimized for Codex CLI',
+  'gpt-5.4-mini': {
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
+    description: 'Smaller frontier agentic coding model',
   },
 };
+
+export function isSupportedOpenAIOAuthCatalogModelId(modelId: string): boolean {
+  const normalized = modelId.trim();
+  if (!normalized) {
+    return false;
+  }
+  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.some(id => id.toLowerCase() === normalized.toLowerCase());
+}
+
+export function sanitizeOpenAIOAuthCatalogModels(models: AIModel[]): AIModel[] {
+  return models
+    .filter(model => typeof model?.id === 'string' && isSupportedOpenAIOAuthCatalogModelId(model.id))
+    .map(model => createOpenAIOAuthModel(model.id.trim()));
+}
 
 function createOpenAIOAuthModel(modelId: string): AIModel {
   return OPENAI_CHATGPT_OAUTH_MODEL_DETAILS[modelId] || {
@@ -136,18 +143,16 @@ function createOpenAIOAuthModel(modelId: string): AIModel {
 }
 
 function getOpenAIOAuthFallbackModels(): AIModel[] {
-  return OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS.map(modelId => createOpenAIOAuthModel(modelId));
+  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.map(modelId => createOpenAIOAuthModel(modelId));
 }
 
 function getConfiguredOpenAIOAuthModels(config: MosaicConfig): AIModel[] {
-  return (config.oauthModels?.openai || [])
-    .filter(model => typeof model?.id === 'string' && model.id.trim().length > 0)
-    .map(model => createOpenAIOAuthModel(model.id.trim()));
+  return sanitizeOpenAIOAuthCatalogModels(config.oauthModels?.openai || []);
 }
 
 function getSupportedOpenAIOAuthModelIdsFromConfig(config: MosaicConfig): string[] {
   const configured = getConfiguredOpenAIOAuthModels(config).map(model => model.id);
-  return Array.from(new Set([...OPENAI_CHATGPT_OAUTH_FALLBACK_MODELS, ...configured]));
+  return Array.from(new Set([...OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS, ...configured]));
 }
 
 function getSupportedOpenAIOAuthModelsFromConfig(config: MosaicConfig): AIModel[] {
@@ -277,6 +282,89 @@ export const AI_PROVIDERS: AIProvider[] = [
     ]
   }
 ];
+
+function getAllProvidersFromConfig(config: MosaicConfig, options?: { includeOAuthModels?: boolean }): AIProvider[] {
+  const customProviders = config.customProviders || [];
+  const customModels = config.customModels || {};
+  const oauthModels = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
+
+  const providersWithCustomModels = AI_PROVIDERS.map(provider => {
+    const hasOAuthToken = provider.id !== 'anthropic' && !!config.oauthTokens?.[provider.id]?.accessToken;
+    const usesOpenAIOAuth = provider.id === 'openai' && hasOAuthToken;
+    const openaiOAuthModels =
+      usesOpenAIOAuth
+        ? getConfiguredOpenAIOAuthModels(config).length > 0
+          ? getConfiguredOpenAIOAuthModels(config)
+          : getOpenAIOAuthFallbackModels()
+        : [];
+    const baseModels =
+      usesOpenAIOAuth
+        ? openaiOAuthModels
+        : provider.models;
+    const customModelsForProvider = usesOpenAIOAuth ? [] : (customModels[provider.id] || []);
+    const oauthModelsForProvider = provider.id === 'anthropic'
+      ? []
+      : provider.id === 'openai'
+        ? []
+        : (oauthModels[provider.id] || []);
+    const mergedModels = [...baseModels, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
+      list.findIndex(m => m.id === model.id) === index
+    );
+    if (usesOpenAIOAuth || customModelsForProvider.length > 0 || oauthModelsForProvider.length > 0) {
+      return {
+        ...provider,
+        models: mergedModels
+      };
+    }
+    return provider;
+  });
+
+  return [...providersWithCustomModels, ...customProviders];
+}
+
+function getProviderByIdFromConfig(id: string, config: MosaicConfig): AIProvider | undefined {
+  return getAllProvidersFromConfig(config).find(p => p.id === id);
+}
+
+function hasAuthForProvider(providerId: string, config: MosaicConfig): boolean {
+  const provider = getProviderByIdFromConfig(providerId, config);
+  if (!provider) {
+    return false;
+  }
+  if (providerId !== 'anthropic' && config.oauthTokens?.[providerId]?.accessToken) {
+    return true;
+  }
+  if (config.apiKeys?.[providerId]) {
+    return true;
+  }
+  if (!provider.requiresApiKey) {
+    return true;
+  }
+  return false;
+}
+
+function getConfiguredLightweightRoute(config: MosaicConfig): LightweightRoute | undefined {
+  const configuredProviderId = config.lightweightRoute?.provider?.trim();
+  const configuredModelId = config.lightweightRoute?.model?.trim();
+  if (!configuredProviderId || !configuredModelId) {
+    return undefined;
+  }
+
+  const provider = getProviderByIdFromConfig(configuredProviderId, config);
+  if (!provider || !hasAuthForProvider(configuredProviderId, config)) {
+    return undefined;
+  }
+
+  if (!provider.models.some(model => model.id === configuredModelId)) {
+    return undefined;
+  }
+
+  return {
+    providerId: configuredProviderId,
+    modelId: configuredModelId,
+    source: 'configured',
+  };
+}
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -421,55 +509,84 @@ export function getConfigDir(): string {
 
 export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIProvider[] {
   const config = readConfig();
-  const customProviders = config.customProviders || [];
-  const customModels = config.customModels || {};
-  const oauthModels = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
-
-  const providersWithCustomModels = AI_PROVIDERS.map(provider => {
-    const hasOAuthToken = provider.id !== 'anthropic' && !!config.oauthTokens?.[provider.id]?.accessToken;
-    const openaiOAuthModels =
-      provider.id === 'openai' && hasOAuthToken
-        ? getConfiguredOpenAIOAuthModels(config).length > 0
-          ? getConfiguredOpenAIOAuthModels(config)
-          : getOpenAIOAuthFallbackModels()
-        : [];
-    const baseModels =
-      provider.id === 'openai' && hasOAuthToken
-        ? openaiOAuthModels
-        : provider.models;
-    const customModelsForProvider = customModels[provider.id] || [];
-    const oauthModelsForProvider = provider.id === 'anthropic'
-      ? []
-      : provider.id === 'openai'
-        ? []
-        : (oauthModels[provider.id] || []);
-    const mergedModels = [...baseModels, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
-      list.findIndex(m => m.id === model.id) === index
-    );
-    if (customModelsForProvider.length > 0) {
-      return {
-        ...provider,
-        models: mergedModels
-      };
-    }
-    if (oauthModelsForProvider.length > 0) {
-      return {
-        ...provider,
-        models: mergedModels
-      };
-    }
-    return provider;
-  });
-  return [...providersWithCustomModels, ...customProviders];
+  return getAllProvidersFromConfig(config, options);
 }
 
 export function getProviderById(id: string): AIProvider | undefined {
-  return getAllProviders().find(p => p.id === id);
+  return getProviderByIdFromConfig(id, readConfig());
 }
 
 export function getPreferredModelForProvider(providerId: string): string | undefined {
   const provider = getProviderById(providerId);
   return provider?.models[0]?.id;
+}
+
+export function getLightweightModelForProvider(
+  providerId: string,
+  currentModelId?: string,
+  options?: { config?: MosaicConfig },
+): string | undefined {
+  return getLightweightRoute(providerId, currentModelId, options).modelId;
+}
+
+export function getLightweightRoute(
+  providerId: string,
+  currentModelId?: string,
+  options?: { config?: MosaicConfig },
+): LightweightRoute {
+  const config = options?.config ?? readConfig();
+  const configuredRoute = getConfiguredLightweightRoute(config);
+  if (configuredRoute) {
+    return configuredRoute;
+  }
+
+  if (providerId === 'openai' && config.oauthTokens?.openai?.accessToken) {
+    const preferredOAuthModel = normalizeOpenAIOAuthModelId('gpt-5.4-mini', getSupportedOpenAIOAuthModelIdsFromConfig(config));
+    if (preferredOAuthModel) {
+      return {
+        providerId,
+        modelId: preferredOAuthModel,
+        source: 'provider_default',
+      };
+    }
+  }
+
+  const provider = getProviderByIdFromConfig(providerId, config);
+  if (!provider) {
+    return {
+      providerId,
+      modelId: currentModelId ?? providerId,
+      source: 'current_model',
+    };
+  }
+
+  const preferred = LIGHTWEIGHT_PROVIDER_MODELS[providerId];
+  if (preferred && provider.models.some(model => model.id === preferred)) {
+    return {
+      providerId,
+      modelId: preferred,
+      source: 'provider_default',
+    };
+  }
+
+  const normalizedCurrent = providerId === 'openai' && config.oauthTokens?.openai?.accessToken
+    ? normalizeOpenAIOAuthModelId(currentModelId, getSupportedOpenAIOAuthModelIdsFromConfig(config))
+    : currentModelId && provider.models.some(model => model.id === currentModelId)
+      ? currentModelId
+      : undefined;
+  if (normalizedCurrent && provider.models.some(model => model.id === normalizedCurrent)) {
+    return {
+      providerId,
+      modelId: normalizedCurrent,
+      source: 'current_model',
+    };
+  }
+
+  return {
+    providerId,
+    modelId: provider.models[0]?.id ?? normalizedCurrent ?? currentModelId ?? providerId,
+    source: 'provider_first',
+  };
 }
 
 export function normalizeModelForProvider(providerId: string, modelId?: string): string | undefined {
@@ -549,7 +666,9 @@ export function setOAuthModelsForProvider(providerId: string, models: AIModel[])
   if (!config.oauthModels) {
     config.oauthModels = {};
   }
-  config.oauthModels[providerId] = models;
+  config.oauthModels[providerId] = providerId === 'openai'
+    ? sanitizeOpenAIOAuthCatalogModels(models)
+    : models;
   writeConfig(config);
 }
 
@@ -712,7 +831,6 @@ function normalizeOpenAIOAuthModelId(modelId: string | undefined, supportedModel
   const aliases: Record<string, string> = {
     'gpt-5.4-2026-03-25': 'gpt-5.4',
     'gpt-5.2-2025-12-11': 'gpt-5.2',
-    'gpt-5.1-2025-11-13': 'gpt-5.1-codex-max',
   };
   const mapped = aliases[lowered];
   if (mapped && supported.has(mapped.toLowerCase())) {
@@ -772,4 +890,35 @@ export function setActiveModel(modelId: string): void {
   const config = readConfig();
   config.model = modelId;
   writeConfig(config);
+}
+
+export function setLightweightRoute(providerId: string, modelId: string): void {
+  const config = readConfig();
+  const provider = getProviderByIdFromConfig(providerId, config);
+  if (!provider) {
+    throw new Error(`Unknown provider: ${providerId}`);
+  }
+  if (!provider.models.some(model => model.id === modelId)) {
+    throw new Error(`Unknown model "${modelId}" for provider "${providerId}"`);
+  }
+  if (!hasAuthForProvider(providerId, config)) {
+    throw new Error(`Provider "${providerId}" is not available for lightweight routing.`);
+  }
+  config.lightweightRoute = {
+    provider: providerId,
+    model: modelId,
+  };
+  writeConfig(config);
+}
+
+export function clearLightweightRoute(): void {
+  const config = readConfig();
+  delete config.lightweightRoute;
+  writeConfig(config);
+}
+
+export function getConfiguredLightweightRouteSelection(
+  options?: { config?: MosaicConfig },
+): LightweightRoute | undefined {
+  return getConfiguredLightweightRoute(options?.config ?? readConfig());
 }
