@@ -9,6 +9,7 @@ import { newCommand } from './new';
 import { compactCommand } from './compact';
 import { providerCommand } from './provider';
 import { modelCommand } from './model';
+import { lightweightCommand } from './lightweight';
 import { reasoningCommand } from './reasoning';
 import { contextCommand } from './context';
 import { skillCommand } from './skill';
@@ -92,6 +93,7 @@ export function initializeCommands(): void {
   commandRegistry.register(compactCommand);
   commandRegistry.register(providerCommand);
   commandRegistry.register(modelCommand);
+  commandRegistry.register(lightweightCommand);
   commandRegistry.register(reasoningCommand);
   commandRegistry.register(contextCommand);
   commandRegistry.register(skillCommand);
