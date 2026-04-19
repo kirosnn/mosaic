@@ -7,7 +7,7 @@ import {
   Provider,
   ProviderSendOptions,
 } from './types';
-import { readConfig, getApiKeyForProvider, getAuthForProvider, getLightweightRoute, getModelReasoningEffort, normalizeModelForProvider, setActiveModel } from '../utils/config';
+import { readConfig, getApiKeyForProvider, getAuthForProvider, getLightweightRoute, getLightweightModelForProvider, getModelReasoningEffort, normalizeModelForProvider, setActiveModel } from '../utils/config';
 import { buildAssistantCapabilitiesSystemPrompt, DEFAULT_SYSTEM_PROMPT, LIGHTWEIGHT_CHAT_SYSTEM_PROMPT, processSystemPrompt } from './prompts/systemPrompt';
 import { getTools } from './tools/definitions';
 import { AnthropicProvider } from './provider/anthropic';
@@ -424,6 +424,9 @@ export class Agent {
       const modePrompt = buildTaskModePrompt(runtimeContext.taskModeDecision.mode);
       systemPrompt = `${systemPrompt}\n\nRUNTIME TASK MODE:\n${modePrompt}`;
     }
+    if (!isLightweightChat && runtimeContext?.environmentContextSummary) {
+      systemPrompt = `${systemPrompt}\n\nLOCAL MACHINE CONTEXT:\n${runtimeContext.environmentContextSummary}`;
+    }
     if (!isLightweightChat && runtimeContext?.repoSummary) {
       const isArchMode = runtimeContext.taskModeDecision?.mode === 'explore_readonly';
       const repoPrompt = isArchMode
@@ -450,6 +453,7 @@ export class Agent {
       tools,
       maxSteps: isLightweightChat ? 1 : (userConfig.maxSteps ?? 100),
       maxContextTokens: userConfig.maxContextTokens,
+      isLightweight: isLightweightChat,
     };
 
     this.provider = this.createProvider(effectiveProvider);
@@ -462,12 +466,14 @@ export class Agent {
   private createProvider(providerName: string): Provider {
     switch (providerName) {
       case 'openai':
+      case 'openai-oauth':
         return new OpenAIProvider();
       case 'openrouter':
         return new OpenRouterProvider();
       case 'anthropic':
         return new AnthropicProvider();
       case 'google':
+      case 'google-oauth':
         return new GoogleProvider();
       case 'mistral':
         return new MistralProvider();
@@ -544,6 +550,50 @@ export class Agent {
       debugLog(`[agent] sendMessage complete memory={files:${stats.files}, searches:${stats.searches}, toolCalls:${stats.toolCalls}}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+
+      if (this.isLightweightChat && (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('rate limit'))) {
+        const providers = ['openai', 'openai-oauth', 'anthropic', 'mistral', 'groq', 'google', 'google-oauth'];
+        const fallbackProvider = providers.find(p => p !== this.config.provider && getAuthForProvider(p));
+
+        if (fallbackProvider) {
+          const fallbackModel = getLightweightModelForProvider(fallbackProvider);
+          if (fallbackModel) {
+            debugLog(`[agent] lightweight turn fallback: ${this.config.provider}/${this.config.model} -> ${fallbackProvider}/${fallbackModel} reason="${errorMsg.slice(0, 100)}"`);
+            const fallbackAuth = getAuthForProvider(fallbackProvider);
+            const fallbackConfig: ProviderConfig = {
+              ...this.config,
+              provider: fallbackProvider,
+              model: fallbackModel,
+              apiKey: fallbackAuth?.type === 'api_key' ? fallbackAuth.apiKey : undefined,
+              auth: fallbackAuth,
+              isLightweight: true,
+            };
+            const fallbackProviderInstance = this.createProvider(fallbackProvider);
+            try {
+              // Yield fallback event before proceeding
+              yield {
+                type: 'fallback',
+                provider: fallbackProvider,
+                model: fallbackModel,
+                reason: errorMsg,
+              };
+
+              // Update internal state so getRunMetadata returns the fallback
+              this.config.provider = fallbackProvider;
+              this.config.model = fallbackModel;
+
+              for await (const event of fallbackProviderInstance.sendMessage(this.messageHistory, fallbackConfig, options)) {
+                this.recordEvent(event);
+                yield event;
+              }
+              return;
+            } catch (fallbackErr) {
+              debugLog(`[agent] lightweight turn fallback failed: ${fallbackProvider} error="${fallbackErr instanceof Error ? fallbackErr.message.slice(0, 100) : 'unknown'}"`);
+            }
+          }
+        }
+      }
+
       debugLog(`[agent] sendMessage ERROR ${errorMsg.slice(0, 150)}`);
       yield {
         type: 'error',
@@ -606,9 +656,54 @@ export class Agent {
         yield event;
       }
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
+
+      if (this.isLightweightChat && (errorMsg.includes('429') || errorMsg.includes('quota') || errorMsg.includes('rate limit'))) {
+        const providers = ['openai', 'openai-oauth', 'anthropic', 'mistral', 'groq', 'google', 'google-oauth'];
+        const fallbackProvider = providers.find(p => p !== this.config.provider && getAuthForProvider(p));
+
+        if (fallbackProvider) {
+          const fallbackModel = getLightweightModelForProvider(fallbackProvider);
+          if (fallbackModel) {
+            debugLog(`[agent] lightweight stream fallback: ${this.config.provider}/${this.config.model} -> ${fallbackProvider}/${fallbackModel} reason="${errorMsg.slice(0, 100)}"`);
+            const fallbackAuth = getAuthForProvider(fallbackProvider);
+            const fallbackConfig: ProviderConfig = {
+              ...this.config,
+              provider: fallbackProvider,
+              model: fallbackModel,
+              apiKey: fallbackAuth?.type === 'api_key' ? fallbackAuth.apiKey : undefined,
+              auth: fallbackAuth,
+              isLightweight: true,
+            };
+            const fallbackProviderInstance = this.createProvider(fallbackProvider);
+            try {
+              // Yield fallback event before proceeding
+              yield {
+                type: 'fallback',
+                provider: fallbackProvider,
+                model: fallbackModel,
+                reason: errorMsg,
+              };
+
+              // Update internal state so getRunMetadata returns the fallback
+              this.config.provider = fallbackProvider;
+              this.config.model = fallbackModel;
+
+              for await (const event of fallbackProviderInstance.sendMessage(compacted, fallbackConfig, options)) {
+                this.recordEvent(event);
+                yield event;
+              }
+              return;
+            } catch (fallbackErr) {
+              debugLog(`[agent] lightweight stream fallback failed: ${fallbackProvider} error="${fallbackErr instanceof Error ? fallbackErr.message.slice(0, 100) : 'unknown'}"`);
+            }
+          }
+        }
+      }
+
       yield {
         type: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMsg,
       };
     }
   }
