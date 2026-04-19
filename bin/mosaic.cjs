@@ -31,7 +31,7 @@ function main() {
     process.exit(1);
   }
 
-  const entryPoint = path.join(__dirname, '..', 'src', 'index.tsx');
+  const entryPoint = path.join(__dirname, '..', 'src', 'app', 'cli', 'main.tsx');
   const args = process.argv.slice(2);
 
   const child = spawn('bun', ['run', entryPoint, ...args], {
