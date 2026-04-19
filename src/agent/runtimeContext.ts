@@ -4,8 +4,10 @@ import { buildEnvironmentContextSummary } from './environmentContext';
 import { collectGitWorkspaceState } from './gitWorkspaceState';
 import type { AgentRuntimeContext } from './types';
 import { scanRepository } from './repoScan';
-import { detectTaskMode, isLightweightChatIntent, isLightweightTaskMode, shouldUseRepositoryContext } from './taskMode';
+import { detectTaskMode, isLightweightTaskMode, shouldBypassModelTaskRouter, shouldUseLightweightEnvironmentHandling, shouldUseRepositoryContext } from './taskMode';
 import { detectTaskModeWithModel } from './taskModeModel';
+import { buildSubsystemContextSummary } from '../utils/subsystemDiscovery';
+import { getPreferredSubsystem } from '../utils/config';
 
 function getLatestUserRequest(messages: SmartContextMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -19,9 +21,20 @@ function getLatestUserRequest(messages: SmartContextMessage[]): string {
 
 export async function buildAgentRuntimeContext(messages: SmartContextMessage[]): Promise<AgentRuntimeContext> {
   const latestRequest = getLatestUserRequest(messages);
-  const taskModeDecision = isLightweightChatIntent(latestRequest)
-    ? detectTaskMode(messages)
+  const deterministicTaskModeDecision = detectTaskMode(messages);
+  const taskModeDecision = shouldBypassModelTaskRouter(deterministicTaskModeDecision)
+    ? deterministicTaskModeDecision
     : await detectTaskModeWithModel(messages);
+
+  const preferredSubsystem = getPreferredSubsystem();
+  const subsystemContextSummary = await buildSubsystemContextSummary(preferredSubsystem);
+  const environmentHandlingMode = taskModeDecision.mode === 'environment_config'
+    ? (
+      shouldUseLightweightEnvironmentHandling(messages, taskModeDecision)
+        ? 'lightweight'
+        : 'full'
+    )
+    : undefined;
 
   if (isLightweightTaskMode(taskModeDecision.mode)) {
     return {
@@ -31,6 +44,7 @@ export async function buildAgentRuntimeContext(messages: SmartContextMessage[]):
       assistantCapabilitySummary: taskModeDecision.mode === 'assistant_capabilities'
         ? buildAssistantCapabilitySummary()
         : undefined,
+      subsystemContextSummary,
     };
   }
 
@@ -42,6 +56,8 @@ export async function buildAgentRuntimeContext(messages: SmartContextMessage[]):
       environmentContextSummary: taskModeDecision.mode === 'environment_config'
         ? buildEnvironmentContextSummary(taskModeDecision.latestUserRequest)
         : undefined,
+      subsystemContextSummary,
+      environmentHandlingMode,
     };
   }
 
@@ -54,5 +70,7 @@ export async function buildAgentRuntimeContext(messages: SmartContextMessage[]):
     taskModeDecision,
     repoSummary,
     gitWorkspaceState,
+    subsystemContextSummary,
+    environmentHandlingMode,
   };
 }
