@@ -29,11 +29,13 @@ describe("reasoningPanelModel", () => {
 
   it("hides all reasoning blocks when collapsed", () => {
     expect(getVisibleReasoningBlocks(reasoningBlocks, true)).toEqual([]);
-    expect(getReasoningPanelVisualLines(reasoningBlocks, true)).toBe(2); // Header + bottom spacer
+    expect(getReasoningPanelVisualLines(reasoningBlocks, true)).toBe(2);
   });
 
   it("keeps full reasoning blocks available when expanded", () => {
-    expect(getVisibleReasoningBlocks(reasoningBlocks, false)).toEqual(reasoningBlocks);
-    expect(getReasoningPanelVisualLines(reasoningBlocks, false)).toBe(5); // 2 content + 1 separator + 1 header + 1 spacer
+    expect(getVisibleReasoningBlocks(reasoningBlocks, false)).toEqual(
+      reasoningBlocks,
+    );
+    expect(getReasoningPanelVisualLines(reasoningBlocks, false)).toBe(5);
   });
 });
