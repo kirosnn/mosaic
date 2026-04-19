@@ -134,7 +134,7 @@ export class OpenAIProvider implements Provider {
     }
 
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    const openaiReasoning = getOpenAIReasoningOptions(reasoningEnabled, config.modelReasoningEffort);
+    const openaiReasoning = await getOpenAIReasoningOptions(config.provider, cleanModel, reasoningEnabled, config.modelReasoningEffort);
     debugLog(`[openai] reasoning=${reasoningEnabled}`);
 
     const refreshOauthIfNeeded = async (): Promise<typeof oauthAuth> => {
@@ -152,7 +152,7 @@ export class OpenAIProvider implements Provider {
       };
       config.auth = updated;
       oauthAuth = updated;
-      setOAuthTokenForProvider('openai', {
+      setOAuthTokenForProvider(config.provider, {
         accessToken: updated.accessToken,
         refreshToken: updated.refreshToken,
         expiresAt: updated.expiresAt,
