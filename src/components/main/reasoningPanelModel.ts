@@ -30,13 +30,12 @@ export function getReasoningPanelVisualLines(
   collapsed: boolean,
 ): number {
   if (collapsed) {
-    return 2; // Header + bottom spacer
+    return 2;
   }
   if (blocks.length === 0) {
-    return 2; // Header + bottom spacer
+    return 2;
   }
-  // Each block has 1 line, plus a spacer line between blocks, plus the header, plus the bottom spacer
-  return (blocks.length * 2 - 1) + 1 + 1;
+  return blocks.length * 2 - 1 + 1 + 1;
 }
 
 export function getVisibleReasoningBlocks(
