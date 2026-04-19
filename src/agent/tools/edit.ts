@@ -4,9 +4,9 @@ import { executeTool } from './executor';
 import { trackMutation } from './toolCallTracker';
 
 export const edit: CoreTool = tool({
-  description: 'Edit a specific part of a file by replacing old content with new content. More precise than rewriting the entire file. IMPORTANT: This operation requires user approval - the user will see a preview showing the old and new content and must approve before changes are made. If rejected, ask the user for clarification using the question tool.',
+  description: 'Edit a specific part of a local file by replacing old content with new content. Relative paths resolve from the launch directory; absolute paths, ~, and environment-variable paths are also supported. More precise than rewriting the entire file. IMPORTANT: This operation requires user approval - the user will see a preview showing the old and new content and must approve before changes are made. If rejected, ask the user for clarification using the question tool.',
   parameters: z.object({
-    path: z.string().describe('The path to the file relative to the workspace root'),
+    path: z.string().describe('File path. Relative paths resolve from the launch directory; absolute and home-directory paths are allowed.'),
     old_content: z.string().describe('The exact text content to find and replace'),
     new_content: z.string().describe('The new text content to replace with'),
     occurrence: z.number().nullable().optional().describe('Which occurrence to replace (1 for first, 2 for second, etc. Use null for 1)'),
