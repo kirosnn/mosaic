@@ -1,5 +1,5 @@
 import type { Command, SelectOption } from './types';
-import { shouldEnableReasoning } from '../../agent/provider/reasoning';
+import { supportsReasoningEffort } from '../../agent/provider/reasoning';
 import {
   clearModelReasoningEffort,
   getAvailableReasoningEfforts,
@@ -15,11 +15,11 @@ import {
   type ReasoningEffort,
 } from '../config';
 
-function isReasoningEffort(value: string): value is ReasoningEffort {
-  return getAvailableReasoningEfforts().includes(value as ReasoningEffort);
+function isReasoningEffort(value: string, providerId?: string, modelId?: string): value is ReasoningEffort {
+  return getAvailableReasoningEfforts(providerId, modelId).includes(value as ReasoningEffort);
 }
 
-function buildReasoningOptions(): SelectOption[] {
+function buildReasoningOptions(providerId?: string, modelId?: string): SelectOption[] {
   const effective = getModelReasoningEffort();
   const source = getModelReasoningEffortSource();
   const codex = getCodexModelReasoningEffort();
@@ -35,7 +35,7 @@ function buildReasoningOptions(): SelectOption[] {
     },
   ];
 
-  for (const effort of getAvailableReasoningEfforts()) {
+  for (const effort of getAvailableReasoningEfforts(providerId, modelId)) {
     options.push({
       name: effort,
       description: effort === effective && source === 'mosaic' ? 'Current custom effort' : 'Set this reasoning effort',
@@ -53,7 +53,7 @@ export const modelCommand: Command = {
   description: 'List or switch AI models for the current provider',
   usage: '/model [id]',
   aliases: ['mod'],
-  execute: async (args: string[]) => {
+  execute: async (args: string[], _fullCommand: string, _context?: any) => {
     const config = readConfig();
 
     if (!config.provider) {
@@ -94,7 +94,7 @@ export const modelCommand: Command = {
       const reasoningSupportEntries = await Promise.all(
         modelsToProbe.map(async (modelId) => {
           try {
-            return [modelId, await shouldEnableReasoning(provider.id, modelId)] as const;
+            return [modelId, await supportsReasoningEffort(provider.id, modelId)] as const;
           } catch {
             return [modelId, false] as const;
           }
@@ -142,12 +142,12 @@ export const modelCommand: Command = {
             return {
               nextMenu: {
                 title: `Reasoning Effort for ${chosenModel?.name ?? value}`,
-                options: buildReasoningOptions(),
+                options: buildReasoningOptions(provider.id, value),
                 onSelect: (reasoningValue: string) => {
                   setActiveModel(value);
                   if (reasoningValue === 'default') {
                     clearModelReasoningEffort();
-                  } else if (isReasoningEffort(reasoningValue)) {
+                  } else if (isReasoningEffort(reasoningValue, provider.id, value)) {
                     setModelReasoningEffort(reasoningValue);
                   }
                   const reasoningLabel =
