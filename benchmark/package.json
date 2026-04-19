@@ -3,6 +3,7 @@
   "version": "1",
   "description": "Benchmark suite for Mosaic AI code agent",
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "scripts": {
     "bench": "bun run src/index.ts",
     "bench:tool-use": "bun run src/index.ts --suite tool-use",
