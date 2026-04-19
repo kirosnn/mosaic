@@ -122,6 +122,18 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
   const initialValueRef = useRef(initialValue ?? '')
   const completionScrollboxRef = useRef<any>(null)
 
+  const getHistoryCandidates = (draftValue: string) => {
+    const trimmed = draftValue.trim()
+    if (!trimmed.startsWith('/')) {
+      return inputHistory.map((_, index) => index)
+    }
+
+    return inputHistory
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.startsWith(trimmed))
+      .map(({ index }) => index)
+  }
+
   const renderer = useRenderer()
   const completions = ENABLE_TUI_COMPLETIONS ? buildSlashCompletions(value) : []
   const completionKey = completions.map((item) => item.token).join('|')
@@ -555,16 +567,21 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       desiredCursorColRef.current = null
       if (inputHistory.length === 0) return
 
+      const candidateIndices = getHistoryCandidates(historyIndex === -1 ? value : currentInput)
+      if (candidateIndices.length === 0) return
+
       if (historyIndex === -1) {
         setCurrentInput(value)
-        const newIndex = inputHistory.length - 1
+        const newIndex = candidateIndices[candidateIndices.length - 1]!
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
         setSelectionStart(null)
         setSelectionEnd(null)
-      } else if (historyIndex > 0) {
-        const newIndex = historyIndex - 1
+      } else {
+        const currentCandidatePosition = candidateIndices.indexOf(historyIndex)
+        if (currentCandidatePosition <= 0) return
+        const newIndex = candidateIndices[currentCandidatePosition - 1]!
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
@@ -601,8 +618,19 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
       desiredCursorColRef.current = null
       if (historyIndex === -1) return
 
-      if (historyIndex < inputHistory.length - 1) {
-        const newIndex = historyIndex + 1
+      const candidateIndices = getHistoryCandidates(currentInput)
+      if (candidateIndices.length === 0) {
+        setHistoryIndex(-1)
+        setValue(currentInput)
+        setCursorPosition(currentInput.length)
+        setSelectionStart(null)
+        setSelectionEnd(null)
+        return
+      }
+
+      const currentCandidatePosition = candidateIndices.indexOf(historyIndex)
+      if (currentCandidatePosition >= 0 && currentCandidatePosition < candidateIndices.length - 1) {
+        const newIndex = candidateIndices[currentCandidatePosition + 1]!
         setHistoryIndex(newIndex)
         setValue(inputHistory[newIndex]!)
         setCursorPosition(inputHistory[newIndex]!.length)
