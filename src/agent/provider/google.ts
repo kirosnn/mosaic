@@ -22,6 +22,15 @@ const CLIENT_METADATA = {
   pluginType: 'GEMINI',
 };
 
+interface GoogleTierInfo {
+  currentTier?: string;
+  allowedTiers?: string[];
+  projectId?: string;
+  lastChecked?: number;
+}
+
+let cachedTierInfo: GoogleTierInfo | null = null;
+
 interface LoadCodeAssistResponse {
   currentTier?: { id?: string } | null;
   allowedTiers?: Array<{ id?: string; isDefault?: boolean }> | null;
@@ -258,15 +267,28 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function discoverProjectId(accessToken: string): Promise<string> {
-  if (cachedProjectId) return cachedProjectId;
+  const now = Date.now();
+  if (cachedProjectId && cachedTierInfo && cachedTierInfo.lastChecked && now - cachedTierInfo.lastChecked < 300000) {
+    return cachedProjectId;
+  }
 
   const loadResponse = await loadCodeAssist(accessToken);
-  debugLog(`[oauth][google] loadCodeAssist response: project=${loadResponse.cloudaicompanionProject ?? 'none'} currentTier=${loadResponse.currentTier?.id ?? 'none'}`);
+  const currentTier = loadResponse.currentTier?.id ?? 'none';
+  const allowedTiers = loadResponse.allowedTiers?.map(t => t.id).filter((id): id is string => !!id) ?? [];
+  const projectId = loadResponse.cloudaicompanionProject ?? undefined;
 
-  if (loadResponse.cloudaicompanionProject) {
-    cachedProjectId = loadResponse.cloudaicompanionProject;
-    debugLog(`[oauth][google] discovered projectId=${cachedProjectId}`);
-    return cachedProjectId;
+  cachedTierInfo = {
+    currentTier,
+    allowedTiers,
+    projectId,
+    lastChecked: now,
+  };
+
+  debugLog(`[oauth][google] session diagnostic: tier=${currentTier} allowed=[${allowedTiers.join(',')}] project=${projectId ?? 'none'}`);
+
+  if (projectId) {
+    cachedProjectId = projectId;
+    return projectId;
   }
 
   debugLog('[oauth][google] no project found, starting onboarding...');
@@ -275,6 +297,8 @@ async function discoverProjectId(accessToken: string): Promise<string> {
 
   if (lro.done && lro.response?.cloudaicompanionProject?.id) {
     cachedProjectId = lro.response.cloudaicompanionProject.id;
+    cachedTierInfo.projectId = cachedProjectId;
+    cachedTierInfo.lastChecked = Date.now();
     debugLog(`[oauth][google] onboarding complete, projectId=${cachedProjectId}`);
     return cachedProjectId;
   }
@@ -287,12 +311,16 @@ async function discoverProjectId(accessToken: string): Promise<string> {
       if (op.done) {
         if (op.response?.cloudaicompanionProject?.id) {
           cachedProjectId = op.response.cloudaicompanionProject.id;
+          cachedTierInfo.projectId = cachedProjectId;
+          cachedTierInfo.lastChecked = Date.now();
           debugLog(`[oauth][google] onboarding complete after polling, projectId=${cachedProjectId}`);
           return cachedProjectId;
         }
         const reloaded = await loadCodeAssist(accessToken);
         if (reloaded.cloudaicompanionProject) {
           cachedProjectId = reloaded.cloudaicompanionProject;
+          cachedTierInfo.projectId = cachedProjectId;
+          cachedTierInfo.lastChecked = Date.now();
           debugLog(`[oauth][google] found projectId after reload: ${cachedProjectId}`);
           return cachedProjectId;
         }
@@ -472,7 +500,7 @@ export class GoogleProvider implements Provider {
       };
       config.auth = updated;
       oauthAuth = updated;
-      setOAuthTokenForProvider('google', {
+      setOAuthTokenForProvider(config.provider, {
         accessToken: updated.accessToken,
         refreshToken: updated.refreshToken,
         expiresAt: updated.expiresAt,
@@ -544,6 +572,8 @@ export class GoogleProvider implements Provider {
 
         let auth401Retries = 0;
         const MAX_AUTH_RETRIES = 2;
+        const isLightweight = config.isLightweight === true;
+        const maxQuotaRetries = isLightweight ? 3 : QUOTA_MAX_RETRIES;
 
         for (let fetchAttempt = 0; ; fetchAttempt++) {
           const res = await fetch(targetUrl, {
@@ -552,10 +582,13 @@ export class GoogleProvider implements Provider {
             body: wrappedBody,
           });
 
-          if (res.status === 429 && fetchAttempt < QUOTA_MAX_RETRIES) {
+          if (res.status === 429 && fetchAttempt < maxQuotaRetries) {
             const text = await res.text();
-            const delay = parseQuotaResetDelay(text);
-            debugLog(`[oauth][google] quota exhausted (attempt ${fetchAttempt + 1}/${QUOTA_MAX_RETRIES}), waiting ${delay}ms | body=${text.slice(0, 300)}`);
+            let delay = parseQuotaResetDelay(text);
+            if (isLightweight) {
+              delay = Math.min(delay, 5000); // Cap delay for lightweight chat
+            }
+            debugLog(`[oauth][google] quota exhausted (attempt ${fetchAttempt + 1}/${maxQuotaRetries}, lightweight=${isLightweight}), waiting ${delay}ms | body=${text.slice(0, 300)}`);
 
             await sleepWithSignal(delay, init?.signal);
             if (init?.signal?.aborted) return res;
@@ -627,7 +660,8 @@ export class GoogleProvider implements Provider {
       ? (config.systemPrompt ? `${config.systemPrompt}\n\n${oauthSingleToolConstraint}` : oauthSingleToolConstraint)
       : config.systemPrompt;
 
-    debugLog(`[google] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled} oauth=${!!oauthAuth}`);
+    debugLog(`[google] starting stream model=${cleanModel} messagesLen=${messages.length} reasoningRequested=${reasoningEnabled} oauth=${!!oauthAuth}`);
+    let reasoningCaptured = false;
     try {
       let stepCounter = 0;
 
@@ -651,10 +685,15 @@ export class GoogleProvider implements Provider {
           const c: any = chunk;
           switch (c.type) {
             case 'reasoning':
-              if (c.textDelta) {
+              const reasoningContent = c.textDelta || c.reasoning || c.content;
+              if (reasoningContent) {
+                if (!reasoningCaptured) {
+                  debugLog(`[google] readable reasoning content received from provider`);
+                  reasoningCaptured = true;
+                }
                 yield {
                   type: 'reasoning-delta',
-                  content: c.textDelta,
+                  content: reasoningContent,
                 };
               }
               break;
