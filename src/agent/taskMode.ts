@@ -1,5 +1,7 @@
 import type { SmartContextMessage } from './context';
 import { isEnvironmentConfigIntent } from './environmentContext';
+import { isSubsystemQuestion } from '../utils/subsystemDiscovery';
+import { debugLog } from '../utils/debug';
 
 export type TaskMode = 'chat' | 'assistant_capabilities' | 'environment_config' | 'explore_readonly' | 'plan' | 'edit' | 'run' | 'review';
 
@@ -68,6 +70,27 @@ const EXPLORE_PATTERNS = [
   /\bcurrent\s+branch\b/i,
 ];
 
+const SUBSYSTEM_PATTERNS = [
+  /\bsubsystem\b/i,
+  /\bshell\b/i,
+  /\bterminal\b/i,
+  /\bcurrent\s+shell\b/i,
+  /\bactive\s+shell\b/i,
+  /\bpwsh\b/i,
+  /\bpowershell\b/i,
+  /\bcmd\.exe\b/i,
+  /\bwsl\b/i,
+  /\bgit\s+bash\b/i,
+  /\bbash\s+environment\b/i,
+  /\bexecution\s+environment\b/i,
+  /\bwhat\s+shell\b/i,
+  /\bpreferred\s+subsystem\b/i,
+  /\beffective\s+subsystem\b/i,
+  /\binstalled\s+subsystems?\b/i,
+  /\bavailable\s+subsystems?\b/i,
+  /\bfallback\s+order\b/i,
+];
+
 const LIGHTWEIGHT_CHAT_PATTERNS = [
   /^(?:salut|bonjour|hello|hi|hey)\b[!.!? ]*$/i,
   /^(?:merci|thanks|thank you|super|parfait|top|nickel)\b[!.!? ]*$/i,
@@ -82,6 +105,7 @@ const ASSISTANT_CAPABILITY_PATTERNS = [
   /^(?:t['’]as|tu as|as-tu|what|which|how)\b.*\b(?:accès|access|tools?|skills?|capabilities|limits?)\b.*\??$/i,
   /^(?:comment)\b.*\b(?:tu|mosaic|assistant)\b.*\b(?:fonctionnes?|marches?|works?)\b.*\??$/i,
   /^(?:what can you do|what tools do you have|what skills do you have|how do you work|what are your limits)\??$/i,
+  /^(?:tu|t['’]as|t as|as-tu|do you have|can you use|can you call|what)\b.*\b(?:mcp|serveurs?\s+mcp|mcp\s+servers?|permissions?|modes?|edit files?|modifier des fichiers|call mcp|utiliser mcp)\b.*\??$/i,
 ];
 
 const WORKSPACE_REFERENCE_PATTERNS = [
@@ -125,12 +149,47 @@ const ASSISTANT_CAPABILITY_KEYWORDS = [
   /\bworks?\b/i,
   /\bfaire\b/i,
   /\bdo\b/i,
+  /\bmcp\b/i,
+  /\bpermissions?\b/i,
+  /\bmodes?\b/i,
+  /\bedit files?\b/i,
+  /\bmodifier des fichiers\b/i,
 ];
 
 const CONTINUATION_PATTERNS = [
   /^(?:ok|okay|ça marche|ca marche|c'est bon|got it|understood|noted|bien reçu|reçu)\b[!.!? ]*$/i,
   /^(?:continue|vas-y|go ahead|proceed|tu peux continuer|you can continue)\b[!.!? ]*$/i,
   /^(?:fais-le|do it|lance-toi|carry on)\b[!.!? ]*$/i,
+  /^(?:et maintenant|et du coup|ok et du coup|what now|now what|and now)\b[!.!? ]*$/i,
+];
+
+const COMPLEX_ENVIRONMENT_PATTERNS = [
+  /\bwhy\b/i,
+  /\bpourquoi\b/i,
+  /\bdiagnos(?:e|is|tic)\b/i,
+  /\bdebug\b/i,
+  /\btroubleshoot\b/i,
+  /\bcompare\b/i,
+  /\bvs\b/i,
+  /\bversus\b/i,
+  /\brecommend(?:ation)?\b/i,
+  /\brecommande?r\b/i,
+  /\bshould i\b/i,
+  /\bwhich is better\b/i,
+  /\bexplain\b/i,
+  /\bexplique?r\b/i,
+  /\bfallback\b/i,
+  /\bsession\b/i,
+  /\bsessions\b/i,
+  /\brepo(?:sitory)?\b/i,
+  /\bproject\b/i,
+  /\bworkspace\b/i,
+  /\btooling\b/i,
+  /\bfail(?:s|ed|ing)?\b/i,
+  /\berror\b/i,
+  /\bbroken\b/i,
+  /\bissue\b/i,
+  /\bproblem\b/i,
 ];
 
 function getLatestUserRequest(messages: SmartContextMessage[]): string {
@@ -161,6 +220,22 @@ export function isLightweightTaskMode(mode: TaskMode | null | undefined): boolea
 
 export function shouldUseRepositoryContext(mode: TaskMode | null | undefined): boolean {
   return mode !== 'chat' && mode !== 'assistant_capabilities' && mode !== 'environment_config';
+}
+
+export function shouldBypassModelTaskRouter(
+  decision: Omit<TaskModeDecision, 'latestUserRequest'> | null | undefined,
+): boolean {
+  if (!decision) {
+    return false;
+  }
+
+  if (decision.confidence !== 'high') {
+    return false;
+  }
+
+  return decision.mode === 'chat'
+    || decision.mode === 'assistant_capabilities'
+    || decision.mode === 'environment_config';
 }
 
 export function isLightweightChatIntent(text: string): boolean {
@@ -210,12 +285,57 @@ function isContinuationIntent(text: string): boolean {
   return matchesAny(compact, CONTINUATION_PATTERNS);
 }
 
+export function shouldUseLightweightEnvironmentHandling(
+  messages: SmartContextMessage[],
+  decision?: Pick<TaskModeDecision, 'mode' | 'latestUserRequest'> | null,
+): boolean {
+  const latestUserRequest = normalizeCompact(
+    decision?.latestUserRequest ?? getLatestUserRequest(messages),
+  );
+  if (!latestUserRequest) {
+    return false;
+  }
+
+  const mode = decision?.mode ?? detectTaskMode(messages).mode;
+  if (mode !== 'environment_config') {
+    return false;
+  }
+
+  const tokenCount = getTokenCount(latestUserRequest);
+  const recentTechnicalMode = inferRecentTechnicalMode(messages);
+  const isSimpleContinuation = isContinuationIntent(latestUserRequest)
+    && recentTechnicalMode?.mode === 'environment_config'
+    && tokenCount <= 8;
+
+  if (isSimpleContinuation) {
+    return true;
+  }
+
+  if (!isSubsystemQuestion(latestUserRequest)) {
+    return false;
+  }
+
+  if (tokenCount > 14 || latestUserRequest.length > 120) {
+    return false;
+  }
+
+  if (matchesAny(latestUserRequest, COMPLEX_ENVIRONMENT_PATTERNS)) {
+    return false;
+  }
+
+  return true;
+}
+
 function classifyTextTaskMode(text: string): Omit<TaskModeDecision, 'latestUserRequest'> | null {
   const normalized = normalizeCompact(text);
   const lower = normalized.toLowerCase();
 
   if (!normalized) {
     return null;
+  }
+
+  if (matchesAny(lower, SUBSYSTEM_PATTERNS)) {
+    return { mode: 'environment_config', confidence: 'high', reason: 'subsystem or shell environment question detected' };
   }
 
   if (isLightweightChatIntent(normalized)) {
@@ -283,9 +403,9 @@ function inferRecentTechnicalMode(messages: SmartContextMessage[]): Omit<TaskMod
 export function detectTaskMode(messages: SmartContextMessage[]): TaskModeDecision {
   const latestUserRequest = getLatestUserRequest(messages);
   const direct = classifyTextTaskMode(latestUserRequest);
+  const recentTechnicalMode = inferRecentTechnicalMode(messages);
 
-  if (direct?.mode === 'chat' && isContinuationIntent(latestUserRequest)) {
-    const recentTechnicalMode = inferRecentTechnicalMode(messages);
+  if (isContinuationIntent(latestUserRequest)) {
     if (recentTechnicalMode) {
       return {
         ...recentTechnicalMode,
@@ -301,7 +421,6 @@ export function detectTaskMode(messages: SmartContextMessage[]): TaskModeDecisio
     };
   }
 
-  const recentTechnicalMode = inferRecentTechnicalMode(messages);
   if (recentTechnicalMode && getTokenCount(latestUserRequest) <= 6) {
     return {
       ...recentTechnicalMode,
