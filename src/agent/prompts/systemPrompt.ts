@@ -384,10 +384,10 @@ export function processSystemPrompt(
     processed = processed.replace(new RegExp(placeholder, 'g'), value);
   }
 
-  const mosaicMdPath = join(workspace, 'AGENTS.md');
-  if (existsSync(mosaicMdPath)) {
+  const agentsMdPath = join(workspace, 'AGENTS.md');
+  if (existsSync(agentsMdPath)) {
     try {
-      const mosaicContent = readFileSync(mosaicMdPath, 'utf-8');
+      const agentsContent = readFileSync(agentsMdPath, 'utf-8');
       processed = `${processed}\n\nPROJECT CONTEXT (AGENTS.md):
 IMPORTANT: An AGENTS.md file exists in this workspace. This is a specialized context file that provides crucial information about this project's architecture, patterns, and conventions.
 
@@ -397,7 +397,7 @@ Read and understand this context BEFORE making changes to the codebase. This wil
 - Know where different types of files should be located
 - Use the right patterns and tools for this specific project
 
-${mosaicContent}`;
+${agentsContent}`;
     } catch (error) {
       console.error('Failed to read AGENTS.md:', error);
     }
