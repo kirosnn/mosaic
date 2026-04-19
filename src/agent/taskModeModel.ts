@@ -5,7 +5,7 @@ import type { SmartContextMessage } from './context';
 import type { Provider } from './types';
 import { detectTaskMode, type TaskMode, type TaskModeDecision } from './taskMode';
 
-const TASK_MODE_VALUES: TaskMode[] = ['chat', 'assistant_capabilities', 'explore_readonly', 'plan', 'edit', 'run', 'review'];
+const TASK_MODE_VALUES: TaskMode[] = ['chat', 'assistant_capabilities', 'environment_config', 'explore_readonly', 'plan', 'edit', 'run', 'review'];
 const TASK_MODE_CONFIDENCE_VALUES: TaskModeDecision['confidence'][] = ['high', 'medium', 'low'];
 const TASK_MODE_CLASSIFIER_TIMEOUT_MS = 10000;
 
@@ -37,38 +37,41 @@ function buildClassificationTranscript(messages: SmartContextMessage[]): string 
   return relevant.join('\n');
 }
 
-async function createProvider(providerName: string): Promise<Provider> {
-  switch (providerName) {
-    case 'openai': {
-      const { OpenAIProvider } = await import('./provider/openai');
+export async function createProvider(providerName: string): Promise<Provider> {
+  const normalizedProvider = providerName.replace(/-oauth$/, "");
+  switch (normalizedProvider) {
+    case "openai":
+    case "openai-oauth": {
+      const { OpenAIProvider } = await import("./provider/openai");
       return new OpenAIProvider();
     }
-    case 'openrouter': {
-      const { OpenRouterProvider } = await import('./provider/openrouter');
+    case "openrouter": {
+      const { OpenRouterProvider } = await import("./provider/openrouter");
       return new OpenRouterProvider();
     }
-    case 'anthropic': {
-      const { AnthropicProvider } = await import('./provider/anthropic');
+    case "anthropic": {
+      const { AnthropicProvider } = await import("./provider/anthropic");
       return new AnthropicProvider();
     }
-    case 'google': {
-      const { GoogleProvider } = await import('./provider/google');
+    case "google":
+    case "google-oauth": {
+      const { GoogleProvider } = await import("./provider/google");
       return new GoogleProvider();
     }
-    case 'mistral': {
-      const { MistralProvider } = await import('./provider/mistral');
+    case "mistral": {
+      const { MistralProvider } = await import("./provider/mistral");
       return new MistralProvider();
     }
-    case 'xai': {
-      const { XaiProvider } = await import('./provider/xai');
+    case "xai": {
+      const { XaiProvider } = await import("./provider/xai");
       return new XaiProvider();
     }
-    case 'groq': {
-      const { GroqProvider } = await import('./provider/groq');
+    case "groq": {
+      const { GroqProvider } = await import("./provider/groq");
       return new GroqProvider();
     }
-    case 'ollama': {
-      const { OllamaProvider } = await import('./provider/ollama');
+    case "ollama": {
+      const { OllamaProvider } = await import("./provider/ollama");
       return new OllamaProvider();
     }
     default:
@@ -156,10 +159,12 @@ export async function detectTaskModeWithModel(messages: SmartContextMessage[]): 
     const systemPrompt = [
       'You classify the user intent for a coding agent.',
       'Return strict JSON only with keys: mode, confidence, reason.',
-      'Allowed modes: chat, assistant_capabilities, explore_readonly, plan, edit, run, review.',
+      'Allowed modes: chat, assistant_capabilities, environment_config, explore_readonly, plan, edit, run, review.',
       'Choose chat only for lightweight conversation with no repository work, such as greetings, thanks, acknowledgements, or pleasantries.',
       'Choose assistant_capabilities for questions about the assistant itself: its tools, skills, permissions, limitations, or how it works locally.',
       'Do not choose assistant_capabilities for questions about a repository, project, workspace, codebase, files, git state, or implementation details.',
+      'Choose environment_config for local machine configuration, app/editor setup, local MCP server setup, app integration, local folders or documents, or inspecting config outside the current workspace.',
+      'Do not choose explore_readonly or edit just because the request says configure or inspect when the real target is the local machine or another app outside the repository.',
       'If the latest user message is short but clearly confirms continuing an existing technical task, do not choose chat; choose the underlying task mode implied by the recent conversation.',
       'Choose explore_readonly for understanding code, architecture, git status, diffs, branches, logs, or other read-only inspection.',
       'Choose plan for brainstorming or planning without implementation.',
