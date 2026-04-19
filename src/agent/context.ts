@@ -6,7 +6,7 @@ import { compileContextSnapshot } from './contextCompiler';
 import type { GitWorkspaceState } from './gitWorkspaceState';
 import type { RepositorySummary } from './repoScan';
 import { scanRepository } from './repoScan';
-import { detectTaskMode, isLightweightTaskMode, type TaskModeDecision } from './taskMode';
+import { detectTaskMode, shouldUseRepositoryContext, type TaskModeDecision } from './taskMode';
 import { recordContextCompilation, recordRepoScanMetrics } from './runtimeMetrics';
 
 type SmartRole = 'user' | 'assistant' | 'tool' | 'slash';
@@ -555,7 +555,7 @@ export function buildSmartConversationHistoryResult(
   const historyBudget = Math.max(800, budget - reserveTokens);
   const snapshotCharBudget = Math.min(SMART_HISTORY_SNAPSHOT_CHAR_CAP, Math.max(900, Math.floor(historyBudget * 1.2)));
   const taskModeDecision = options.taskModeDecision ?? detectTaskMode(options.messages);
-  const repoSummary = isLightweightTaskMode(taskModeDecision.mode)
+  const repoSummary = !shouldUseRepositoryContext(taskModeDecision.mode)
     ? undefined
     : (options.repoSummary ?? scanRepository());
   if (repoSummary) {
