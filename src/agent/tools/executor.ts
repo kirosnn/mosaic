@@ -19,6 +19,7 @@ import {
 import { classifyShellCapability, resolveCapabilityApproval } from '../capabilities';
 import { formatStructuredGitInspection, type GitCommandCapture } from '../gitWorkspaceState';
 import { recordToolMetrics } from '../runtimeMetrics';
+import { resolveReviewPath, resolveToolPath, type ResolvedToolPath } from '../toolPathScope';
 
 const execAsync = promisify(exec);
 
@@ -490,7 +491,7 @@ REQUIRED ACTION: Ask the user to retry and confirm the change in review.`;
 }
 
 async function restoreWorkspaceFile(workspace: string, relativePath: string, content: string): Promise<void> {
-  const fullPath = resolve(workspace, relativePath);
+  const fullPath = resolveReviewPath(workspace, relativePath);
   if (content === '') {
     try {
       await unlink(fullPath);
@@ -529,6 +530,63 @@ async function enforceSingleReviewDecision(
 
 export interface ExecuteToolOptions {
   skipApproval?: boolean;
+}
+
+async function requestOutsideWorkspaceApproval(
+  toolName: string,
+  args: Record<string, unknown>,
+  pathInfo: ResolvedToolPath,
+): Promise<ToolResult | null> {
+  const approvalResult = await requestApproval(toolName, { ...args, path: pathInfo.absolutePath }, {
+    title: `${toolName} outside workspace (${pathInfo.displayPath})`,
+    content: pathInfo.absolutePath,
+    details: [
+      `Requested path: ${String(args.path ?? pathInfo.requestedPath)}`,
+      `Launch directory: ${process.cwd()}`,
+      'Scope: outside workspace',
+    ],
+  });
+
+  if (approvalResult.approved) {
+    return null;
+  }
+
+  if (approvalResult.customResponse) {
+    return {
+      success: false,
+      error: `OUTSIDE-WORKSPACE ACCESS REJECTED BY USER with custom instructions: "${approvalResult.customResponse}"
+
+The user provided a specific correction. Follow it exactly and do not retry the same path access.`,
+      userMessage: 'Outside-workspace access cancelled by user',
+    };
+  }
+
+  return {
+    success: false,
+    error: `OUTSIDE-WORKSPACE ACCESS REJECTED BY USER for ${toolName} on ${pathInfo.displayPath}
+
+REQUIRED ACTION: Use the question tool immediately to ask for the exact path, app, or scope to use next.
+Do not keep probing broad local directories without clarification.`,
+    userMessage: 'Outside-workspace access cancelled by user',
+  };
+}
+
+async function resolvePathForTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+  approvalsEnabled: boolean,
+  options: ExecuteToolOptions,
+): Promise<{ pathInfo?: ResolvedToolPath; rejection?: ToolResult }> {
+  const requestedPath = typeof args.path === 'string' ? args.path : '.';
+  const pathInfo = await resolveToolPath(workspace, requestedPath);
+
+  if (pathInfo.withinWorkspace || options.skipApproval === true || !approvalsEnabled) {
+    return { pathInfo };
+  }
+
+  const rejection = await requestOutsideWorkspaceApproval(toolName, args, pathInfo);
+  return rejection ? { rejection } : { pathInfo };
 }
 
 const globPatternCache = new Map<string, RegExp>();
@@ -1215,16 +1273,10 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const path = args.path as string;
         const startLine = args.start_line as number | undefined;
         const endLine = args.end_line as number | undefined;
-        const fullPath = resolve(workspace, path);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
-
-        const content = await readFile(fullPath, 'utf-8');
+        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const pathInfo = access.pathInfo!;
+        const content = await readFile(pathInfo.absolutePath, 'utf-8');
 
         if (startLine !== undefined || endLine !== undefined) {
           const lines = content.split('\n');
@@ -1256,14 +1308,11 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         let content = typeof args.content === 'string' ? args.content : '';
         if (content) content = content.trimEnd();
         const append = args.append === true;
-        const fullPath = resolve(workspace, path);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const pathInfo = access.pathInfo!;
+        const fullPath = pathInfo.absolutePath;
+        const displayPath = pathInfo.displayPath;
 
         await mkdir(dirname(fullPath), { recursive: true });
 
@@ -1284,14 +1333,14 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             };
           }
 
-          trackFileChange(path, oldContent, updatedContent);
+          trackFileChange(displayPath, oldContent, updatedContent);
 
           const diff = generateDiff(oldContent, updatedContent);
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange(oldContent === '' ? 'write' : 'edit', 'write', path, oldContent, updatedContent, {
-              title: `Write (${path})`,
+            addPendingChange(oldContent === '' ? 'write' : 'edit', 'write', displayPath, oldContent, updatedContent, {
+              title: `Write (${displayPath})`,
               content: diffLines.join('\n'),
             });
             let reviewResults: boolean[] = [];
@@ -1299,24 +1348,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               reviewResults = await startReview();
             }
             debugLog(
-              `[review] write/append review path=${path} decisions=${reviewResults.length}`,
+              `[review] write/append review path=${displayPath} decisions=${reviewResults.length}`,
             );
 
             const reviewResult = await enforceSingleReviewDecision(
               workspace,
-              path,
+              displayPath,
               oldContent,
-              `appending file: ${path}`,
+              `appending file: ${displayPath}`,
               reviewResults,
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] write/append auto-apply path=${path} approvalsEnabled=false`);
+            debugLog(`[review] write/append auto-apply path=${displayPath} approvalsEnabled=false`);
           }
 
           return {
             success: true,
-            result: `Content appended successfully to: ${path}`,
+            result: `Content appended successfully to: ${displayPath}`,
             diff: diffLines,
           };
         } else {
@@ -1329,14 +1378,14 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             };
           }
 
-          trackFileChange(path, oldContent, content);
+          trackFileChange(displayPath, oldContent, content);
 
           const diff = generateDiff(oldContent, content);
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange('write', 'write', path, oldContent, content, {
-              title: `Write (${path})`,
+            addPendingChange('write', 'write', displayPath, oldContent, content, {
+              title: `Write (${displayPath})`,
               content: diffLines.join('\n'),
             });
             let reviewResults: boolean[] = [];
@@ -1344,24 +1393,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               reviewResults = await startReview();
             }
             debugLog(
-              `[review] write review path=${path} decisions=${reviewResults.length}`,
+              `[review] write review path=${displayPath} decisions=${reviewResults.length}`,
             );
 
             const reviewResult = await enforceSingleReviewDecision(
               workspace,
-              path,
+              displayPath,
               oldContent,
-              `writing file: ${path}`,
+              `writing file: ${displayPath}`,
               reviewResults,
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] write auto-apply path=${path} approvalsEnabled=false`);
+            debugLog(`[review] write auto-apply path=${displayPath} approvalsEnabled=false`);
           }
 
           return {
             success: true,
-            result: `File written successfully: ${path}`,
+            result: `File written successfully: ${displayPath}`,
             diff: diffLines,
           };
         }
@@ -1372,17 +1421,15 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const recursive = args.recursive === null ? undefined : (args.recursive as boolean | undefined);
         const filter = args.filter === null ? undefined : (args.filter as string | undefined);
         const includeHidden = args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined);
-        const fullPath = resolve(workspace, path);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const pathInfo = access.pathInfo!;
+        const fullPath = pathInfo.absolutePath;
 
         if (recursive) {
-          const { results: files, errors: walkErrors } = await listFilesRecursive(path, workspace, filter, includeHidden);
+          const recursiveRoot = pathInfo.withinWorkspace ? workspace : fullPath;
+          const recursivePath = pathInfo.withinWorkspace ? path : '.';
+          const { results: files, errors: walkErrors } = await listFilesRecursive(recursivePath, recursiveRoot, filter, includeHidden);
 
           const RECURSIVE_LIST_ENTRY_CAP = 300;
           if (files.length > RECURSIVE_LIST_ENTRY_CAP) {
@@ -1420,7 +1467,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                   excluded: true
                 };
               }
-              const summary = await getFileStatSummary(resolve(workspace, file.path));
+              const summary = await getFileStatSummary(resolve(recursiveRoot, file.path));
               if (summary.type === 'file') {
                 return {
                   path: file.path,
@@ -1621,14 +1668,9 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case 'glob': {
         const pattern = args.pattern as string;
         const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
-        const fullPath = resolve(workspace, searchPath);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, { ...args, path: searchPath }, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const fullPath = access.pathInfo!.absolutePath;
 
         const files = await findFilesByPattern(pattern, fullPath);
 
@@ -1658,15 +1700,10 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const excludePattern = args.exclude_pattern === null ? undefined : (args.exclude_pattern as string | undefined);
         const outputMode = ((args.output_mode === null ? undefined : (args.output_mode as string | undefined)) ?? 'matches') as 'matches' | 'files' | 'count';
         const invertMatch = ((args.invert_match === null ? undefined : (args.invert_match as boolean | undefined)) ?? false);
-
-        const fullPath = resolve(workspace, searchPath);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, { ...args, path: searchPath }, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const pathInfo = access.pathInfo!;
+        const fullPath = pathInfo.absolutePath;
 
         const testSearchOptions: SearchOptions = {
           caseSensitive,
@@ -1748,13 +1785,13 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const batch = allFiles.slice(i, i + BATCH_SIZE);
           const batchResults = await Promise.all(
             batch.map(async (file) => {
-              const filePath = resolve(fullPath, file);
-              const searchResult = await searchInFile(filePath, query, searchOptions);
-              return {
-                file: join(searchPath, file),
-                matches: searchResult.matches,
-                matchCount: searchResult.matchCount ?? searchResult.matches.length,
-                skipped: searchResult.skipped,
+                const filePath = resolve(fullPath, file);
+                const searchResult = await searchInFile(filePath, query, searchOptions);
+                return {
+                file: pathInfo.withinWorkspace ? join(searchPath, file) : join(pathInfo.displayPath, file),
+                  matches: searchResult.matches,
+                  matchCount: searchResult.matchCount ?? searchResult.matches.length,
+                  skipped: searchResult.skipped,
                 skipReason: searchResult.skipReason,
               };
             })
@@ -1853,14 +1890,11 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         let newContent = args.new_content as string;
         if (newContent) newContent = newContent.trimEnd();
         const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
-        const fullPath = resolve(workspace, path);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const pathInfo = access.pathInfo!;
+        const fullPath = pathInfo.absolutePath;
+        const displayPath = pathInfo.displayPath;
 
         await mkdir(dirname(fullPath), { recursive: true });
 
@@ -1874,14 +1908,14 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         if (oldContent === '' && content === '') {
           await writeFile(fullPath, newContent, 'utf-8');
 
-          trackFileCreated(path, newContent);
+          trackFileCreated(displayPath, newContent);
 
           const diff = generateDiff('', newContent);
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange('write', 'edit', path, '', newContent, {
-              title: `Create (${path})`,
+            addPendingChange('write', 'edit', displayPath, '', newContent, {
+              title: `Create (${displayPath})`,
               content: diffLines.join('\n'),
             });
             let reviewResults: boolean[] = [];
@@ -1889,24 +1923,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               reviewResults = await startReview();
             }
             debugLog(
-              `[review] edit/create review path=${path} decisions=${reviewResults.length}`,
+              `[review] edit/create review path=${displayPath} decisions=${reviewResults.length}`,
             );
 
             const reviewResult = await enforceSingleReviewDecision(
               workspace,
-              path,
+              displayPath,
               '',
-              `creating file: ${path}`,
+              `creating file: ${displayPath}`,
               reviewResults,
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] edit/create auto-apply path=${path} approvalsEnabled=false`);
+            debugLog(`[review] edit/create auto-apply path=${displayPath} approvalsEnabled=false`);
           }
 
           return {
             success: true,
-            result: `File created and edited successfully: ${path}`,
+            result: `File created and edited successfully: ${displayPath}`,
             diff: diffLines,
           };
         }
@@ -1926,14 +1960,14 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         await writeFile(fullPath, updatedContent, 'utf-8');
 
-        trackFileChange(path, content, updatedContent);
+        trackFileChange(displayPath, content, updatedContent);
 
         const diff = generateDiff(content, updatedContent);
         const diffLines = formatDiffForDisplay(diff);
 
         if (approvalsEnabled) {
-          addPendingChange('edit', 'edit', path, content, updatedContent, {
-            title: `Edit (${path})`,
+          addPendingChange('edit', 'edit', displayPath, content, updatedContent, {
+            title: `Edit (${displayPath})`,
             content: diffLines.join('\n'),
           });
           let reviewResults: boolean[] = [];
@@ -1941,24 +1975,24 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             reviewResults = await startReview();
           }
           debugLog(
-            `[review] edit review path=${path} decisions=${reviewResults.length}`,
+            `[review] edit review path=${displayPath} decisions=${reviewResults.length}`,
           );
 
           const reviewResult = await enforceSingleReviewDecision(
             workspace,
-            path,
+            displayPath,
             content,
-            `editing file: ${path}`,
+            `editing file: ${displayPath}`,
             reviewResults,
           );
           if (reviewResult) return reviewResult;
         } else {
-          debugLog(`[review] edit auto-apply path=${path} approvalsEnabled=false`);
+          debugLog(`[review] edit auto-apply path=${displayPath} approvalsEnabled=false`);
         }
 
         return {
           success: true,
-          result: `File edited successfully: ${path}`,
+          result: `File edited successfully: ${displayPath}`,
           diff: diffLines,
         };
       }
@@ -1981,20 +2015,15 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write with path "${path}" to create a file instead.`
           };
         }
-        const fullPath = resolve(workspace, path);
-
-        if (!await validateWorkspacePath(fullPath, workspace)) {
-          return {
-            success: false,
-            error: 'Access denied: path is outside workspace'
-          };
-        }
+        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        if (access.rejection) return access.rejection;
+        const fullPath = access.pathInfo!.absolutePath;
 
         await mkdir(fullPath, { recursive: true });
 
         return {
           success: true,
-          result: `Directory created: ${path}`
+          result: `Directory created: ${access.pathInfo!.displayPath}`
         };
       }
 
