@@ -4,9 +4,9 @@ import { executeTool } from './executor';
 import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const read: CoreTool = tool({
-  description: 'Read the contents of a file from the workspace',
+  description: 'Read the contents of a local file. Relative paths resolve from the launch directory; absolute paths, ~, and environment-variable paths are also supported.',
   parameters: z.object({
-    path: z.string().describe('The path to the file relative to the workspace root'),
+    path: z.string().describe('File path. Relative paths resolve from the launch directory; absolute and home-directory paths are allowed.'),
     start_line: z.number().optional().describe('The line number to start reading from (1-based)'),
     end_line: z.number().optional().describe('The line number to end reading at (1-based)'),
   }),
