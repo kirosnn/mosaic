@@ -46,6 +46,7 @@ export interface MosaicConfig {
   modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   apiKeys?: Record<string, string>;
+  apiModels?: Record<string, string>;
   oauthTokens?: Record<string, OAuthTokenState>;
   oauthModels?: { [providerId: string]: AIModel[] };
   systemPrompt?: string;
@@ -55,6 +56,7 @@ export interface MosaicConfig {
   customModels?: { [providerId: string]: AIModel[] };
   requireApprovals?: boolean;
   recentProjects?: RecentProject[];
+  thinkingCollapsed?: boolean;
 }
 
 export interface OAuthTokenState {
@@ -73,10 +75,12 @@ export interface LightweightRoute {
 
 const LIGHTWEIGHT_PROVIDER_MODELS: Partial<Record<string, string>> = {
   openai: 'gpt-4.1-2025-04-14',
+  'openai-oauth': 'gpt-5.4-mini',
   anthropic: 'claude-haiku-4-5',
   mistral: 'mistral-medium-latest',
   xai: 'grok-code-fast-1',
   google: 'gemini-3-flash-preview',
+  'google-oauth': 'gemini-3-flash-preview',
   groq: 'llama-3.1-8b-instant',
   ollama: 'gpt-oss:120b',
   openrouter: 'x-ai/grok-code-fast-1',
@@ -147,7 +151,7 @@ function getOpenAIOAuthFallbackModels(): AIModel[] {
 }
 
 function getConfiguredOpenAIOAuthModels(config: MosaicConfig): AIModel[] {
-  return sanitizeOpenAIOAuthCatalogModels(config.oauthModels?.openai || []);
+  return sanitizeOpenAIOAuthCatalogModels(config.oauthModels?.['openai-oauth'] || []);
 }
 
 function getSupportedOpenAIOAuthModelIdsFromConfig(config: MosaicConfig): string[] {
@@ -168,14 +172,46 @@ function sanitizeLoadedConfig(config: MosaicConfig): MosaicConfig {
     delete config.modelReasoningEffort;
   }
 
-  if (config.oauthTokens?.openai?.accessToken) {
+  // Migration: Move legacy oauthTokens to new provider IDs
+  if (config.oauthTokens) {
+    if (config.oauthTokens.openai && !config.oauthTokens['openai-oauth']) {
+      config.oauthTokens['openai-oauth'] = config.oauthTokens.openai;
+      delete config.oauthTokens.openai;
+    }
+    if (config.oauthTokens.google && !config.oauthTokens['google-oauth']) {
+      config.oauthTokens['google-oauth'] = config.oauthTokens.google;
+      delete config.oauthTokens.google;
+    }
+  }
+
+  // Migration: Move legacy oauthModels to new provider IDs
+  if (config.oauthModels) {
+    if (config.oauthModels.openai && !config.oauthModels['openai-oauth']) {
+      config.oauthModels['openai-oauth'] = config.oauthModels.openai;
+      delete config.oauthModels.openai;
+    }
+    if (config.oauthModels.google && !config.oauthModels['google-oauth']) {
+      config.oauthModels['google-oauth'] = config.oauthModels.google;
+      delete config.oauthModels.google;
+    }
+  }
+
+  // Migration: Update active provider if it was using OAuth under legacy ID
+  if (config.provider === 'openai' && config.oauthTokens?.['openai-oauth']?.accessToken) {
+    config.provider = 'openai-oauth';
+  } else if (config.provider === 'google' && config.oauthTokens?.['google-oauth']?.accessToken) {
+    config.provider = 'google-oauth';
+  }
+
+  // Ensure openai-oauth has models populated
+  if (config.oauthTokens?.['openai-oauth']?.accessToken) {
     if (!config.oauthModels) {
       config.oauthModels = {};
     }
     const supportedIds = getSupportedOpenAIOAuthModelIdsFromConfig(config);
-    config.oauthModels.openai = supportedIds.map(modelId => createOpenAIOAuthModel(modelId));
+    config.oauthModels['openai-oauth'] = supportedIds.map(modelId => createOpenAIOAuthModel(modelId));
 
-    if (config.provider === 'openai') {
+    if (config.provider === 'openai-oauth') {
       const supported = new Set(supportedIds.map(id => id.toLowerCase()));
       const current = normalizeOpenAIOAuthModelId(config.model, supportedIds);
       if (!current || !supported.has(current.toLowerCase())) {
@@ -193,7 +229,7 @@ export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'openai',
     name: 'OpenAI',
-    description: 'GPT models from OpenAI',
+    description: 'GPT models from OpenAI (API Key)',
     requiresApiKey: true,
     models: [
       { id: 'gpt-5.4-2026-03-25', name: 'GPT-5.4', description: 'Latest GPT-5.4 model from OpenAI for coding and agentic tasks' },
@@ -202,6 +238,13 @@ export const AI_PROVIDERS: AIProvider[] = [
       { id: 'gpt-5-2025-08-07', name: 'GPT-5', description: 'The first model GPT 5 series from OpenAI' },
       { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', description: 'Smartest non-reasoning model from OpenAI' },
     ]
+  },
+  {
+    id: 'openai-oauth',
+    name: 'OpenAI (OAuth)',
+    description: 'ChatGPT Plus models from OpenAI (OAuth)',
+    requiresApiKey: false,
+    models: [] // Dynamically populated from ChatGPT account
   },
   {
     id: 'anthropic',
@@ -240,8 +283,19 @@ export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'google',
     name: 'Google',
-    description: 'Introducing Google would almost be insulting',
+    description: 'Google Vertex AI / AI Studio (API Key)',
     requiresApiKey: true,
+    models: [
+      { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', description: 'The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities' },
+      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'A versatile, cutting-edge model that excels in complex coding and reasoning tasks' },
+    ]
+  },
+  {
+    id: 'google-oauth',
+    name: 'Google (OAuth)',
+    description: 'Google Gemini Code Assist (OAuth)',
+    requiresApiKey: false,
     models: [
       { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', description: 'The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities' },
       { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash' },
@@ -286,31 +340,23 @@ export const AI_PROVIDERS: AIProvider[] = [
 function getAllProvidersFromConfig(config: MosaicConfig, options?: { includeOAuthModels?: boolean }): AIProvider[] {
   const customProviders = config.customProviders || [];
   const customModels = config.customModels || {};
-  const oauthModels = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
+  const oauthModelsMap = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
 
-  const providersWithCustomModels = AI_PROVIDERS.map(provider => {
-    const hasOAuthToken = provider.id !== 'anthropic' && !!config.oauthTokens?.[provider.id]?.accessToken;
-    const usesOpenAIOAuth = provider.id === 'openai' && hasOAuthToken;
-    const openaiOAuthModels =
-      usesOpenAIOAuth
-        ? getConfiguredOpenAIOAuthModels(config).length > 0
-          ? getConfiguredOpenAIOAuthModels(config)
-          : getOpenAIOAuthFallbackModels()
-        : [];
-    const baseModels =
-      usesOpenAIOAuth
-        ? openaiOAuthModels
-        : provider.models;
-    const customModelsForProvider = usesOpenAIOAuth ? [] : (customModels[provider.id] || []);
-    const oauthModelsForProvider = provider.id === 'anthropic'
-      ? []
-      : provider.id === 'openai'
-        ? []
-        : (oauthModels[provider.id] || []);
+  const mergedProviders = AI_PROVIDERS.map(provider => {
+    const customModelsForProvider = customModels[provider.id] || [];
+    const oauthModelsForProvider = oauthModelsMap[provider.id] || [];
+    
+    // For openai-oauth, if no models are stored yet, use fallbacks
+    let baseModels = provider.models;
+    if (provider.id === 'openai-oauth' && oauthModelsForProvider.length === 0) {
+      baseModels = getOpenAIOAuthFallbackModels();
+    }
+
     const mergedModels = [...baseModels, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
       list.findIndex(m => m.id === model.id) === index
     );
-    if (usesOpenAIOAuth || customModelsForProvider.length > 0 || oauthModelsForProvider.length > 0) {
+
+    if (customModelsForProvider.length > 0 || oauthModelsForProvider.length > 0 || provider.id === 'openai-oauth') {
       return {
         ...provider,
         models: mergedModels
@@ -319,7 +365,7 @@ function getAllProvidersFromConfig(config: MosaicConfig, options?: { includeOAut
     return provider;
   });
 
-  return [...providersWithCustomModels, ...customProviders];
+  return [...mergedProviders, ...customProviders];
 }
 
 function getProviderByIdFromConfig(id: string, config: MosaicConfig): AIProvider | undefined {
@@ -331,7 +377,7 @@ function hasAuthForProvider(providerId: string, config: MosaicConfig): boolean {
   if (!provider) {
     return false;
   }
-  if (providerId !== 'anthropic' && config.oauthTokens?.[providerId]?.accessToken) {
+  if (config.oauthTokens?.[providerId]?.accessToken) {
     return true;
   }
   if (config.apiKeys?.[providerId]) {
@@ -365,6 +411,7 @@ function getConfiguredLightweightRoute(config: MosaicConfig): LightweightRoute |
     source: 'configured',
   };
 }
+
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -438,7 +485,10 @@ function readCodexModelReasoningEffort(): ReasoningEffort | undefined {
   return undefined;
 }
 
-export function getAvailableReasoningEfforts(): readonly ReasoningEffort[] {
+export function getAvailableReasoningEfforts(providerId?: string, modelId?: string): readonly ReasoningEffort[] {
+  if (providerId === 'openai' || providerId === 'openai-oauth' || providerId === 'xai' || providerId === 'openrouter') {
+    return ['low', 'medium', 'high'];
+  }
   return REASONING_EFFORTS;
 }
 
@@ -488,6 +538,8 @@ export function markFirstRunComplete(provider: string, model: string, apiKey?: s
     if (!config.apiKeys) config.apiKeys = {};
     config.apiKeys[provider] = apiKey;
   }
+  if (!config.apiModels) config.apiModels = {};
+  config.apiModels[provider] = model;
   writeConfig(config);
 }
 
@@ -500,6 +552,8 @@ export function setFirstRunComplete(provider: string, model: string): void {
   if (stored) {
     config.apiKey = stored;
   }
+  if (!config.apiModels) config.apiModels = {};
+  config.apiModels[provider] = model;
   writeConfig(config);
 }
 
@@ -517,6 +571,10 @@ export function getProviderById(id: string): AIProvider | undefined {
 }
 
 export function getPreferredModelForProvider(providerId: string): string | undefined {
+  const config = readConfig();
+  if (config.apiModels?.[providerId]) {
+    return config.apiModels[providerId];
+  }
   const provider = getProviderById(providerId);
   return provider?.models[0]?.id;
 }
@@ -540,17 +598,6 @@ export function getLightweightRoute(
     return configuredRoute;
   }
 
-  if (providerId === 'openai' && config.oauthTokens?.openai?.accessToken) {
-    const preferredOAuthModel = normalizeOpenAIOAuthModelId('gpt-5.4-mini', getSupportedOpenAIOAuthModelIdsFromConfig(config));
-    if (preferredOAuthModel) {
-      return {
-        providerId,
-        modelId: preferredOAuthModel,
-        source: 'provider_default',
-      };
-    }
-  }
-
   const provider = getProviderByIdFromConfig(providerId, config);
   if (!provider) {
     return {
@@ -569,11 +616,9 @@ export function getLightweightRoute(
     };
   }
 
-  const normalizedCurrent = providerId === 'openai' && config.oauthTokens?.openai?.accessToken
-    ? normalizeOpenAIOAuthModelId(currentModelId, getSupportedOpenAIOAuthModelIdsFromConfig(config))
-    : currentModelId && provider.models.some(model => model.id === currentModelId)
-      ? currentModelId
-      : undefined;
+  const normalizedCurrent = currentModelId && provider.models.some(model => model.id === currentModelId)
+    ? currentModelId
+    : undefined;
   if (normalizedCurrent && provider.models.some(model => model.id === normalizedCurrent)) {
     return {
       providerId,
@@ -592,15 +637,23 @@ export function getLightweightRoute(
 export function normalizeModelForProvider(providerId: string, modelId?: string): string | undefined {
   const provider = getProviderById(providerId);
   if (!provider) return modelId;
-  if (providerId === 'openai' && readConfig().oauthTokens?.openai?.accessToken) {
-    const normalizedOAuthModel = normalizeOpenAIOAuthModelId(modelId, getSupportedOpenAIOAuthModelIdsFromConfig(readConfig()));
-    if (normalizedOAuthModel) {
-      return normalizedOAuthModel;
+  
+  const config = readConfig();
+
+  // If a specific modelId is requested and it's valid for this provider, use it.
+  if (modelId) {
+    if (provider.models.some(model => model.id === modelId)) {
+      return modelId;
     }
   }
-  if (modelId && provider.models.some(model => model.id === modelId)) {
-    return modelId;
+
+  // Fallback to preferred model for this provider if it exists and is valid.
+  const preferred = config.apiModels?.[providerId];
+  if (preferred && provider.models.some(m => m.id === preferred)) {
+    return preferred;
   }
+
+  // Final fallback to the provider's first model.
   return provider.models[0]?.id ?? modelId;
 }
 
@@ -612,8 +665,7 @@ export function getModelById(providerId: string, modelId: string): AIModel | und
 export function modelRequiresApiKey(providerId: string, modelId: string): boolean {
   const provider = getProviderById(providerId);
   const model = getModelById(providerId, modelId);
-  const config = readConfig();
-  if (providerId !== 'anthropic' && config.oauthTokens?.[providerId]?.accessToken) return false;
+  
   if (model?.requiresApiKey !== undefined) {
     return model.requiresApiKey === true;
   }
@@ -666,7 +718,7 @@ export function setOAuthModelsForProvider(providerId: string, models: AIModel[])
   if (!config.oauthModels) {
     config.oauthModels = {};
   }
-  config.oauthModels[providerId] = providerId === 'openai'
+  config.oauthModels[providerId] = providerId === 'openai-oauth'
     ? sanitizeOpenAIOAuthCatalogModels(models)
     : models;
   writeConfig(config);
@@ -784,7 +836,7 @@ export function getAuthForProvider(providerId: string):
   | { type: 'api_key'; apiKey: string }
   | { type: 'oauth'; accessToken: string; refreshToken?: string; expiresAt?: number; tokenType?: string; scope?: string }
   | undefined {
-  const oauth = providerId === 'anthropic' ? undefined : getOAuthTokenForProvider(providerId);
+  const oauth = getOAuthTokenForProvider(providerId);
   if (oauth?.accessToken) {
     return {
       type: 'oauth',
@@ -801,7 +853,7 @@ export function getAuthForProvider(providerId: string):
 }
 
 export function mapModelForOAuth(modelId: string): string {
-  return normalizeOpenAIOAuthModelId(modelId, getSupportedOpenAIOAuthModelIdsFromConfig(readConfig())) ?? modelId;
+  return modelId; // Handled by provider classes now
 }
 
 export function getSupportedOpenAIOAuthModels(): readonly string[] {
@@ -839,6 +891,7 @@ function normalizeOpenAIOAuthModelId(modelId: string | undefined, supportedModel
 
   return undefined;
 }
+
 export function setApiKeyForProvider(providerId: string, key: string): void {
   const config = readConfig();
   if (!config.apiKeys) config.apiKeys = {};
@@ -882,13 +935,23 @@ export function getStoredProviderIds(): string[] {
 export function setActiveProvider(providerId: string): void {
   const config = readConfig();
   config.provider = providerId;
-  config.apiKey = config.apiKeys?.[providerId] ?? config.apiKey;
+  config.apiKey = config.apiKeys?.[providerId];
+  
+  const preferredModel = config.apiModels?.[providerId];
+  if (preferredModel) {
+    config.model = preferredModel;
+  }
+  
   writeConfig(config);
 }
 
 export function setActiveModel(modelId: string): void {
   const config = readConfig();
   config.model = modelId;
+  if (config.provider) {
+    if (!config.apiModels) config.apiModels = {};
+    config.apiModels[config.provider] = modelId;
+  }
   writeConfig(config);
 }
 
@@ -914,6 +977,17 @@ export function setLightweightRoute(providerId: string, modelId: string): void {
 export function clearLightweightRoute(): void {
   const config = readConfig();
   delete config.lightweightRoute;
+  writeConfig(config);
+}
+
+export function getThinkingCollapsed(): boolean {
+  const config = readConfig();
+  return config.thinkingCollapsed ?? false;
+}
+
+export function setThinkingCollapsed(collapsed: boolean): void {
+  const config = readConfig();
+  config.thinkingCollapsed = collapsed;
   writeConfig(config);
 }
 
