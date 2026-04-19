@@ -4,23 +4,39 @@
   "description": "The open source coding agent.",
   "license": "MIT",
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "bin": {
     "mosaic": "bin/mosaic.cjs"
   },
   "files": [
     "bin",
-    "src",
+    "src/app",
+    "src/index.tsx",
+    "src/agent",
+    "src/auth",
+    "src/components",
+    "src/mcp",
+    "src/utils",
     "README.md",
-    "LICENSE"
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "!src/app/electron",
+    "!src/app/electron/**",
+    "!src/**/__tests__",
+    "!src/**/__tests__/**"
   ],
   "scripts": {
-    "dev": "bun run --watch src/index.tsx",
-    "mosaic": "bun run src/index.tsx",
-    "start": "bun run src/index.tsx",
+    "dev": "bun run --watch src/app/cli/main.tsx",
+    "mosaic": "bun run src/app/cli/main.tsx",
+    "start": "bun run src/app/cli/main.tsx",
     "lint": "bunx tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "electron:build-renderer": "bunx tsc -p tsconfig.electron.renderer.json && node --input-type=module -e \"import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('src/electron/renderer/dist', { recursive: true }); writeFileSync('src/electron/renderer/dist/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n');\"",
-    "electron:dev": "node src/electron/dev-runner.cjs"
+    "electron:dev": "node src/app/electron/dev-runner.cjs"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=18.0.0"
