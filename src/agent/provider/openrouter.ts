@@ -2,9 +2,10 @@ import { streamText, CoreMessage, CoreTool } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { AgentEvent, Provider, ProviderConfig, ProviderSendOptions } from '../types';
 import { z } from 'zod';
-import { getOpenAIReasoningOptions, resolveReasoningEnabled } from './reasoningConfig';
+import { getOpenAIReasoningOptions, resolveReasoningEnabled, resolveReasoningEffortSupported } from './reasoningConfig';
 import { getRetryDecision, normalizeError, runWithRetry } from './rateLimit';
 import { debugLog } from '../../utils/debug';
+import { findModelsDevModelById } from '../../utils/models';
 import { StreamSanitizer } from './streamSanitizer';
 import { ContextGuard } from './contextGuard';
 
@@ -82,15 +83,6 @@ function transformToolsForResponsesApi(
   return transformed;
 }
 
-function supportsReasoningEffort(modelId: string): boolean {
-  const id = modelId.toLowerCase();
-  if (id.startsWith('openai/')) return true;
-  if (id.startsWith('x-ai/') || id.startsWith('xai/')) return true;
-  if (id.includes('gpt-') || id.startsWith('gpt-')) return true;
-  if (id.startsWith('o1') || id.startsWith('o3')) return true;
-  if (id.includes('grok')) return true;
-  return false;
-}
 
 export class OpenRouterProvider implements Provider {
   async *sendMessage(
@@ -102,7 +94,8 @@ export class OpenRouterProvider implements Provider {
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
 
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    const openaiReasoning = supportsReasoningEffort(cleanModel)
+    const isReasoningEffortSupported = await resolveReasoningEffortSupported(config.provider, cleanModel);
+    const openaiReasoning = isReasoningEffortSupported
       ? getOpenAIReasoningOptions(reasoningEnabled, config.modelReasoningEffort)
       : undefined;
 
