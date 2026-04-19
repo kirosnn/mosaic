@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { detectTaskMode } from '../taskMode';
+import { detectTaskMode, shouldUseLightweightEnvironmentHandling } from '../taskMode';
 
 describe('task mode fallback heuristics', () => {
   it('keeps lightweight greetings in chat mode', () => {
@@ -17,6 +17,14 @@ describe('task mode fallback heuristics', () => {
 
     expect(decision.mode).toBe('assistant_capabilities');
     expect(decision.reason).toContain('capability');
+  });
+
+  it('routes MCP capability questions to assistant_capabilities', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'Tu as des serveurs MCP ?' },
+    ]);
+
+    expect(decision.mode).toBe('assistant_capabilities');
   });
 
   it('keeps repository questions out of assistant capability mode', () => {
@@ -63,6 +71,39 @@ describe('task mode fallback heuristics', () => {
     ]);
 
     expect(decision.mode).toBe('explore_readonly');
+  });
+
+  it('inherits environment_config for short subsystem follow-ups', () => {
+    const messages = [
+      { role: 'user', content: '/subsystem' },
+      { role: 'slash', content: 'Shell subsystem set to WSL (wsl).' },
+      { role: 'user', content: 'Et maintenant ?' },
+    ];
+    const decision = detectTaskMode(messages);
+
+    expect(decision.mode).toBe('environment_config');
+    expect(decision.reason).toContain('continuation');
+    expect(shouldUseLightweightEnvironmentHandling(messages, decision)).toBe(true);
+  });
+
+  it('uses lightweight environment handling for direct subsystem questions', () => {
+    const messages = [
+      { role: 'user', content: 'Quel est mon subsystem ?' },
+    ];
+    const decision = detectTaskMode(messages);
+
+    expect(decision.mode).toBe('environment_config');
+    expect(shouldUseLightweightEnvironmentHandling(messages, decision)).toBe(true);
+  });
+
+  it('keeps complex environment questions out of lightweight handling', () => {
+    const messages = [
+      { role: 'user', content: 'Explain fallback behavior across sessions for WSL vs pwsh and recommend which one I should use for this repo.' },
+    ];
+    const decision = detectTaskMode(messages);
+
+    expect(decision.mode).toBe('environment_config');
+    expect(shouldUseLightweightEnvironmentHandling(messages, decision)).toBe(false);
   });
 
   it('routes short questions to explore_readonly instead of edit fallback', () => {
