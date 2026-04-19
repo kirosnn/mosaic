@@ -1,17 +1,36 @@
-import { streamText, tool as createTool, CoreTool } from 'ai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createMistral } from '@ai-sdk/mistral';
-import { createXai } from '@ai-sdk/xai';
-import { stat } from 'fs/promises';
-import { resolve } from 'path';
-import { z } from 'zod';
-import { readConfig, getAuthForProvider, getSupportedOpenAIOAuthModels, isSupportedOpenAIOAuthModel, setOAuthTokenForProvider } from '../../utils/config';
-import { executeTool } from './executor';
-import { getExploreAbortSignal, isExploreAborted, notifyExploreTool, getExploreContext, addExploreSummary, getExploreSummaries, getConversationMemory } from '../../utils/exploreBridge';
-import { refreshOpenAIOAuthToken, refreshGoogleOAuthToken, getOpenAIChatGPTAccountId, OPENAI_CHATGPT_OAUTH_BASE_URL } from '../../auth/oauth';
-import { debugLog, maskToken } from '../../utils/debug';
+import { streamText, tool as createTool, CoreTool } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createMistral } from "@ai-sdk/mistral";
+import { createXai } from "@ai-sdk/xai";
+import { stat } from "fs/promises";
+import { resolve } from "path";
+import { z } from "zod";
+import {
+  readConfig,
+  getAuthForProvider,
+  getSupportedOpenAIOAuthModels,
+  isSupportedOpenAIOAuthModel,
+  setOAuthTokenForProvider,
+} from "../../utils/config";
+import { executeTool } from "./executor";
+import {
+  getExploreAbortSignal,
+  isExploreAborted,
+  notifyExploreTool,
+  getExploreContext,
+  addExploreSummary,
+  getExploreSummaries,
+  getConversationMemory,
+} from "../../utils/exploreBridge";
+import {
+  refreshOpenAIOAuthToken,
+  refreshGoogleOAuthToken,
+  getOpenAIChatGPTAccountId,
+  OPENAI_CHATGPT_OAUTH_BASE_URL,
+} from "../../auth/oauth";
+import { debugLog, maskToken } from "../../utils/debug";
 import {
   waitForRateLimit,
   reportRateLimitSuccess,
@@ -19,7 +38,7 @@ import {
   configureGlobalRateLimit,
   getRetryDecision,
   getRateLimitStatus,
-} from '../provider/rateLimit';
+} from "../provider/rateLimit";
 
 interface ExploreLog {
   tool: string;
@@ -34,10 +53,12 @@ function unwrapOptional(schema: z.ZodTypeAny): z.ZodTypeAny {
   }
   if (schema instanceof z.ZodEffects) {
     const inner = unwrapOptional(schema.innerType());
-    return inner === schema.innerType() ? schema : new z.ZodEffects({
-      ...schema._def,
-      schema: inner,
-    });
+    return inner === schema.innerType()
+      ? schema
+      : new z.ZodEffects({
+          ...schema._def,
+          schema: inner,
+        });
   }
   return schema;
 }
@@ -81,7 +102,7 @@ function makeAllPropertiesRequired(schema: z.ZodTypeAny): z.ZodTypeAny {
 }
 
 function transformToolsForResponsesApi(
-  tools: Record<string, CoreTool> | undefined
+  tools: Record<string, CoreTool> | undefined,
 ): Record<string, CoreTool> | undefined {
   if (!tools) return tools;
 
@@ -103,11 +124,11 @@ function transformToolsForResponsesApi(
 let exploreLogs: ExploreLog[] = [];
 
 const EXPLORE_TIMEOUT = 8 * 60 * 1000;
-const EXPLORE_RATE_LIMIT_KEY = 'explore';
+const EXPLORE_RATE_LIMIT_KEY = "explore";
 const MAX_EXPLORE_RETRIES = 5;
 const EXPLORE_RETRY_BASE_DELAY_MS = 2000;
 
-const PERSISTENT_CACHE_KEY = '__mosaic_explore_persistent_cache__';
+const PERSISTENT_CACHE_KEY = "__mosaic_explore_persistent_cache__";
 const gbl = globalThis as any;
 if (!gbl[PERSISTENT_CACHE_KEY]) {
   gbl[PERSISTENT_CACHE_KEY] = {
@@ -137,25 +158,34 @@ const MAX_ALREADY_READ_FILES = 12;
 
 function normalizeOAuthErrorResponse(res: Response, text: string): Response {
   try {
-    const parsed = JSON.parse(text) as { detail?: string; error?: { message?: string } };
-    if (typeof parsed.error?.message === 'string' && parsed.error.message.length > 0) {
+    const parsed = JSON.parse(text) as {
+      detail?: string;
+      error?: { message?: string };
+    };
+    if (
+      typeof parsed.error?.message === "string" &&
+      parsed.error.message.length > 0
+    ) {
       return res;
     }
-    if (typeof parsed.detail !== 'string' || parsed.detail.length === 0) {
+    if (typeof parsed.detail !== "string" || parsed.detail.length === 0) {
       return res;
     }
     const headers = new Headers(res.headers);
-    headers.set('content-type', 'application/json');
-    return new Response(JSON.stringify({
-      error: {
-        message: parsed.detail,
-        type: 'invalid_request_error',
+    headers.set("content-type", "application/json");
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: parsed.detail,
+          type: "invalid_request_error",
+        },
+      }),
+      {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
       },
-    }), {
-      status: res.status,
-      statusText: res.statusText,
-      headers,
-    });
+    );
   } catch {
     return res;
   }
@@ -165,14 +195,17 @@ function extractDomain(url: string): string {
   try {
     return new URL(url).hostname;
   } catch {
-    return '';
+    return "";
   }
 }
 
 function isDomainBlocked(url: string): boolean {
   const domain = extractDomain(url);
   if (!domain) return false;
-  return (persistentExploreState.failedDomains.get(domain) ?? 0) >= DOMAIN_FAIL_THRESHOLD;
+  return (
+    (persistentExploreState.failedDomains.get(domain) ?? 0) >=
+    DOMAIN_FAIL_THRESHOLD
+  );
 }
 
 function recordDomainFailure(url: string): void {
@@ -211,33 +244,53 @@ export function getExploreKnowledgeReadFiles(): Map<string, string> {
   return exploreKnowledge.readFiles;
 }
 
-function makeCallSignature(tool: string, args: Record<string, unknown>): string {
-  const sorted = Object.keys(args).sort().reduce((acc, k) => {
-    acc[k] = args[k];
-    return acc;
-  }, {} as Record<string, unknown>);
+function makeCallSignature(
+  tool: string,
+  args: Record<string, unknown>,
+): string {
+  const sorted = Object.keys(args)
+    .sort()
+    .reduce(
+      (acc, k) => {
+        acc[k] = args[k];
+        return acc;
+      },
+      {} as Record<string, unknown>,
+    );
   return `${tool}::${JSON.stringify(sorted)}`;
 }
 
 function toNumberOrUndefined(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
-function buildReadArgs(rawArgs: Record<string, unknown>): { path: string; start_line?: number; end_line?: number } {
-  const path = typeof rawArgs.path === 'string' ? rawArgs.path : '';
+function buildReadArgs(rawArgs: Record<string, unknown>): {
+  path: string;
+  start_line?: number;
+  end_line?: number;
+} {
+  const path = typeof rawArgs.path === "string" ? rawArgs.path : "";
   const startLine = toNumberOrUndefined(rawArgs.start_line);
   const endLine = toNumberOrUndefined(rawArgs.end_line);
-  const readArgs: { path: string; start_line?: number; end_line?: number } = { path };
+  const readArgs: { path: string; start_line?: number; end_line?: number } = {
+    path,
+  };
   if (startLine !== undefined) readArgs.start_line = startLine;
   if (endLine !== undefined) readArgs.end_line = endLine;
   return readArgs;
 }
 
-function formatReadScope(path: string, startLine?: number, endLine?: number): string {
-  if (startLine === undefined && endLine === undefined) return path || '?';
-  const start = startLine !== undefined ? String(startLine) : 'start';
-  const end = endLine !== undefined ? String(endLine) : 'end';
-  return `${path || '?'}:${start}-${end}`;
+function formatReadScope(
+  path: string,
+  startLine?: number,
+  endLine?: number,
+): string {
+  if (startLine === undefined && endLine === undefined) return path || "?";
+  const start = startLine !== undefined ? String(startLine) : "start";
+  const end = endLine !== undefined ? String(endLine) : "end";
+  return `${path || "?"}:${start}-${end}`;
 }
 
 async function getReadFileState(path: string): Promise<string> {
@@ -246,30 +299,39 @@ async function getReadFileState(path: string): Promise<string> {
     const fileStat = await stat(filePath);
     return `${Math.floor(fileStat.mtimeMs)}:${fileStat.size}`;
   } catch {
-    return 'missing';
+    return "missing";
   }
 }
 
 function makeReadCallSignature(
   args: { path: string; start_line?: number; end_line?: number },
-  fileState: string
+  fileState: string,
 ): string {
-  const sigArgs: Record<string, unknown> = { path: args.path, file_state: fileState };
+  const sigArgs: Record<string, unknown> = {
+    path: args.path,
+    file_state: fileState,
+  };
   if (args.start_line !== undefined) sigArgs.start_line = args.start_line;
   if (args.end_line !== undefined) sigArgs.end_line = args.end_line;
-  return makeCallSignature('read', sigArgs);
+  return makeCallSignature("read", sigArgs);
 }
 
 function describeToolCall(log: ExploreLog): string {
   const t = log.tool;
   const a = log.args;
-  if (t === 'read') return formatReadScope(a.path as string || '?', toNumberOrUndefined(a.start_line), toNumberOrUndefined(a.end_line));
-  if (t === 'glob') return `${a.pattern}${a.path && a.path !== '.' ? ' in ' + a.path : ''}`;
-  if (t === 'grep') return `"${a.query}"${a.pattern ? ' in ' + a.pattern : ''}`;
-  if (t === 'list') return a.path as string || '.';
-  if (t === 'fetch') return a.url as string || '?';
-  if (t === 'search') return `"${a.query}"`;
-  return Object.values(a).filter(Boolean).join(', ');
+  if (t === "read")
+    return formatReadScope(
+      (a.path as string) || "?",
+      toNumberOrUndefined(a.start_line),
+      toNumberOrUndefined(a.end_line),
+    );
+  if (t === "glob")
+    return `${a.pattern}${a.path && a.path !== "." ? " in " + a.path : ""}`;
+  if (t === "grep") return `"${a.query}"${a.pattern ? " in " + a.pattern : ""}`;
+  if (t === "list") return (a.path as string) || ".";
+  if (t === "fetch") return (a.url as string) || "?";
+  if (t === "search") return `"${a.query}"`;
+  return Object.values(a).filter(Boolean).join(", ");
 }
 
 configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
@@ -370,8 +432,14 @@ let exploreSystemPromptForOAuth: string | null = null;
 
 async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
   if (!currentOAuthState?.refreshToken) return currentOAuthState;
-  if (currentOAuthState.expiresAt && Date.now() < currentOAuthState.expiresAt - 60000) return currentOAuthState;
-  const refreshed = await refreshOpenAIOAuthToken(currentOAuthState.refreshToken);
+  if (
+    currentOAuthState.expiresAt &&
+    Date.now() < currentOAuthState.expiresAt - 60000
+  )
+    return currentOAuthState;
+  const refreshed = await refreshOpenAIOAuthToken(
+    currentOAuthState.refreshToken,
+  );
   if (!refreshed) return currentOAuthState;
   currentOAuthState = {
     accessToken: refreshed.accessToken,
@@ -380,7 +448,7 @@ async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
     tokenType: refreshed.tokenType,
     scope: refreshed.scope,
   };
-  setOAuthTokenForProvider('openai', {
+  setOAuthTokenForProvider("openai", {
     accessToken: currentOAuthState.accessToken,
     refreshToken: currentOAuthState.refreshToken,
     expiresAt: currentOAuthState.expiresAt,
@@ -390,18 +458,31 @@ async function refreshOAuthIfNeeded(): Promise<OAuthState | null> {
   return currentOAuthState;
 }
 
-async function refreshGoogleOAuthIfNeeded(force = false): Promise<OAuthState | null> {
+async function refreshGoogleOAuthIfNeeded(
+  force = false,
+): Promise<OAuthState | null> {
   if (!currentGoogleOAuthState?.refreshToken) return currentGoogleOAuthState;
-  if (!force && currentGoogleOAuthState.expiresAt && Date.now() < currentGoogleOAuthState.expiresAt - 60000) return currentGoogleOAuthState;
+  if (
+    !force &&
+    currentGoogleOAuthState.expiresAt &&
+    Date.now() < currentGoogleOAuthState.expiresAt - 60000
+  )
+    return currentGoogleOAuthState;
   if (force) {
-    debugLog(`[oauth][explore][google] force refresh requested, invalidating current token`);
+    debugLog(
+      `[oauth][explore][google] force refresh requested, invalidating current token`,
+    );
     if (currentGoogleOAuthState.expiresAt) {
       currentGoogleOAuthState = { ...currentGoogleOAuthState, expiresAt: 0 };
     }
   }
-  const refreshed = await refreshGoogleOAuthToken(currentGoogleOAuthState.refreshToken!);
+  const refreshed = await refreshGoogleOAuthToken(
+    currentGoogleOAuthState.refreshToken!,
+  );
   if (!refreshed) {
-    debugLog(`[oauth][explore][google] refresh returned null, token may be permanently invalid`);
+    debugLog(
+      `[oauth][explore][google] refresh returned null, token may be permanently invalid`,
+    );
     return currentGoogleOAuthState;
   }
   currentGoogleOAuthState = {
@@ -411,7 +492,7 @@ async function refreshGoogleOAuthIfNeeded(force = false): Promise<OAuthState | n
     tokenType: refreshed.tokenType,
     scope: refreshed.scope,
   };
-  setOAuthTokenForProvider('google', {
+  setOAuthTokenForProvider("google", {
     accessToken: currentGoogleOAuthState.accessToken,
     refreshToken: currentGoogleOAuthState.refreshToken,
     expiresAt: currentGoogleOAuthState.expiresAt,
@@ -421,42 +502,62 @@ async function refreshGoogleOAuthIfNeeded(force = false): Promise<OAuthState | n
   return currentGoogleOAuthState;
 }
 
-const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+const fetchWithOAuth = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
   const active = await refreshOAuthIfNeeded();
   const accessToken = active?.accessToken;
-  const accountId = accessToken ? getOpenAIChatGPTAccountId(accessToken) : undefined;
+  const accountId = accessToken
+    ? getOpenAIChatGPTAccountId(accessToken)
+    : undefined;
 
-  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  const headers = new Headers(
+    input instanceof Request ? input.headers : undefined,
+  );
   if (init?.headers) {
     const extra = new Headers(init.headers);
     extra.forEach((value, key) => headers.set(key, value));
   }
-  headers.delete('authorization');
-  headers.delete('Authorization');
-  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
-  headers.set('OpenAI-Beta', 'responses=experimental');
-  headers.set('originator', 'codex_cli_rs');
-  if (accountId) headers.set('chatgpt-account-id', accountId);
+  headers.delete("authorization");
+  headers.delete("Authorization");
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.set("OpenAI-Beta", "responses=experimental");
+  headers.set("originator", "codex_cli_rs");
+  if (accountId) headers.set("chatgpt-account-id", accountId);
 
-  let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
+  let url =
+    typeof input === "string"
+      ? input
+      : input instanceof Request
+        ? input.url
+        : input.toString();
   const originalUrl = url;
   let nextInit: RequestInit = {
     ...init,
     headers,
   };
 
-  const method = (nextInit.method || (input instanceof Request ? input.method : 'GET')).toString().toUpperCase();
-  if (method === 'POST') {
-    const contentType = headers.get('content-type') ?? '';
+  const method = (
+    nextInit.method || (input instanceof Request ? input.method : "GET")
+  )
+    .toString()
+    .toUpperCase();
+  if (method === "POST") {
+    const contentType = headers.get("content-type") ?? "";
     let bodyText: string | undefined;
-    if (typeof nextInit.body === 'string') {
+    if (typeof nextInit.body === "string") {
       bodyText = nextInit.body;
     } else if (nextInit.body instanceof Uint8Array) {
       bodyText = new TextDecoder().decode(nextInit.body);
     } else if (nextInit.body instanceof ArrayBuffer) {
       bodyText = new TextDecoder().decode(new Uint8Array(nextInit.body));
     }
-    if (bodyText && (contentType.includes('application/json') || bodyText.trim().startsWith('{'))) {
+    if (
+      bodyText &&
+      (contentType.includes("application/json") ||
+        bodyText.trim().startsWith("{"))
+    ) {
       try {
         const json = JSON.parse(bodyText);
         let modified = false;
@@ -474,67 +575,94 @@ const fetchWithOAuth = async (input: RequestInfo | URL, init?: RequestInit): Pro
         }
         if (modified) {
           nextInit = { ...nextInit, body: JSON.stringify(json) };
-          headers.set('content-type', 'application/json');
+          headers.set("content-type", "application/json");
         }
-      } catch { }
+      } catch {}
     }
   }
-  debugLog(`[oauth][explore] ${method} ${originalUrl} -> ${url} token=${maskToken(accessToken)} account=${accountId ?? ''}`);
+  debugLog(
+    `[oauth][explore] ${method} ${originalUrl} -> ${url} token=${maskToken(accessToken)} account=${accountId ?? ""}`,
+  );
   const res = await fetch(url, nextInit);
   if (!res.ok) {
     const text = await res.clone().text();
-    debugLog(`[oauth][explore] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`);
+    debugLog(
+      `[oauth][explore] ${method} ${url} status=${res.status} body=${text.slice(0, 500)}`,
+    );
     return normalizeOAuthErrorResponse(res, text);
   }
   return res;
 };
 
-const GOOGLE_CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
-const GOOGLE_CODE_ASSIST_VERSION = 'v1internal';
+const GOOGLE_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com";
+const GOOGLE_CODE_ASSIST_VERSION = "v1internal";
 let cachedGoogleProjectId: string | null = null;
 
 const GOOGLE_CLIENT_METADATA = {
-  ideType: 'GEMINI_CLI',
-  pluginType: 'GEMINI',
+  ideType: "GEMINI_CLI",
+  pluginType: "GEMINI",
 };
 
 async function discoverGoogleProjectId(accessToken: string): Promise<string> {
   if (cachedGoogleProjectId) return cachedGoogleProjectId;
 
   const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
   };
 
-  const loadRes = await fetch(`${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}:loadCodeAssist`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      metadata: { ...GOOGLE_CLIENT_METADATA, duetProject: 'default-project' },
-    }),
-  });
+  const loadRes = await fetch(
+    `${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}:loadCodeAssist`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        metadata: { ...GOOGLE_CLIENT_METADATA, duetProject: "default-project" },
+      }),
+    },
+  );
   if (!loadRes.ok) {
     const text = await loadRes.text();
-    debugLog(`[oauth][explore][google] loadCodeAssist failed status=${loadRes.status} body=${text.slice(0, 500)}`);
-    throw new Error(`Google Code Assist loadCodeAssist failed (${loadRes.status})`);
+    debugLog(
+      `[oauth][explore][google] loadCodeAssist failed status=${loadRes.status} body=${text.slice(0, 500)}`,
+    );
+    throw new Error(
+      `Google Code Assist loadCodeAssist failed (${loadRes.status})`,
+    );
   }
-  const loadData = await loadRes.json() as { cloudaicompanionProject?: string | null };
+  const loadData = (await loadRes.json()) as {
+    cloudaicompanionProject?: string | null;
+  };
   if (loadData.cloudaicompanionProject) {
     cachedGoogleProjectId = loadData.cloudaicompanionProject;
-    debugLog(`[oauth][explore][google] discovered projectId=${cachedGoogleProjectId}`);
+    debugLog(
+      `[oauth][explore][google] discovered projectId=${cachedGoogleProjectId}`,
+    );
     return cachedGoogleProjectId;
   }
 
-  debugLog('[oauth][explore][google] no project, starting onboarding...');
-  const onboardRes = await fetch(`${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}:onboardUser`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ tierId: 'free-tier', metadata: GOOGLE_CLIENT_METADATA }),
-  });
+  debugLog("[oauth][explore][google] no project, starting onboarding...");
+  const onboardRes = await fetch(
+    `${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}:onboardUser`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        tierId: "free-tier",
+        metadata: GOOGLE_CLIENT_METADATA,
+      }),
+    },
+  );
   if (!onboardRes.ok) {
-    throw new Error(`Google Code Assist onboarding failed (${onboardRes.status})`);
+    throw new Error(
+      `Google Code Assist onboarding failed (${onboardRes.status})`,
+    );
   }
-  const lro = await onboardRes.json() as { name?: string; done?: boolean; response?: { cloudaicompanionProject?: { id?: string } } };
+  const lro = (await onboardRes.json()) as {
+    name?: string;
+    done?: boolean;
+    response?: { cloudaicompanionProject?: { id?: string } };
+  };
 
   if (lro.done && lro.response?.cloudaicompanionProject?.id) {
     cachedGoogleProjectId = lro.response.cloudaicompanionProject.id;
@@ -543,13 +671,16 @@ async function discoverGoogleProjectId(accessToken: string): Promise<string> {
 
   if (lro.name) {
     for (let i = 0; i < 24; i++) {
-      await new Promise(r => setTimeout(r, 5000));
-      const pollRes = await fetch(`${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}/${lro.name}`, {
-        method: 'GET',
-        headers,
-      });
+      await new Promise((r) => setTimeout(r, 5000));
+      const pollRes = await fetch(
+        `${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}/${lro.name}`,
+        {
+          method: "GET",
+          headers,
+        },
+      );
       if (!pollRes.ok) break;
-      const op = await pollRes.json() as typeof lro;
+      const op = (await pollRes.json()) as typeof lro;
       if (op.done) {
         if (op.response?.cloudaicompanionProject?.id) {
           cachedGoogleProjectId = op.response.cloudaicompanionProject.id;
@@ -560,22 +691,28 @@ async function discoverGoogleProjectId(accessToken: string): Promise<string> {
     }
   }
 
-  throw new Error('Google Code Assist onboarding timed out.');
+  throw new Error("Google Code Assist onboarding timed out.");
 }
 
 function safeJsonStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
-    return '';
+    return "";
   }
 }
 
-type ExploreThoughtSignatureEntry = { toolName: string; argsJson: string; thoughtSignature: string };
+type ExploreThoughtSignatureEntry = {
+  toolName: string;
+  argsJson: string;
+  thoughtSignature: string;
+};
 let exploreThoughtSignatures: ExploreThoughtSignatureEntry[] = [];
 const MAX_EXPLORE_THOUGHT_SIGNATURES = 512;
 
-function extractExploreThoughtSignatures(payload: any): ExploreThoughtSignatureEntry[] {
+function extractExploreThoughtSignatures(
+  payload: any,
+): ExploreThoughtSignatureEntry[] {
   const candidates = payload?.candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
   const first = candidates[0];
@@ -586,7 +723,11 @@ function extractExploreThoughtSignatures(payload: any): ExploreThoughtSignatureE
   for (const part of parts) {
     const functionCall = part?.functionCall;
     const thoughtSignature = part?.thoughtSignature;
-    if (!functionCall || typeof functionCall.name !== 'string' || typeof thoughtSignature !== 'string') {
+    if (
+      !functionCall ||
+      typeof functionCall.name !== "string" ||
+      typeof thoughtSignature !== "string"
+    ) {
       continue;
     }
     out.push({
@@ -598,27 +739,40 @@ function extractExploreThoughtSignatures(payload: any): ExploreThoughtSignatureE
   return out;
 }
 
-function mergeExploreThoughtSignatures(entries: ExploreThoughtSignatureEntry[]): number {
+function mergeExploreThoughtSignatures(
+  entries: ExploreThoughtSignatureEntry[],
+): number {
   if (entries.length === 0) return 0;
   exploreThoughtSignatures.push(...entries);
   if (exploreThoughtSignatures.length > MAX_EXPLORE_THOUGHT_SIGNATURES) {
-    exploreThoughtSignatures = exploreThoughtSignatures.slice(-MAX_EXPLORE_THOUGHT_SIGNATURES);
+    exploreThoughtSignatures = exploreThoughtSignatures.slice(
+      -MAX_EXPLORE_THOUGHT_SIGNATURES,
+    );
   }
   return entries.length;
 }
 
-function injectExploreThoughtSignatures(requestBody: any): { injected: number; total: number; missing: number } {
+function injectExploreThoughtSignatures(requestBody: any): {
+  injected: number;
+  total: number;
+  missing: number;
+} {
   const contents = requestBody?.contents;
   if (!Array.isArray(contents)) {
     return { injected: 0, total: 0, missing: 0 };
   }
 
-  const modelFunctionCalls: Array<{ part: any; toolName: string; argsJson: string }> = [];
+  const modelFunctionCalls: Array<{
+    part: any;
+    toolName: string;
+    argsJson: string;
+  }> = [];
   for (const content of contents) {
-    if (!content || content.role !== 'model' || !Array.isArray(content.parts)) continue;
+    if (!content || content.role !== "model" || !Array.isArray(content.parts))
+      continue;
     for (const part of content.parts) {
       const functionCall = part?.functionCall;
-      if (!functionCall || typeof functionCall.name !== 'string') continue;
+      if (!functionCall || typeof functionCall.name !== "string") continue;
       modelFunctionCalls.push({
         part,
         toolName: functionCall.name,
@@ -627,9 +781,18 @@ function injectExploreThoughtSignatures(requestBody: any): { injected: number; t
     }
   }
 
-  if (modelFunctionCalls.length === 0 || exploreThoughtSignatures.length === 0) {
+  if (
+    modelFunctionCalls.length === 0 ||
+    exploreThoughtSignatures.length === 0
+  ) {
     const missing = modelFunctionCalls.reduce((acc, call) => {
-      return acc + ((typeof call.part.thoughtSignature === 'string' && call.part.thoughtSignature.length > 0) ? 0 : 1);
+      return (
+        acc +
+        (typeof call.part.thoughtSignature === "string" &&
+        call.part.thoughtSignature.length > 0
+          ? 0
+          : 1)
+      );
     }, 0);
     return { injected: 0, total: modelFunctionCalls.length, missing };
   }
@@ -640,13 +803,20 @@ function injectExploreThoughtSignatures(requestBody: any): { injected: number; t
 
   for (let i = modelFunctionCalls.length - 1; i >= 0; i--) {
     const call = modelFunctionCalls[i]!;
-    if (typeof call.part.thoughtSignature === 'string' && call.part.thoughtSignature.length > 0) continue;
+    if (
+      typeof call.part.thoughtSignature === "string" &&
+      call.part.thoughtSignature.length > 0
+    )
+      continue;
 
     let index = -1;
     for (let j = exploreThoughtSignatures.length - 1; j >= 0; j--) {
       if (used.has(j)) continue;
       const entry = exploreThoughtSignatures[j]!;
-      if (entry.toolName === call.toolName && entry.argsJson === call.argsJson) {
+      if (
+        entry.toolName === call.toolName &&
+        entry.argsJson === call.argsJson
+      ) {
         index = j;
         break;
       }
@@ -657,14 +827,19 @@ function injectExploreThoughtSignatures(requestBody: any): { injected: number; t
       continue;
     }
 
-    call.part.thoughtSignature = exploreThoughtSignatures[index]!.thoughtSignature;
+    call.part.thoughtSignature =
+      exploreThoughtSignatures[index]!.thoughtSignature;
     used.add(index);
     injected++;
   }
 
   for (let i = unresolved.length - 1; i >= 0; i--) {
     const pending = unresolved[i]!;
-    if (typeof pending.part.thoughtSignature === 'string' && pending.part.thoughtSignature.length > 0) continue;
+    if (
+      typeof pending.part.thoughtSignature === "string" &&
+      pending.part.thoughtSignature.length > 0
+    )
+      continue;
     let index = -1;
     for (let j = exploreThoughtSignatures.length - 1; j >= 0; j--) {
       if (used.has(j)) continue;
@@ -674,13 +849,20 @@ function injectExploreThoughtSignatures(requestBody: any): { injected: number; t
       }
     }
     if (index < 0) continue;
-    pending.part.thoughtSignature = exploreThoughtSignatures[index]!.thoughtSignature;
+    pending.part.thoughtSignature =
+      exploreThoughtSignatures[index]!.thoughtSignature;
     used.add(index);
     injected++;
   }
 
   const missing = modelFunctionCalls.reduce((acc, call) => {
-    return acc + ((typeof call.part.thoughtSignature === 'string' && call.part.thoughtSignature.length > 0) ? 0 : 1);
+    return (
+      acc +
+      (typeof call.part.thoughtSignature === "string" &&
+      call.part.thoughtSignature.length > 0
+        ? 0
+        : 1)
+    );
   }, 0);
   return { injected, total: modelFunctionCalls.length, missing };
 }
@@ -692,19 +874,19 @@ const GOOGLE_QUOTA_MAX_RETRIES = 10;
 function parseGoogleQuotaResetDelay(body: string): number {
   try {
     const parsed = JSON.parse(body);
-    const message: string = parsed?.error?.message ?? '';
+    const message: string = parsed?.error?.message ?? "";
     const details: any[] | undefined = parsed?.error?.details;
 
     let metadataDelay: number | undefined;
     if (Array.isArray(details)) {
       for (const detail of details) {
         const raw = detail?.metadata?.quotaResetDelay;
-        if (typeof raw === 'string') {
+        if (typeof raw === "string") {
           const m = raw.match(/^([0-9]+(?:\.[0-9]+)?)\s*(ms|s|m)?$/i);
           if (m) {
             const amount = parseFloat(m[1]!);
-            const unit = (m[2] || 's').toLowerCase();
-            const mult = unit === 'ms' ? 1 : unit === 'm' ? 60000 : 1000;
+            const unit = (m[2] || "s").toLowerCase();
+            const mult = unit === "ms" ? 1 : unit === "m" ? 60000 : 1000;
             metadataDelay = Math.round(amount * mult);
           }
         }
@@ -718,19 +900,28 @@ function parseGoogleQuotaResetDelay(body: string): number {
     }
 
     const delay = Math.max(metadataDelay ?? 0, messageDelay ?? 0);
-    return Math.min(GOOGLE_QUOTA_MAX_DELAY, Math.max(GOOGLE_QUOTA_MIN_DELAY, delay));
+    return Math.min(
+      GOOGLE_QUOTA_MAX_DELAY,
+      Math.max(GOOGLE_QUOTA_MIN_DELAY, delay),
+    );
   } catch {
     return GOOGLE_QUOTA_MIN_DELAY;
   }
 }
 
-function sleepWithSignal(ms: number, signal?: AbortSignal | null): Promise<void> {
+function sleepWithSignal(
+  ms: number,
+  signal?: AbortSignal | null,
+): Promise<void> {
   if (ms <= 0 || signal?.aborted) return Promise.resolve();
-  return new Promise<void>(resolve => {
+  return new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, ms);
     if (signal) {
-      const onAbort = () => { clearTimeout(timer); resolve(); };
-      signal.addEventListener('abort', onAbort, { once: true });
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
     }
   });
 }
@@ -738,7 +929,7 @@ function sleepWithSignal(ms: number, signal?: AbortSignal | null): Promise<void>
 function unwrapExploreCodeAssistSSE(originalRes: Response): Response {
   const reader = originalRes.body!.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   let firstEventLogged = false;
 
   const stream = new ReadableStream({
@@ -753,31 +944,36 @@ function unwrapExploreCodeAssistSSE(originalRes: Response): Response {
       }
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
       const outputLines: string[] = [];
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
+        if (line.startsWith("data: ")) {
           const jsonStr = line.slice(6).trim();
           if (!jsonStr) {
             outputLines.push(line);
             continue;
           }
           if (!firstEventLogged) {
-            debugLog(`[oauth][explore][google] first SSE event: ${jsonStr.slice(0, 500)}`);
+            debugLog(
+              `[oauth][explore][google] first SSE event: ${jsonStr.slice(0, 500)}`,
+            );
             firstEventLogged = true;
           }
           try {
             const parsed = JSON.parse(jsonStr);
-            const payload = parsed.response && !parsed.candidates ? parsed.response : parsed;
+            const payload =
+              parsed.response && !parsed.candidates ? parsed.response : parsed;
             const extracted = extractExploreThoughtSignatures(payload);
             if (extracted.length > 0) {
               const added = mergeExploreThoughtSignatures(extracted);
-              debugLog(`[oauth][explore][google] captured thoughtSignature for ${extracted.length} function call(s), added=${added}, cache=${exploreThoughtSignatures.length}`);
+              debugLog(
+                `[oauth][explore][google] captured thoughtSignature for ${extracted.length} function call(s), added=${added}, cache=${exploreThoughtSignatures.length}`,
+              );
             }
             if (parsed.response && !parsed.candidates) {
-              outputLines.push('data: ' + JSON.stringify(parsed.response));
+              outputLines.push("data: " + JSON.stringify(parsed.response));
             } else {
               outputLines.push(line);
             }
@@ -790,7 +986,9 @@ function unwrapExploreCodeAssistSSE(originalRes: Response): Response {
       }
 
       if (outputLines.length > 0) {
-        controller.enqueue(new TextEncoder().encode(outputLines.join('\n') + '\n'));
+        controller.enqueue(
+          new TextEncoder().encode(outputLines.join("\n") + "\n"),
+        );
       }
     },
     cancel() {
@@ -805,21 +1003,31 @@ function unwrapExploreCodeAssistSSE(originalRes: Response): Response {
   });
 }
 
-const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+const fetchWithGoogleOAuth = async (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> => {
   const active = await refreshGoogleOAuthIfNeeded();
   const accessToken = active?.accessToken;
 
-  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  const headers = new Headers(
+    input instanceof Request ? input.headers : undefined,
+  );
   if (init?.headers) {
     const extra = new Headers(init.headers);
     extra.forEach((value, key) => headers.set(key, value));
   }
-  headers.delete('x-goog-api-key');
-  headers.delete('Authorization');
-  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
-  headers.set('Content-Type', 'application/json');
+  headers.delete("x-goog-api-key");
+  headers.delete("Authorization");
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  headers.set("Content-Type", "application/json");
 
-  let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
+  let url =
+    typeof input === "string"
+      ? input
+      : input instanceof Request
+        ? input.url
+        : input.toString();
 
   const modelMatch = url.match(/\/models\/([^/:]+)/);
   const actionMatch = url.match(/:([a-zA-Z]+)(?:\?|$)/);
@@ -831,7 +1039,7 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
     const targetUrl = `${GOOGLE_CODE_ASSIST_ENDPOINT}/${GOOGLE_CODE_ASSIST_VERSION}:${action}?alt=sse`;
 
     let bodyText: string | undefined;
-    if (typeof init?.body === 'string') {
+    if (typeof init?.body === "string") {
       bodyText = init.body;
     } else if (init?.body instanceof Uint8Array) {
       bodyText = new TextDecoder().decode(init.body);
@@ -843,10 +1051,12 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
     if (bodyText) {
       try {
         const originalBody = JSON.parse(bodyText);
-        if (action === 'streamGenerateContent') {
+        if (action === "streamGenerateContent") {
           const injection = injectExploreThoughtSignatures(originalBody);
           if (injection.total > 0) {
-            debugLog(`[oauth][explore][google] thoughtSignature injection injected=${injection.injected} total=${injection.total} missing=${injection.missing} cache=${exploreThoughtSignatures.length}`);
+            debugLog(
+              `[oauth][explore][google] thoughtSignature injection injected=${injection.injected} total=${injection.total} missing=${injection.missing} cache=${exploreThoughtSignatures.length}`,
+            );
           }
         }
         wrappedBody = JSON.stringify({
@@ -865,33 +1075,46 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
       });
     }
 
-    debugLog(`[oauth][explore][google] ${init?.method ?? 'POST'} ${url} -> ${targetUrl} model=${model} project=${projectId} token=${maskToken(accessToken)}`);
+    debugLog(
+      `[oauth][explore][google] ${init?.method ?? "POST"} ${url} -> ${targetUrl} model=${model} project=${projectId} token=${maskToken(accessToken)}`,
+    );
 
     let auth401Retries = 0;
     const MAX_AUTH_RETRIES = 2;
 
     for (let fetchAttempt = 0; ; fetchAttempt++) {
-      const res = await fetch(targetUrl, { ...init, headers, body: wrappedBody });
+      const res = await fetch(targetUrl, {
+        ...init,
+        headers,
+        body: wrappedBody,
+      });
 
       if (res.status === 429 && fetchAttempt < GOOGLE_QUOTA_MAX_RETRIES) {
         const text = await res.text();
         const delay = parseGoogleQuotaResetDelay(text);
-        debugLog(`[oauth][explore][google] quota exhausted (attempt ${fetchAttempt + 1}/${GOOGLE_QUOTA_MAX_RETRIES}), waiting ${delay}ms | body=${text.slice(0, 300)}`);
+        debugLog(
+          `[oauth][explore][google] quota exhausted (attempt ${fetchAttempt + 1}/${GOOGLE_QUOTA_MAX_RETRIES}), waiting ${delay}ms | body=${text.slice(0, 300)}`,
+        );
 
         await sleepWithSignal(delay, init?.signal);
         if (init?.signal?.aborted) return res;
 
         const refreshed = await refreshGoogleOAuthIfNeeded();
         if (refreshed?.accessToken) {
-          headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+          headers.set("Authorization", `Bearer ${refreshed.accessToken}`);
         }
         continue;
       }
 
-      if ((res.status === 401 || res.status === 403) && auth401Retries < MAX_AUTH_RETRIES) {
+      if (
+        (res.status === 401 || res.status === 403) &&
+        auth401Retries < MAX_AUTH_RETRIES
+      ) {
         const text = await res.text();
         auth401Retries++;
-        debugLog(`[oauth][explore][google] auth error ${res.status} (attempt ${auth401Retries}/${MAX_AUTH_RETRIES}) | body=${text.slice(0, 300)}`);
+        debugLog(
+          `[oauth][explore][google] auth error ${res.status} (attempt ${auth401Retries}/${MAX_AUTH_RETRIES}) | body=${text.slice(0, 300)}`,
+        );
         cachedGoogleProjectId = null;
 
         await sleepWithSignal(1000 * auth401Retries, init?.signal);
@@ -899,60 +1122,92 @@ const fetchWithGoogleOAuth = async (input: RequestInfo | URL, init?: RequestInit
 
         const refreshed = await refreshGoogleOAuthIfNeeded(true);
         if (!refreshed?.accessToken) {
-          debugLog(`[oauth][explore][google] force refresh failed after ${res.status}, cannot recover`);
-          return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+          debugLog(
+            `[oauth][explore][google] force refresh failed after ${res.status}, cannot recover`,
+          );
+          return new Response(text, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          });
         }
 
-        headers.set('Authorization', `Bearer ${refreshed.accessToken}`);
+        headers.set("Authorization", `Bearer ${refreshed.accessToken}`);
         try {
-          const newProjectId = await discoverGoogleProjectId(refreshed.accessToken);
+          const newProjectId = await discoverGoogleProjectId(
+            refreshed.accessToken,
+          );
           if (bodyText) {
             try {
               const originalBody = JSON.parse(bodyText);
-              wrappedBody = JSON.stringify({ model, project: newProjectId, request: originalBody });
-            } catch { }
+              wrappedBody = JSON.stringify({
+                model,
+                project: newProjectId,
+                request: originalBody,
+              });
+            } catch {}
           }
         } catch (projErr) {
-          debugLog(`[oauth][explore][google] project re-discovery failed after auth retry: ${projErr instanceof Error ? projErr.message : projErr}`);
+          debugLog(
+            `[oauth][explore][google] project re-discovery failed after auth retry: ${projErr instanceof Error ? projErr.message : projErr}`,
+          );
         }
         continue;
       }
 
       if (!res.ok) {
         const text = await res.clone().text();
-        debugLog(`[oauth][explore][google] ${targetUrl} status=${res.status} body=${text.slice(0, 500)}`);
+        debugLog(
+          `[oauth][explore][google] ${targetUrl} status=${res.status} body=${text.slice(0, 500)}`,
+        );
       }
-      if (res.ok && res.body && action === 'streamGenerateContent') {
+      if (res.ok && res.body && action === "streamGenerateContent") {
         return unwrapExploreCodeAssistSSE(res);
       }
       return res;
     }
   }
 
-  debugLog(`[oauth][explore][google] passthrough ${init?.method ?? 'GET'} ${url} token=${maskToken(accessToken)}`);
+  debugLog(
+    `[oauth][explore][google] passthrough ${init?.method ?? "GET"} ${url} token=${maskToken(accessToken)}`,
+  );
   const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     const text = await res.clone().text();
-    debugLog(`[oauth][explore][google] ${url} status=${res.status} body=${text.slice(0, 500)}`);
+    debugLog(
+      `[oauth][explore][google] ${url} status=${res.status} body=${text.slice(0, 500)}`,
+    );
   }
   return res;
 };
 
-type ExploreEndpoint = 'responses' | 'chat';
+type ExploreEndpoint = "responses" | "chat";
 
-function createModelProvider(config: { provider: string; model: string; apiKey?: string }, endpoint?: ExploreEndpoint) {
-  const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
-  let cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+function createModelProvider(
+  config: { provider: string; model: string; apiKey?: string },
+  endpoint?: ExploreEndpoint,
+) {
+  const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, "");
+  let cleanModel = config.model.trim().replace(/[\r\n]+/g, "");
 
   const auth = getAuthForProvider(config.provider);
-  const isOAuth = auth?.type === 'oauth';
+  const isOAuth = auth?.type === "oauth";
 
-  if (isOAuth && (config.provider === 'openai' || config.provider === 'openai-oauth') && !isSupportedOpenAIOAuthModel(cleanModel)) {
-    const supported = getSupportedOpenAIOAuthModels().join(', ');
-    throw new Error(`OpenAI OAuth with a ChatGPT account does not support model "${cleanModel}". Supported models: ${supported}. Use an OpenAI API key to use GPT-5.4.`);
+  if (
+    isOAuth &&
+    (config.provider === "openai" || config.provider === "openai-oauth") &&
+    !isSupportedOpenAIOAuthModel(cleanModel)
+  ) {
+    const supported = getSupportedOpenAIOAuthModels().join(", ");
+    throw new Error(
+      `OpenAI OAuth with a ChatGPT account does not support model "${cleanModel}". Supported models: ${supported}. Use an OpenAI API key to use GPT-5.4.`,
+    );
   }
 
-  if (isOAuth && (config.provider === 'openai' || config.provider === 'openai-oauth')) {
+  if (
+    isOAuth &&
+    (config.provider === "openai" || config.provider === "openai-oauth")
+  ) {
     currentOAuthState = {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
@@ -964,7 +1219,10 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
     currentOAuthState = null;
   }
 
-  if (isOAuth && (config.provider === 'google' || config.provider === 'google-oauth')) {
+  if (
+    isOAuth &&
+    (config.provider === "google" || config.provider === "google-oauth")
+  ) {
     currentGoogleOAuthState = {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
@@ -977,43 +1235,45 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
   }
 
   switch (config.provider) {
-    case 'anthropic': {
+    case "anthropic": {
       const anthropic = createAnthropic({ apiKey: cleanApiKey });
       return anthropic(cleanModel);
     }
-    case 'openai':
-    case 'openai-oauth': {
+    case "openai":
+    case "openai-oauth": {
       if (isOAuth) {
         const openai = createOpenAI({
-          apiKey: 'oauth',
+          apiKey: "oauth",
           baseURL: OPENAI_CHATGPT_OAUTH_BASE_URL,
           fetch: fetchWithOAuth as typeof fetch,
-          compatibility: 'compatible',
+          compatibility: "compatible",
         });
-        const ep = endpoint ?? 'responses';
-        return ep === 'chat' ? openai.chat(cleanModel) : openai.responses(cleanModel);
+        const ep = endpoint ?? "responses";
+        return ep === "chat"
+          ? openai.chat(cleanModel)
+          : openai.responses(cleanModel);
       }
       const openai = createOpenAI({ apiKey: cleanApiKey });
       return openai(cleanModel);
     }
-    case 'openrouter': {
+    case "openrouter": {
       const openrouter = createOpenAI({
         apiKey: cleanApiKey,
-        baseURL: 'https://openrouter.ai/api/v1',
-        compatibility: 'compatible',
-        name: 'openrouter',
+        baseURL: "https://openrouter.ai/api/v1",
+        compatibility: "compatible",
+        name: "openrouter",
         headers: {
-          'HTTP-Referer': 'http://localhost',
-          'X-Title': 'mosaic',
+          "HTTP-Referer": "http://localhost",
+          "X-Title": "mosaic",
         },
       });
       return openrouter(cleanModel);
     }
-    case 'google':
-    case 'google-oauth': {
+    case "google":
+    case "google-oauth": {
       if (isOAuth) {
         const google = createGoogleGenerativeAI({
-          apiKey: 'oauth',
+          apiKey: "oauth",
           fetch: fetchWithGoogleOAuth as typeof fetch,
         });
         return google(cleanModel);
@@ -1021,28 +1281,35 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       const google = createGoogleGenerativeAI({ apiKey: cleanApiKey });
       return google(cleanModel);
     }
-    case 'mistral': {
+    case "mistral": {
       const mistral = createMistral({ apiKey: cleanApiKey });
       return mistral(cleanModel);
     }
-    case 'xai': {
+    case "xai": {
       const xai = createXai({ apiKey: cleanApiKey });
       return xai(cleanModel);
     }
-    case 'ollama': {
-      const isCloud = cleanModel.endsWith(':cloud') || cleanModel.endsWith('-cloud') || cleanModel.includes(':cloud') || cleanModel.includes('-cloud');
-      const ollamaBaseURL = isCloud && cleanApiKey
-        ? 'https://ollama.com/v1'
-        : 'http://localhost:11434/v1';
+    case "ollama": {
+      const isCloud =
+        cleanModel.endsWith(":cloud") ||
+        cleanModel.endsWith("-cloud") ||
+        cleanModel.includes(":cloud") ||
+        cleanModel.includes("-cloud");
+      const ollamaBaseURL =
+        isCloud && cleanApiKey
+          ? "https://ollama.com/v1"
+          : "http://localhost:11434/v1";
       let ollamaModel = cleanModel;
       if (isCloud) {
-        if (ollamaModel.endsWith(':cloud')) ollamaModel = ollamaModel.slice(0, -':cloud'.length);
-        else if (ollamaModel.endsWith('-cloud')) ollamaModel = ollamaModel.slice(0, -'-cloud'.length);
+        if (ollamaModel.endsWith(":cloud"))
+          ollamaModel = ollamaModel.slice(0, -":cloud".length);
+        else if (ollamaModel.endsWith("-cloud"))
+          ollamaModel = ollamaModel.slice(0, -"-cloud".length);
       }
       const ollamaOpenAI = createOpenAI({
-        apiKey: cleanApiKey || 'ollama',
+        apiKey: cleanApiKey || "ollama",
         baseURL: ollamaBaseURL,
-        compatibility: 'compatible',
+        compatibility: "compatible",
       });
       return ollamaOpenAI(ollamaModel);
     }
@@ -1056,26 +1323,50 @@ let exploreDoneResult: string | null = null;
 function createExploreTools() {
   return {
     read: createTool({
-      description: 'Read the contents of a file',
+      description: "Read the contents of a file",
       parameters: z.object({
-        path: z.string().describe('Path to the file to read'),
-        start_line: z.number().nullable().optional().describe('1-based start line (pass null for file start)'),
-        end_line: z.number().nullable().optional().describe('1-based end line (pass null for file end)'),
-        force_refresh: z.boolean().nullable().optional().describe('Bypass duplicate blocking for this read (pass null for false)'),
+        path: z.string().describe("Path to the file to read"),
+        start_line: z
+          .number()
+          .nullable()
+          .optional()
+          .describe("1-based start line (pass null for file start)"),
+        end_line: z
+          .number()
+          .nullable()
+          .optional()
+          .describe("1-based end line (pass null for file end)"),
+        force_refresh: z
+          .boolean()
+          .nullable()
+          .optional()
+          .describe(
+            "Bypass duplicate blocking for this read (pass null for false)",
+          ),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
+        if (isExploreAborted()) return { error: "Exploration aborted" };
         const forceRefresh = args.force_refresh === true;
         const readArgs = buildReadArgs(args);
-        const budgetBlocked = consumeExploreBudget('read');
+        const budgetBlocked = consumeExploreBudget("read");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('read', readArgs, budgetBlocked);
+          return createBudgetBlockedResult("read", readArgs, budgetBlocked);
         }
         if (!forceRefresh && currentExploreReadPaths.has(readArgs.path)) {
           const blocked = `[RE-READ BLOCKED] Already read ${readArgs.path} in this exploration. Use the previous result and continue with the next precise step.`;
           const logArgs: Record<string, unknown> = { ...readArgs };
-          exploreLogs.push({ tool: 'read', args: logArgs, success: false, resultPreview: blocked });
-          notifyExploreTool('read', logArgs, { success: false, preview: blocked }, 0);
+          exploreLogs.push({
+            tool: "read",
+            args: logArgs,
+            success: false,
+            resultPreview: blocked,
+          });
+          notifyExploreTool(
+            "read",
+            logArgs,
+            { success: false, preview: blocked },
+            0,
+          );
           return { error: blocked };
         }
         const fileState = await getReadFileState(readArgs.path);
@@ -1086,18 +1377,30 @@ function createExploreTools() {
             return `[DUPLICATE BLOCKED] Already called read(${formatReadScope(readArgs.path, readArgs.start_line, readArgs.end_line)}). Cached result: ${cached}`;
           }
         }
-        const result = await executeTool('read', readArgs);
+        const result = await executeTool("read", readArgs);
         const resultLen = result.result?.length || 0;
-        const preview = result.success ? `${(result.result || '').split('\n').length} lines` : (result.error || 'error');
+        const preview = result.success
+          ? `${(result.result || "").split("\n").length} lines`
+          : result.error || "error";
         const logArgs: Record<string, unknown> = { ...readArgs };
         if (forceRefresh) logArgs.force_refresh = true;
-        exploreLogs.push({ tool: 'read', args: logArgs, success: result.success, resultPreview: preview });
+        exploreLogs.push({
+          tool: "read",
+          args: logArgs,
+          success: result.success,
+          resultPreview: preview,
+        });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('read', logArgs, { success: result.success, preview }, resultLen);
+        notifyExploreTool(
+          "read",
+          logArgs,
+          { success: result.success, preview },
+          resultLen,
+        );
         const mem = getConversationMemory();
         if (mem && result.success && result.result) {
           mem.recordFileRead(readArgs.path, result.result);
-          mem.recordToolCall('read', logArgs, preview, true);
+          mem.recordToolCall("read", logArgs, preview, true);
         }
         if (!result.success) return { error: result.error };
         currentExploreReadPaths.add(readArgs.path);
@@ -1105,162 +1408,288 @@ function createExploreTools() {
       },
     }),
     glob: createTool({
-      description: 'Find files matching a glob pattern. Do NOT use this to list directory contents (use "list" instead).',
+      description:
+        'Find files matching a glob pattern. Do NOT use this to list directory contents (use "list" instead).',
       parameters: z.object({
-        pattern: z.string().describe('Glob pattern to match files (e.g., "**/*.ts", "src/**/*.tsx")'),
-        path: z.string().describe('Directory to search in (use "." for workspace root)'),
+        pattern: z
+          .string()
+          .describe(
+            'Glob pattern to match files (e.g., "**/*.ts", "src/**/*.tsx")',
+          ),
+        path: z
+          .string()
+          .describe('Directory to search in (use "." for workspace root)'),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const budgetBlocked = consumeExploreBudget('glob');
+        if (isExploreAborted()) return { error: "Exploration aborted" };
+        const budgetBlocked = consumeExploreBudget("glob");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('glob', args, budgetBlocked);
+          return createBudgetBlockedResult("glob", args, budgetBlocked);
         }
-        const sig = makeCallSignature('glob', args);
+        const sig = makeCallSignature("glob", args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called glob(${args.pattern}). Cached result: ${cached}`;
         }
-        const result = await executeTool('glob', args);
+        const result = await executeTool("glob", args);
         const resultLen = result.result?.length || 0;
-        let preview = result.error || 'error';
+        let preview = result.error || "error";
         if (result.success && result.result) {
           try {
             const files = JSON.parse(result.result);
             const count = Array.isArray(files) ? files.length : 0;
-            const sample = Array.isArray(files) ? files.slice(0, 3).join(', ') : '';
-            preview = count === 0 ? 'no files' : `${count} files (${sample}${count > 3 ? '...' : ''})`;
-          } catch { preview = 'ok'; }
+            const sample = Array.isArray(files)
+              ? files.slice(0, 3).join(", ")
+              : "";
+            preview =
+              count === 0
+                ? "no files"
+                : `${count} files (${sample}${count > 3 ? "..." : ""})`;
+          } catch {
+            preview = "ok";
+          }
         }
-        exploreLogs.push({ tool: 'glob', args, success: result.success, resultPreview: preview });
+        exploreLogs.push({
+          tool: "glob",
+          args,
+          success: result.success,
+          resultPreview: preview,
+        });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('glob', args, { success: result.success, preview }, resultLen);
+        notifyExploreTool(
+          "glob",
+          args,
+          { success: result.success, preview },
+          resultLen,
+        );
         const globMem = getConversationMemory();
         if (globMem && result.success) {
           let fileCount = 0;
-          try { const f = JSON.parse(result.result!); fileCount = Array.isArray(f) ? f.length : 0; } catch { }
-          globMem.recordSearch(args.pattern, args.pattern, args.path, fileCount, fileCount);
-          globMem.recordToolCall('glob', args, preview, true);
+          try {
+            const f = JSON.parse(result.result!);
+            fileCount = Array.isArray(f) ? f.length : 0;
+          } catch {}
+          globMem.recordSearch(
+            args.pattern,
+            args.pattern,
+            args.path,
+            fileCount,
+            fileCount,
+          );
+          globMem.recordToolCall("glob", args, preview, true);
         }
         if (!result.success) return { error: result.error };
         return result.result;
       },
     }),
     grep: createTool({
-      description: 'Search for text content within files using regular expressions',
+      description:
+        "Search for text content within files using regular expressions",
       parameters: z.object({
-        pattern: z.string().describe('Glob pattern to match files'),
-        query: z.string().describe('Regular expression pattern to search for'),
-        path: z.string().describe('Directory to search in (use "." for workspace root)'),
-        case_sensitive: z.boolean().describe('Case-sensitive search (pass false for default)'),
-        max_results: z.number().describe('Maximum results (pass 50 for default)'),
+        pattern: z.string().describe("Glob pattern to match files"),
+        query: z.string().describe("Regular expression pattern to search for"),
+        path: z
+          .string()
+          .describe('Directory to search in (use "." for workspace root)'),
+        case_sensitive: z
+          .boolean()
+          .describe("Case-sensitive search (pass false for default)"),
+        max_results: z
+          .number()
+          .describe("Maximum results (pass 50 for default)"),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const budgetBlocked = consumeExploreBudget('grep');
+        if (isExploreAborted()) return { error: "Exploration aborted" };
+        const budgetBlocked = consumeExploreBudget("grep");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('grep', args, budgetBlocked);
+          return createBudgetBlockedResult("grep", args, budgetBlocked);
         }
-        const sig = makeCallSignature('grep', args);
+        const sig = makeCallSignature("grep", args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called grep(${args.query}). Cached result: ${cached}`;
         }
-        const result = await executeTool('grep', { ...args, regex: true });
+        const result = await executeTool("grep", { ...args, regex: true });
         const resultLen = result.result?.length || 0;
-        let preview = result.error || 'error';
+        let preview = result.error || "error";
         let grepFileCount = 0;
         let grepMatchCount = 0;
         if (result.success && result.result) {
           try {
             const parsed = JSON.parse(result.result);
-            const totalMatches = typeof parsed.total_matches === 'number' ? parsed.total_matches : 0;
-            const filesWithMatches = typeof parsed.files_with_matches === 'number' ? parsed.files_with_matches : 0;
-            const resultsArr = Array.isArray(parsed.results) ? parsed.results : [];
+            const totalMatches =
+              typeof parsed.total_matches === "number"
+                ? parsed.total_matches
+                : 0;
+            const filesWithMatches =
+              typeof parsed.files_with_matches === "number"
+                ? parsed.files_with_matches
+                : 0;
+            const resultsArr = Array.isArray(parsed.results)
+              ? parsed.results
+              : [];
             grepMatchCount = totalMatches;
             grepFileCount = filesWithMatches;
-            const fileNames = resultsArr.slice(0, 3).map((r: any) => r.file || '').filter(Boolean);
-            preview = totalMatches === 0 ? 'no matches' : `${totalMatches} matches in ${filesWithMatches} files (${fileNames.join(', ')}${filesWithMatches > 3 ? '...' : ''})`;
-          } catch { preview = 'ok'; }
+            const fileNames = resultsArr
+              .slice(0, 3)
+              .map((r: any) => r.file || "")
+              .filter(Boolean);
+            preview =
+              totalMatches === 0
+                ? "no matches"
+                : `${totalMatches} matches in ${filesWithMatches} files (${fileNames.join(", ")}${filesWithMatches > 3 ? "..." : ""})`;
+          } catch {
+            preview = "ok";
+          }
         }
-        exploreLogs.push({ tool: 'grep', args, success: result.success, resultPreview: preview });
+        exploreLogs.push({
+          tool: "grep",
+          args,
+          success: result.success,
+          resultPreview: preview,
+        });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('grep', args, { success: result.success, preview }, resultLen);
+        notifyExploreTool(
+          "grep",
+          args,
+          { success: result.success, preview },
+          resultLen,
+        );
         const grepMem = getConversationMemory();
         if (grepMem && result.success) {
-          grepMem.recordSearch(args.query, args.pattern, args.path, grepFileCount, grepMatchCount);
-          grepMem.recordToolCall('grep', args, preview, true);
+          grepMem.recordSearch(
+            args.query,
+            args.pattern,
+            args.path,
+            grepFileCount,
+            grepMatchCount,
+          );
+          grepMem.recordToolCall("grep", args, preview, true);
         }
         if (!result.success) return { error: result.error };
         return result.result;
       },
     }),
     list: createTool({
-      description: 'List files and directories',
+      description: "List files and directories",
       parameters: z.object({
-        path: z.string().describe('Path to list'),
-        recursive: z.boolean().describe('List recursively (pass false for default)'),
-        filter: z.string().describe('Filter pattern (pass empty string for no filter)'),
-        include_hidden: z.boolean().describe('Include hidden files (pass false for default)'),
+        path: z.string().describe("Path to list"),
+        recursive: z
+          .boolean()
+          .describe("List recursively (pass false for default)"),
+        filter: z
+          .string()
+          .describe("Filter pattern (pass empty string for no filter)"),
+        include_hidden: z
+          .boolean()
+          .describe("Include hidden files (pass false for default)"),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const budgetBlocked = consumeExploreBudget('list');
+        if (isExploreAborted()) return { error: "Exploration aborted" };
+        const budgetBlocked = consumeExploreBudget("list");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('list', args, budgetBlocked);
+          return createBudgetBlockedResult("list", args, budgetBlocked);
         }
-        const sig = makeCallSignature('list', args);
+        const sig = makeCallSignature("list", args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
           return `[DUPLICATE BLOCKED] Already called list(${args.path}). Cached result: ${cached}`;
         }
-        const result = await executeTool('list', args);
+        const result = await executeTool("list", args);
         const resultLen = result.result?.length || 0;
-        let preview = result.error || 'error';
+        let preview = result.error || "error";
         if (result.success && result.result) {
           try {
             const items = JSON.parse(result.result);
             const count = Array.isArray(items) ? items.length : 0;
-            const sample = Array.isArray(items) ? items.slice(0, 5).map((i: any) => typeof i === 'string' ? i : i.name || '').join(', ') : '';
-            preview = count === 0 ? 'empty' : `${count} items (${sample}${count > 5 ? '...' : ''})`;
-          } catch { preview = 'ok'; }
+            const sample = Array.isArray(items)
+              ? items
+                  .slice(0, 5)
+                  .map((i: any) => (typeof i === "string" ? i : i.name || ""))
+                  .join(", ")
+              : "";
+            preview =
+              count === 0
+                ? "empty"
+                : `${count} items (${sample}${count > 5 ? "..." : ""})`;
+          } catch {
+            preview = "ok";
+          }
         }
-        exploreLogs.push({ tool: 'list', args, success: result.success, resultPreview: preview });
+        exploreLogs.push({
+          tool: "list",
+          args,
+          success: result.success,
+          resultPreview: preview,
+        });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('list', args, { success: result.success, preview }, resultLen);
+        notifyExploreTool(
+          "list",
+          args,
+          { success: result.success, preview },
+          resultLen,
+        );
         if (!result.success) return { error: result.error };
         return result.result;
       },
     }),
     fetch: createTool({
-      description: 'Fetch a URL and return its content as markdown. Use this to read documentation pages, API references, tutorials, etc.',
+      description:
+        "Fetch a URL and return its content as markdown. Use this to read documentation pages, API references, tutorials, etc.",
       parameters: z.object({
-        url: z.string().describe('The URL to fetch (must be a valid HTTP/HTTPS URL)'),
-        max_length: z.number().optional().describe('Maximum characters to return (default: 10000, max: 100000)'),
+        url: z
+          .string()
+          .describe("The URL to fetch (must be a valid HTTP/HTTPS URL)"),
+        max_length: z
+          .number()
+          .optional()
+          .describe(
+            "Maximum characters to return (default: 10000, max: 100000)",
+          ),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const budgetBlocked = consumeExploreBudget('fetch');
+        if (isExploreAborted()) return { error: "Exploration aborted" };
+        const budgetBlocked = consumeExploreBudget("fetch");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('fetch', args, budgetBlocked);
+          return createBudgetBlockedResult("fetch", args, budgetBlocked);
         }
-        const sig = makeCallSignature('fetch', args);
+        const sig = makeCallSignature("fetch", args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
           return `[DUPLICATE BLOCKED] Already fetched ${args.url}. Cached result: ${cached}`;
         }
         if (isDomainBlocked(args.url)) {
           const msg = `[DOMAIN BLOCKED] Too many failures on ${extractDomain(args.url)}. Try a different domain or resource.`;
-          exploreLogs.push({ tool: 'fetch', args, success: false, resultPreview: msg });
+          exploreLogs.push({
+            tool: "fetch",
+            args,
+            success: false,
+            resultPreview: msg,
+          });
           exploreCallCache.set(sig, msg);
           return { error: msg };
         }
-        const result = await executeTool('fetch', { ...args, max_length: args.max_length ?? 10000 });
+        const result = await executeTool("fetch", {
+          ...args,
+          max_length: args.max_length ?? 10000,
+        });
         const resultLen = result.result?.length || 0;
-        const preview = result.success ? `${resultLen} chars` : (result.error || 'error');
-        exploreLogs.push({ tool: 'fetch', args, success: result.success, resultPreview: preview });
+        const preview = result.success
+          ? `${resultLen} chars`
+          : result.error || "error";
+        exploreLogs.push({
+          tool: "fetch",
+          args,
+          success: result.success,
+          resultPreview: preview,
+        });
         exploreCallCache.set(sig, preview);
-        notifyExploreTool('fetch', args, { success: result.success, preview }, resultLen);
+        notifyExploreTool(
+          "fetch",
+          args,
+          { success: result.success, preview },
+          resultLen,
+        );
         if (!result.success) {
           recordDomainFailure(args.url);
           return { error: result.error };
@@ -1270,49 +1699,92 @@ function createExploreTools() {
       },
     }),
     search: createTool({
-      description: 'Search the web and return top results. Use this to find documentation, API references, tutorials, or solutions to errors.',
+      description:
+        "Search the web and return top results. Use this to find documentation, API references, tutorials, or solutions to errors.",
       parameters: z.object({
-        query: z.string().describe('Search query'),
-        engine: z.enum(['google', 'bing', 'duckduckgo']).optional().describe('Search engine to use (default: google)'),
+        query: z.string().describe("Search query"),
+        engine: z
+          .enum(["google", "bing", "duckduckgo"])
+          .optional()
+          .describe("Search engine to use (default: google)"),
       }),
       execute: async (args) => {
-        if (isExploreAborted()) return { error: 'Exploration aborted' };
-        const budgetBlocked = consumeExploreBudget('search');
+        if (isExploreAborted()) return { error: "Exploration aborted" };
+        const budgetBlocked = consumeExploreBudget("search");
         if (budgetBlocked) {
-          return createBudgetBlockedResult('search', args, budgetBlocked);
+          return createBudgetBlockedResult("search", args, budgetBlocked);
         }
-        const sig = makeCallSignature('search', args);
+        const sig = makeCallSignature("search", args);
         const cached = exploreCallCache.get(sig);
         if (cached) {
           return `[DUPLICATE BLOCKED] Already searched "${args.query}". Cached result: ${cached}`;
         }
         try {
-          const { getMcpManager, isMcpInitialized } = require('../../mcp/index');
+          const {
+            getMcpManager,
+            isMcpInitialized,
+          } = require("../../mcp/index");
           if (!isMcpInitialized()) {
-            return { error: 'Web search unavailable (MCP not initialized)' };
+            return { error: "Web search unavailable (MCP not initialized)" };
           }
           const pm = getMcpManager();
-          const callArgs = { query: args.query, engine: args.engine || 'google' };
-          const result = await pm.callTool('nativesearch', 'nativesearch_search', callArgs);
+          const callArgs = {
+            query: args.query,
+            engine: args.engine || "google",
+          };
+          const result = await pm.callTool(
+            "nativesearch",
+            "nativesearch_search",
+            callArgs,
+          );
           const resultLen = result.content?.length || 0;
-          const preview = result.isError ? (result.content || 'error') : `${resultLen} chars`;
-          exploreLogs.push({ tool: 'search', args: callArgs, success: !result.isError, resultPreview: preview });
+          const preview = result.isError
+            ? result.content || "error"
+            : `${resultLen} chars`;
+          exploreLogs.push({
+            tool: "search",
+            args: callArgs,
+            success: !result.isError,
+            resultPreview: preview,
+          });
           exploreCallCache.set(sig, preview);
-          notifyExploreTool('search', callArgs, { success: !result.isError, preview }, resultLen);
-          if (result.isError) return { error: result.content || 'Search failed' };
+          notifyExploreTool(
+            "search",
+            callArgs,
+            { success: !result.isError, preview },
+            resultLen,
+          );
+          if (result.isError)
+            return { error: result.content || "Search failed" };
           return result.content;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          exploreLogs.push({ tool: 'search', args, success: false, resultPreview: message });
-          notifyExploreTool('search', args, { success: false, preview: message }, 0);
+          const message =
+            error instanceof Error ? error.message : String(error);
+          exploreLogs.push({
+            tool: "search",
+            args,
+            success: false,
+            resultPreview: message,
+          });
+          notifyExploreTool(
+            "search",
+            args,
+            { success: false, preview: message },
+            0,
+          );
           return { error: `Web search failed: ${message}` };
         }
       },
     }),
     done: createTool({
-      description: 'Call this when you have gathered enough information. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.',
+      description:
+        "Call this when you have gathered enough information. Provide a comprehensive summary of your findings. This MUST be called to complete the exploration.",
       parameters: z.object({
-        summary: z.string().describe('Comprehensive summary of what was found during exploration'),
+        summary: z
+          .string()
+          .describe(
+            "Comprehensive summary of what was found during exploration",
+          ),
       }),
       execute: async (args) => {
         exploreDoneResult = args.summary;
@@ -1323,15 +1795,17 @@ function createExploreTools() {
 }
 
 function formatExploreLogs(): string {
-  if (exploreLogs.length === 0) return '';
+  if (exploreLogs.length === 0) return "";
 
   const lines: string[] = [];
   for (const log of exploreLogs) {
     const desc = describeToolCall(log);
-    const status = log.success ? '➔' : 'X';
-    lines.push(`  ${status} ${log.tool}(${desc}): ${log.resultPreview || 'ok'}`);
+    const status = log.success ? "➔ " : "X";
+    lines.push(
+      `  ${status} ${log.tool}(${desc}): ${log.resultPreview || "ok"}`,
+    );
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 function formatDuration(ms: number): string {
@@ -1343,7 +1817,7 @@ function formatDuration(ms: number): string {
 }
 
 function normalizeExploreLine(text: string, maxLen = 180): string {
-  const clean = text.replace(/[\r\n]+/g, ' ').trim();
+  const clean = text.replace(/[\r\n]+/g, " ").trim();
   if (clean.length <= maxLen) return clean;
   return `${clean.slice(0, maxLen)}...`;
 }
@@ -1354,11 +1828,17 @@ function truncateExplorePromptText(text: string, maxLen: number): string {
   return `${clean.slice(0, maxLen)}...`;
 }
 
-function appendCoverageLine(lines: string[], label: string, values: string[], limit = 8): void {
+function appendCoverageLine(
+  lines: string[],
+  label: string,
+  values: string[],
+  limit = 8,
+): void {
   if (values.length === 0) return;
   const shown = values.slice(0, limit);
-  const suffix = values.length > limit ? ` (+${values.length - limit} more)` : '';
-  lines.push(`- ${label}: ${shown.join(', ')}${suffix}`);
+  const suffix =
+    values.length > limit ? ` (+${values.length - limit} more)` : "";
+  lines.push(`- ${label}: ${shown.join(", ")}${suffix}`);
 }
 
 function toUnique(values: string[]): string[] {
@@ -1373,138 +1853,169 @@ function toUnique(values: string[]): string[] {
   return out;
 }
 
-function buildContextualExploreSummary(purpose: string, modelSummary: string | null): string {
+function buildContextualExploreSummary(
+  purpose: string,
+  modelSummary: string | null,
+): string {
   const successfulLogs = exploreLogs.filter((log) => log.success);
   const failedLogs = exploreLogs.filter((log) => !log.success);
 
   const readFiles = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'read')
-      .map((log) => (typeof log.args.path === 'string' ? log.args.path : ''))
+      .filter((log) => log.tool === "read")
+      .map((log) => (typeof log.args.path === "string" ? log.args.path : "")),
   );
 
   const globScopes = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'glob')
+      .filter((log) => log.tool === "glob")
       .map((log) => {
-        const pattern = typeof log.args.pattern === 'string' ? log.args.pattern : '';
-        const path = typeof log.args.path === 'string' ? log.args.path : '';
-        if (pattern && path && path !== '.') return `${pattern} in ${path}`;
+        const pattern =
+          typeof log.args.pattern === "string" ? log.args.pattern : "";
+        const path = typeof log.args.path === "string" ? log.args.path : "";
+        if (pattern && path && path !== ".") return `${pattern} in ${path}`;
         return pattern || path;
-      })
+      }),
   );
 
   const grepScopes = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'grep')
+      .filter((log) => log.tool === "grep")
       .map((log) => {
-        const query = typeof log.args.query === 'string' ? log.args.query : '';
-        const pattern = typeof log.args.pattern === 'string' ? log.args.pattern : '';
-        const path = typeof log.args.path === 'string' ? log.args.path : '';
-        const scopeParts = [pattern, path && path !== '.' ? path : ''].filter(Boolean);
-        const scope = scopeParts.length > 0 ? ` in ${scopeParts.join(' ')}` : '';
+        const query = typeof log.args.query === "string" ? log.args.query : "";
+        const pattern =
+          typeof log.args.pattern === "string" ? log.args.pattern : "";
+        const path = typeof log.args.path === "string" ? log.args.path : "";
+        const scopeParts = [pattern, path && path !== "." ? path : ""].filter(
+          Boolean,
+        );
+        const scope =
+          scopeParts.length > 0 ? ` in ${scopeParts.join(" ")}` : "";
         if (query) return `"${query}"${scope}`;
-        return scopeParts.join(' ');
-      })
+        return scopeParts.join(" ");
+      }),
   );
 
   const listedPaths = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'list')
-      .map((log) => (typeof log.args.path === 'string' ? log.args.path : ''))
+      .filter((log) => log.tool === "list")
+      .map((log) => (typeof log.args.path === "string" ? log.args.path : "")),
   );
 
   const fetchedUrls = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'fetch')
-      .map((log) => (typeof log.args.url === 'string' ? log.args.url : ''))
+      .filter((log) => log.tool === "fetch")
+      .map((log) => (typeof log.args.url === "string" ? log.args.url : "")),
   );
 
   const searchQueries = toUnique(
     successfulLogs
-      .filter((log) => log.tool === 'search')
-      .map((log) => (typeof log.args.query === 'string' ? log.args.query : ''))
+      .filter((log) => log.tool === "search")
+      .map((log) => (typeof log.args.query === "string" ? log.args.query : "")),
   );
 
   const evidence = successfulLogs
     .slice(0, 15)
-    .map((log) => `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || 'ok', 140)}`);
+    .map(
+      (log) =>
+        `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || "ok", 140)}`,
+    );
 
   const failures = failedLogs
     .slice(0, 10)
-    .map((log) => `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || 'error', 140)}`);
+    .map(
+      (log) =>
+        `- ${log.tool}(${describeToolCall(log)}): ${normalizeExploreLine(log.resultPreview || "error", 140)}`,
+    );
 
   const lines: string[] = [];
-  lines.push('Goal');
-  lines.push(purpose.trim() || '(no explicit goal)');
-  lines.push('');
-  lines.push('Coverage');
+  lines.push("Goal");
+  lines.push(purpose.trim() || "(no explicit goal)");
+  lines.push("");
+  lines.push("Coverage");
   lines.push(`- Total tool calls: ${exploreLogs.length}`);
   lines.push(`- Successful calls: ${successfulLogs.length}`);
   lines.push(`- Failed calls: ${failedLogs.length}`);
-  appendCoverageLine(lines, 'Read files', readFiles);
-  appendCoverageLine(lines, 'Glob scopes', globScopes);
-  appendCoverageLine(lines, 'Grep scopes', grepScopes);
-  appendCoverageLine(lines, 'Listed paths', listedPaths);
-  appendCoverageLine(lines, 'Fetched URLs', fetchedUrls);
-  appendCoverageLine(lines, 'Search queries', searchQueries);
-  lines.push('');
-  lines.push('Findings');
-  const normalizedSummary = typeof modelSummary === 'string' ? modelSummary.trim() : '';
+  appendCoverageLine(lines, "Read files", readFiles);
+  appendCoverageLine(lines, "Glob scopes", globScopes);
+  appendCoverageLine(lines, "Grep scopes", grepScopes);
+  appendCoverageLine(lines, "Listed paths", listedPaths);
+  appendCoverageLine(lines, "Fetched URLs", fetchedUrls);
+  appendCoverageLine(lines, "Search queries", searchQueries);
+  lines.push("");
+  lines.push("Findings");
+  const normalizedSummary =
+    typeof modelSummary === "string" ? modelSummary.trim() : "";
   if (normalizedSummary) {
     lines.push(normalizedSummary);
   } else {
-    lines.push('No explicit done summary was provided. Findings are inferred from the observed tool outputs below.');
+    lines.push(
+      "No explicit done summary was provided. Findings are inferred from the observed tool outputs below.",
+    );
   }
-  lines.push('');
-  lines.push('Evidence');
+  lines.push("");
+  lines.push("Evidence");
   if (evidence.length > 0) {
     lines.push(...evidence);
   } else {
-    lines.push('- No successful tool evidence was captured.');
+    lines.push("- No successful tool evidence was captured.");
   }
-  lines.push('');
-  lines.push('Gaps');
+  lines.push("");
+  lines.push("Gaps");
   if (failures.length > 0) {
     lines.push(...failures);
   } else {
-    lines.push('- No explicit tool failures were recorded.');
+    lines.push("- No explicit tool failures were recorded.");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-function createBudgetBlockedResult(tool: string, args: Record<string, unknown>, message: string): { error: string } {
+function createBudgetBlockedResult(
+  tool: string,
+  args: Record<string, unknown>,
+  message: string,
+): { error: string } {
   exploreLogs.push({ tool, args, success: false, resultPreview: message });
   notifyExploreTool(tool, args, { success: false, preview: message }, 0);
   return { error: message };
 }
 
-function consumeExploreBudget(tool: 'read' | 'glob' | 'grep' | 'list' | 'fetch' | 'search'): string | null {
+function consumeExploreBudget(
+  tool: "read" | "glob" | "grep" | "list" | "fetch" | "search",
+): string | null {
   if (currentExploreToolCallCount + 1 > MAX_EXPLORE_TOOL_CALLS) {
     return `[BUDGET BLOCKED] Explore reached the tool-call budget (${MAX_EXPLORE_TOOL_CALLS}). Use the evidence already gathered and call done now.`;
   }
-  if (tool === 'search' && currentExploreSearchCallCount + 1 > MAX_EXPLORE_SEARCH_CALLS) {
+  if (
+    tool === "search" &&
+    currentExploreSearchCallCount + 1 > MAX_EXPLORE_SEARCH_CALLS
+  ) {
     return `[BUDGET BLOCKED] Explore reached the web-search budget (${MAX_EXPLORE_SEARCH_CALLS}). Use the search results you already have or finish now.`;
   }
-  if (tool === 'fetch' && currentExploreFetchCallCount + 1 > MAX_EXPLORE_FETCH_CALLS) {
+  if (
+    tool === "fetch" &&
+    currentExploreFetchCallCount + 1 > MAX_EXPLORE_FETCH_CALLS
+  ) {
     return `[BUDGET BLOCKED] Explore reached the fetch budget (${MAX_EXPLORE_FETCH_CALLS}). Use the fetched evidence you already have or finish now.`;
   }
 
   currentExploreToolCallCount += 1;
-  if (tool === 'search') currentExploreSearchCallCount += 1;
-  if (tool === 'fetch') currentExploreFetchCallCount += 1;
+  if (tool === "search") currentExploreSearchCallCount += 1;
+  if (tool === "fetch") currentExploreFetchCallCount += 1;
   return null;
 }
 
-export async function executeExploreTool(purpose: string): Promise<ExploreResult> {
+export async function executeExploreTool(
+  purpose: string,
+): Promise<ExploreResult> {
   const startTime = Date.now();
   const userConfig = readConfig();
 
   if (!userConfig.provider || !userConfig.model) {
     return {
       success: false,
-      error: 'No provider or model configured',
+      error: "No provider or model configured",
     };
   }
 
@@ -1539,37 +2050,43 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     }
   }
 
-  debugLog(`[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`);
+  debugLog(
+    `[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`,
+  );
 
   const abortSignal = getExploreAbortSignal();
   const timeoutId = setTimeout(() => {
     if (!exploreDoneResult) {
-      exploreDoneResult = '[Exploration timed out after 8 minutes]';
+      exploreDoneResult = "[Exploration timed out after 8 minutes]";
     }
   }, EXPLORE_TIMEOUT);
 
   try {
     const tools = createExploreTools();
-    const isOpenAI = userConfig.provider === 'openai' || userConfig.provider === 'openai-oauth';
-    const toolsToUse = isOpenAI
-      ? transformToolsForResponsesApi(tools)
-      : tools;
+    const isOpenAI =
+      userConfig.provider === "openai" ||
+      userConfig.provider === "openai-oauth";
+    const toolsToUse = isOpenAI ? transformToolsForResponsesApi(tools) : tools;
 
     const parentContext = getExploreContext();
     const previousSummaries = getExploreSummaries();
 
-    let dynamicSections = '';
+    let dynamicSections = "";
 
     if (previousSummaries.length > 0) {
-      let summariesText = '';
+      let summariesText = "";
       let charBudget = MAX_PREVIOUS_EXPLORE_SUMMARY_CHARS;
-      for (let i = previousSummaries.length - 1; i >= 0 && charBudget > 0; i--) {
+      for (
+        let i = previousSummaries.length - 1;
+        i >= 0 && charBudget > 0;
+        i--
+      ) {
         const entry = `[Explore #${i + 1}] ${previousSummaries[i]!}`;
         if (entry.length <= charBudget) {
-          summariesText = entry + '\n' + summariesText;
+          summariesText = entry + "\n" + summariesText;
           charBudget -= entry.length;
         } else {
-          summariesText = entry.slice(0, charBudget) + '...\n' + summariesText;
+          summariesText = entry.slice(0, charBudget) + "...\n" + summariesText;
           break;
         }
       }
@@ -1580,7 +2097,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       const fileList = [...exploreKnowledge.readFiles.entries()]
         .slice(0, MAX_ALREADY_READ_FILES)
         .map(([p, info]) => `  - ${p} (${info})`)
-        .join('\n');
+        .join("\n");
       dynamicSections += `\n\n# FILES ALREADY READ\nThese files were read in previous explorations. Do NOT re-read them unless you need a specific section.\n${fileList}`;
     }
 
@@ -1593,9 +2110,13 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
     exploreSystemPromptForOAuth = systemPrompt;
 
     const auth = getAuthForProvider(userConfig.provider);
-    const isOAuth = auth?.type === 'oauth';
-    const isGoogleOAuth = isOAuth && (userConfig.provider === 'google' || userConfig.provider === 'google-oauth');
-    const endpoints: ExploreEndpoint[] = (isOpenAI && isOAuth) ? ['responses', 'chat'] : ['responses'];
+    const isOAuth = auth?.type === "oauth";
+    const isGoogleOAuth =
+      isOAuth &&
+      (userConfig.provider === "google" ||
+        userConfig.provider === "google-oauth");
+    const endpoints: ExploreEndpoint[] =
+      isOpenAI && isOAuth ? ["responses", "chat"] : ["responses"];
 
     let lastError: string | null = null;
 
@@ -1603,11 +2124,14 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       if (abortSignal?.aborted || isExploreAborted()) break;
       if (exploreDoneResult !== null) break;
 
-      const model = createModelProvider({
-        provider: userConfig.provider,
-        model: userConfig.model,
-        apiKey: userConfig.apiKey,
-      }, endpoint);
+      const model = createModelProvider(
+        {
+          provider: userConfig.provider,
+          model: userConfig.model,
+          apiKey: userConfig.apiKey,
+        },
+        endpoint,
+      );
 
       let exploreAttempt = 0;
       let endpointFailed = false;
@@ -1617,17 +2141,24 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
         const rateLimitStatus = getRateLimitStatus(EXPLORE_RATE_LIMIT_KEY);
         if (rateLimitStatus.cooldownRemainingMs > 0) {
-          debugLog(`[explore] rate limit cooldown active, waiting ${rateLimitStatus.cooldownRemainingMs}ms`);
+          debugLog(
+            `[explore] rate limit cooldown active, waiting ${rateLimitStatus.cooldownRemainingMs}ms`,
+          );
         }
 
-        const canProceed = await waitForRateLimit(EXPLORE_RATE_LIMIT_KEY, undefined, abortSignal);
+        const canProceed = await waitForRateLimit(
+          EXPLORE_RATE_LIMIT_KEY,
+          undefined,
+          abortSignal,
+        );
         if (!canProceed) {
-          debugLog('[explore] rate limit wait aborted');
+          debugLog("[explore] rate limit wait aborted");
           break;
         }
 
         try {
-          const oauthSingleToolConstraint = 'Google OAuth constraint: call at most ONE tool per response. Do not batch tool calls. Wait for each tool result before issuing the next tool call.';
+          const oauthSingleToolConstraint =
+            "Google OAuth constraint: call at most ONE tool per response. Do not batch tool calls. Wait for each tool result before issuing the next tool call.";
           const effectiveSystemPrompt = isGoogleOAuth
             ? `${systemPrompt}\n\n${oauthSingleToolConstraint}`
             : systemPrompt;
@@ -1635,7 +2166,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
             model,
             messages: [
               {
-                role: 'user',
+                role: "user",
                 content: `Explore the codebase to: ${purpose}`,
               },
             ],
@@ -1653,8 +2184,9 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
               break;
             }
             const c: any = chunk;
-            if (c.type === 'error') {
-              const errorMessage = c.error instanceof Error ? c.error.message : String(c.error);
+            if (c.type === "error") {
+              const errorMessage =
+                c.error instanceof Error ? c.error.message : String(c.error);
               const decision = getRetryDecision(c.error);
               if (decision.shouldRetry) {
                 lastError = errorMessage;
@@ -1673,19 +2205,34 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
         } catch (streamError) {
           if (abortSignal?.aborted || isExploreAborted()) break;
 
-          const errorMsg = streamError instanceof Error ? streamError.message : String(streamError);
-          const isBadRequest = errorMsg.toLowerCase().includes('bad request') || errorMsg.includes('400');
+          const errorMsg =
+            streamError instanceof Error
+              ? streamError.message
+              : String(streamError);
+          const isBadRequest =
+            errorMsg.toLowerCase().includes("bad request") ||
+            errorMsg.includes("400");
 
-          if (isBadRequest && endpoints.indexOf(endpoint) < endpoints.length - 1) {
-            debugLog(`[explore] endpoint=${endpoint} returned Bad Request, falling back to next endpoint`);
+          if (
+            isBadRequest &&
+            endpoints.indexOf(endpoint) < endpoints.length - 1
+          ) {
+            debugLog(
+              `[explore] endpoint=${endpoint} returned Bad Request, falling back to next endpoint`,
+            );
             lastError = errorMsg;
             endpointFailed = true;
             break;
           }
 
           const decision = getRetryDecision(streamError);
-          if (!decision.shouldRetry || exploreAttempt >= MAX_EXPLORE_RETRIES - 1) {
-            debugLog(`[explore] stream error not retryable or max retries reached | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | error=${errorMsg.slice(0, 150)}`);
+          if (
+            !decision.shouldRetry ||
+            exploreAttempt >= MAX_EXPLORE_RETRIES - 1
+          ) {
+            debugLog(
+              `[explore] stream error not retryable or max retries reached | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | error=${errorMsg.slice(0, 150)}`,
+            );
             lastError = errorMsg;
             reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
             endpointFailed = true;
@@ -1693,10 +2240,15 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
           }
 
           reportRateLimitError(EXPLORE_RATE_LIMIT_KEY, decision.retryAfterMs);
-          const delay = Math.min(60000, EXPLORE_RETRY_BASE_DELAY_MS * Math.pow(2, exploreAttempt));
-          debugLog(`[explore] retrying after error | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | delay=${delay}ms`);
+          const delay = Math.min(
+            60000,
+            EXPLORE_RETRY_BASE_DELAY_MS * Math.pow(2, exploreAttempt),
+          );
+          debugLog(
+            `[explore] retrying after error | endpoint=${endpoint} attempt=${exploreAttempt + 1}/${MAX_EXPLORE_RETRIES} | delay=${delay}ms`,
+          );
 
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
           exploreAttempt += 1;
         }
       }
@@ -1724,22 +2276,30 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     const logsStr = formatExploreLogs();
     debugLog(`[explore] logs:\n${logsStr}`);
-    const contextualSummary = buildContextualExploreSummary(purpose, exploreDoneResult);
+    const contextualSummary = buildContextualExploreSummary(
+      purpose,
+      exploreDoneResult,
+    );
 
     for (const log of exploreLogs) {
-      if (log.tool === 'read' && log.success && log.args.path) {
-        exploreKnowledge.readFiles.set(log.args.path as string, log.resultPreview || 'read');
+      if (log.tool === "read" && log.success && log.args.path) {
+        exploreKnowledge.readFiles.set(
+          log.args.path as string,
+          log.resultPreview || "read",
+        );
       }
-      if (log.tool === 'grep' && log.success) {
-        const sig = makeCallSignature('grep', log.args);
-        exploreKnowledge.grepResults.set(sig, log.resultPreview || 'ok');
+      if (log.tool === "grep" && log.success) {
+        const sig = makeCallSignature("grep", log.args);
+        exploreKnowledge.grepResults.set(sig, log.resultPreview || "ok");
       }
     }
 
     if (exploreDoneResult !== null) {
       addExploreSummary(contextualSummary);
 
-      debugLog(`[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} countedCalls=${currentExploreToolCallCount} searches=${currentExploreSearchCallCount} fetches=${currentExploreFetchCallCount}`);
+      debugLog(
+        `[explore] DONE success toolsUsed=${exploreLogs.length} duration=${duration} totalKnownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} countedCalls=${currentExploreToolCallCount} searches=${currentExploreSearchCallCount} fetches=${currentExploreFetchCallCount}`,
+      );
       return {
         success: true,
         result: `Completed in ${duration} (${exploreLogs.length} tool calls)\n\n${contextualSummary}`,
@@ -1764,8 +2324,10 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
       };
     }
 
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    debugLog(`[explore] ERROR ${errorMsg.slice(0, 150)} duration=${duration} toolsUsed=${exploreLogs.length}`);
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    debugLog(
+      `[explore] ERROR ${errorMsg.slice(0, 150)} duration=${duration} toolsUsed=${exploreLogs.length}`,
+    );
     return {
       success: false,
       error: `${errorMsg} (${duration})`,
