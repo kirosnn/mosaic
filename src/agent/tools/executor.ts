@@ -1,48 +1,191 @@
-import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'fs/promises';
-import { join, resolve, dirname, extname, sep } from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { requestApproval } from '../../utils/approvalBridge';
-import { shouldRequireApprovals } from '../../utils/config';
-import { getLocalBashDecision } from '../../utils/localRules';
-import { generateDiff, formatDiffForDisplay } from '../../utils/diff';
-import { trackFileChange, trackFileCreated } from '../../utils/fileChangeTracker';
-import { debugLog } from '../../utils/debug';
-import { addPendingChange, clearPendingChanges, hasPendingChanges, isInReviewMode, startReview } from '../../utils/pendingChangesBridge';
+import { readFile, writeFile, readdir, stat, mkdir, unlink } from "fs/promises";
+import { join, resolve, dirname, extname, sep } from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { requestApproval } from "../../utils/approvalBridge";
+import {
+  shouldRequireApprovals,
+  getPreferredSubsystem,
+} from "../../utils/config";
+import { getLocalBashDecision } from "../../utils/localRules";
+import {
+  discoverSubsystems,
+  getEffectiveSubsystem,
+  type SubsystemInfo,
+} from "../../utils/subsystemDiscovery";
+import { runCommand } from "../subsystemRunner";
+import { generateDiff, formatDiffForDisplay } from "../../utils/diff";
+import {
+  trackFileChange,
+  trackFileCreated,
+} from "../../utils/fileChangeTracker";
+import { debugLog } from "../../utils/debug";
+import {
+  addPendingChange,
+  clearPendingChanges,
+  hasPendingChanges,
+  isInReviewMode,
+  startReview,
+} from "../../utils/pendingChangesBridge";
 import {
   EXCLUDED_DISCOVERY_DIRECTORIES as EXCLUDED_DIRECTORIES,
   findFilesByGlob,
   getFileStatSummary,
   validateWorkspacePath,
   walkWorkspace,
-} from '../repoDiscovery';
-import { classifyShellCapability, resolveCapabilityApproval } from '../capabilities';
-import { formatStructuredGitInspection, type GitCommandCapture } from '../gitWorkspaceState';
-import { recordToolMetrics } from '../runtimeMetrics';
-import { resolveReviewPath, resolveToolPath, type ResolvedToolPath } from '../toolPathScope';
+} from "../repoDiscovery";
+import {
+  classifyShellCapability,
+  resolveCapabilityApproval,
+} from "../capabilities";
+import {
+  formatStructuredGitInspection,
+  type GitCommandCapture,
+} from "../gitWorkspaceState";
+import { recordToolMetrics } from "../runtimeMetrics";
+import {
+  resolveReviewPath,
+  resolveToolPath,
+  type ResolvedToolPath,
+} from "../toolPathScope";
 
 const execAsync = promisify(exec);
 
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36';
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36";
 const DEFAULT_FETCH_MAX_LENGTH = 10000;
 const DEFAULT_FETCH_TIMEOUT = 30000;
 
 const SAFE_BASH_COMMANDS = new Set([
-  'ls', 'dir', 'tree', 'pwd', 'cat', 'type', 'head', 'tail', 'less', 'more', 'nl', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'find', 'fd', 'which', 'where', 'whereis', 'wc', 'diff', 'cmp', 'comm', 'file', 'stat', 'readlink', 'realpath', 'du', 'df', 'env', 'printenv', 'whoami', 'id', 'hostname', 'uname', 'date', 'cal', 'uptime', 'ps', 'top', 'htop', 'pstree', 'pgrep', 'free', 'vmstat', 'iostat', 'lscpu', 'lsmem', 'ping', 'traceroute', 'tracepath', 'mtr', 'dig', 'nslookup', 'host', 'ss', 'netstat', 'lsof', 'node', 'deno', 'python', 'python3', 'ruby', 'php', 'npm', 'npx', 'yarn', 'pnpm', 'bun', 'tsc', 'eslint', 'prettier', 'jest', 'vitest', 'mocha', 'cargo', 'rustc', 'go', 'java', 'javac', 'dotnet', 'exa', 'eza', 'bat', 'curl', 'wget',
+  "ls",
+  "dir",
+  "tree",
+  "pwd",
+  "cat",
+  "type",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "nl",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "ag",
+  "ack",
+  "find",
+  "fd",
+  "which",
+  "where",
+  "whereis",
+  "wc",
+  "diff",
+  "cmp",
+  "comm",
+  "file",
+  "stat",
+  "readlink",
+  "realpath",
+  "du",
+  "df",
+  "env",
+  "printenv",
+  "whoami",
+  "id",
+  "hostname",
+  "uname",
+  "date",
+  "cal",
+  "uptime",
+  "ps",
+  "top",
+  "htop",
+  "pstree",
+  "pgrep",
+  "free",
+  "vmstat",
+  "iostat",
+  "lscpu",
+  "lsmem",
+  "ping",
+  "traceroute",
+  "tracepath",
+  "mtr",
+  "dig",
+  "nslookup",
+  "host",
+  "ss",
+  "netstat",
+  "lsof",
+  "node",
+  "deno",
+  "python",
+  "python3",
+  "ruby",
+  "php",
+  "npm",
+  "npx",
+  "yarn",
+  "pnpm",
+  "bun",
+  "tsc",
+  "eslint",
+  "prettier",
+  "jest",
+  "vitest",
+  "mocha",
+  "cargo",
+  "rustc",
+  "go",
+  "java",
+  "javac",
+  "dotnet",
+  "exa",
+  "eza",
+  "bat",
+  "curl",
+  "wget",
 ]);
 
 const DANGEROUS_BASH_PATTERNS = [
   /\bgit\s+(push|commit|add|reset|checkout|switch|merge|rebase|cherry-pick|stash|pull|fetch|tag|branch|remote|submodule|worktree|gc|clean)\b/i,
 
-  /\brm\b/i, /\brmdir\b/i, /\bdel\b/i, /\berase\b/i, /\brd\b/i,
-  /\bmv\b/i, /\bmove\b/i, /\bcp\b/i, /\bcopy\b/i, /\bxcopy\b/i, /\brobocopy\b/i,
-  /\bmkdir\b/i, /\bmd\b/i, /\btouch\b/i, /\bln\b/i,
-  /\bchmod\b/i, /\bchown\b/i, /\bchgrp\b/i, /\bchattr\b/i,
+  /\brm\b/i,
+  /\brmdir\b/i,
+  /\bdel\b/i,
+  /\berase\b/i,
+  /\brd\b/i,
+  /\bmv\b/i,
+  /\bmove\b/i,
+  /\bcp\b/i,
+  /\bcopy\b/i,
+  /\bxcopy\b/i,
+  /\brobocopy\b/i,
+  /\bmkdir\b/i,
+  /\bmd\b/i,
+  /\btouch\b/i,
+  /\bln\b/i,
+  /\bchmod\b/i,
+  /\bchown\b/i,
+  /\bchgrp\b/i,
+  /\bchattr\b/i,
 
-  /\bsudo\b/i, /\bsu\b/i, /\bdoas\b/i,
-  /\bkill\b/i, /\bkillall\b/i, /\bpkill\b/i,
+  /\bsudo\b/i,
+  /\bsu\b/i,
+  /\bdoas\b/i,
+  /\bkill\b/i,
+  /\bkillall\b/i,
+  /\bpkill\b/i,
 
-  /\bapt\b/i, /\bapt-get\b/i, /\byum\b/i, /\bdnf\b/i, /\bzypper\b/i, /\bpacman\b/i, /\bbrew\b/i, /\bport\b/i,
+  /\bapt\b/i,
+  /\bapt-get\b/i,
+  /\byum\b/i,
+  /\bdnf\b/i,
+  /\bzypper\b/i,
+  /\bpacman\b/i,
+  /\bbrew\b/i,
+  /\bport\b/i,
 
   /\bnpm\s+(install|i|add|uninstall|remove|update|upgrade|publish|link|ci|rebuild|audit\s+fix)\b/i,
   /\byarn\s+(add|remove|up|upgrade|set\s+version|dlx|plugin|publish|link)\b/i,
@@ -58,12 +201,17 @@ const DANGEROUS_BASH_PATTERNS = [
   /\bsed\b.*\s-i\b/i,
   /\bperl\b.*\s-pe\b/i,
 
-  /\bsh\b/i, /\bbash\b/i, /\bzsh\b/i, /\bfish\b/i,
+  /\bsh\b/i,
+  /\bbash\b/i,
+  /\bzsh\b/i,
+  /\bfish\b/i,
   /\bpython(3)?\s+-c\b/i,
   /\bnode\s+-e\b/i,
   /\bdeno\s+eval\b/i,
   /\bbun\s+-e\b/i,
-  /\bpowershell\b/i, /\bpwsh\b/i, /\bcmd(\.exe)?\b/i,
+  /\bpowershell\b/i,
+  /\bpwsh\b/i,
+  /\bcmd(\.exe)?\b/i,
 
   />/,
   /</,
@@ -86,14 +234,20 @@ const DANGEROUS_BASH_PATTERNS = [
   /\bwget\b.*\s(-O|--output-document|--directory-prefix)\b/i,
 ];
 
-const BASH_REDIRECTION_PATTERN = /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
+const BASH_REDIRECTION_PATTERN =
+  /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
 
 const GIT_READONLY_PATTERN =
   /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+rev-list\s+.*--left-right\s+.*--count(?:\s|$)|^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)(?:\s|$)|^git\s+stash\s+list(?:\s|$)|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)(?:\s|$)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
 
 function isGitReadOnlyCommand(command: string): boolean {
-  const normalized = command.trim().replace(/\s+/g, ' ');
-  if (normalized.includes('\n') || normalized.includes('\r') || normalized.includes('\0')) return false;
+  const normalized = command.trim().replace(/\s+/g, " ");
+  if (
+    normalized.includes("\n") ||
+    normalized.includes("\r") ||
+    normalized.includes("\0")
+  )
+    return false;
   if (/[|&;`$(<>]/.test(normalized)) return false;
   return GIT_READONLY_PATTERN.test(normalized);
 }
@@ -102,14 +256,15 @@ function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
 
-  const normalized = trimmed.replace(/\s+/g, ' ');
+  const normalized = trimmed.replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
 
-  if (lower.includes('\n') || lower.includes('\r') || lower.includes('\0')) return false;
+  if (lower.includes("\n") || lower.includes("\r") || lower.includes("\0"))
+    return false;
 
   if (isGitReadOnlyCommand(normalized)) return true;
 
-  const firstToken = normalized.split(' ')[0] ?? '';
+  const firstToken = normalized.split(" ")[0] ?? "";
   const firstWord = firstToken.toLowerCase();
 
   if (!SAFE_BASH_COMMANDS.has(firstWord)) return false;
@@ -118,28 +273,33 @@ function isSafeBashCommand(command: string): boolean {
     if (pattern.test(normalized)) return false;
   }
 
-  if (firstWord === 'curl') {
-    const allowed = /^curl(\s+(-I|--head|-s|--silent|-S|--show-error|-L|--location|--compressed|--max-time\s+\d+|--connect-timeout\s+\d+|--retry\s+\d+|--retry-delay\s+\d+|--fail|--fail-with-body|--http1\.1|--http2|--tlsv1(\.\d+)?|--cacert\s+\S+|--capath\s+\S+|--resolve\s+\S+|--header\s+(".*?"|'.*?'|\S+)|--user-agent\s+(".*?"|'.*?'|\S+)))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
+  if (firstWord === "curl") {
+    const allowed =
+      /^curl(\s+(-I|--head|-s|--silent|-S|--show-error|-L|--location|--compressed|--max-time\s+\d+|--connect-timeout\s+\d+|--retry\s+\d+|--retry-delay\s+\d+|--fail|--fail-with-body|--http1\.1|--http2|--tlsv1(\.\d+)?|--cacert\s+\S+|--capath\s+\S+|--resolve\s+\S+|--header\s+(".*?"|'.*?'|\S+)|--user-agent\s+(".*?"|'.*?'|\S+)))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
     if (!allowed.test(normalized)) return false;
   }
 
-  if (firstWord === 'wget') {
-    const allowed = /^wget(\s+(-q|--quiet|-S|--server-response|--spider|--max-redirect\s+\d+|--timeout\s+\d+|--tries\s+\d+|--wait\s+\d+|--user-agent\s+\S+))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
+  if (firstWord === "wget") {
+    const allowed =
+      /^wget(\s+(-q|--quiet|-S|--server-response|--spider|--max-redirect\s+\d+|--timeout\s+\d+|--tries\s+\d+|--wait\s+\d+|--user-agent\s+\S+))*(\s+("https?:\/\/[^"]+"|'https?:\/\/[^']+'|https?:\/\/\S+))\s*$/i;
     if (!allowed.test(normalized)) return false;
   }
 
   return true;
 }
 
-function splitTopLevelBashSegments(command: string): { segments: string[]; hasUnsupportedSyntax: boolean } {
+function splitTopLevelBashSegments(command: string): {
+  segments: string[];
+  hasUnsupportedSyntax: boolean;
+} {
   const segments: string[] = [];
-  let current = '';
-  let quote: '"' | '\'' | null = null;
+  let current = "";
+  let quote: '"' | "'" | null = null;
   let escaped = false;
 
   for (let i = 0; i < command.length; i++) {
-    const ch = command[i] ?? '';
-    const next = command[i + 1] ?? '';
+    const ch = command[i] ?? "";
+    const next = command[i + 1] ?? "";
 
     if (escaped) {
       current += ch;
@@ -147,7 +307,7 @@ function splitTopLevelBashSegments(command: string): { segments: string[]; hasUn
       continue;
     }
 
-    if (ch === '\\' && quote !== '\'') {
+    if (ch === "\\" && quote !== "'") {
       current += ch;
       escaped = true;
       continue;
@@ -161,29 +321,29 @@ function splitTopLevelBashSegments(command: string): { segments: string[]; hasUn
       continue;
     }
 
-    if (ch === '"' || ch === '\'') {
+    if (ch === '"' || ch === "'") {
       quote = ch;
       current += ch;
       continue;
     }
 
-    if (ch === '`' || (ch === '$' && next === '(')) {
+    if (ch === "`" || (ch === "$" && next === "(")) {
       return { segments: [], hasUnsupportedSyntax: true };
     }
 
-    if (ch === '&' && next !== '&') {
+    if (ch === "&" && next !== "&") {
       return { segments: [], hasUnsupportedSyntax: true };
     }
 
-    if (ch === ';' || ch === '|' || ch === '&') {
+    if (ch === ";" || ch === "|" || ch === "&") {
       const currentSegment = current.trim();
       if (!currentSegment) {
         return { segments: [], hasUnsupportedSyntax: true };
       }
       segments.push(currentSegment);
-      current = '';
+      current = "";
 
-      if ((ch === '|' && next === '|') || (ch === '&' && next === '&')) {
+      if ((ch === "|" && next === "|") || (ch === "&" && next === "&")) {
         i++;
       }
       continue;
@@ -220,14 +380,19 @@ function isReadOnlyBashCommandChain(command: string): boolean {
 }
 
 function normalizeCommandOutput(text: string): string {
-  if (!text) return '';
-  let s = text.replace(/\r\n/g, '\n');
-  if (s.includes('\r')) {
-    const parts = s.split('\n');
-    s = parts.map(p => (p.includes('\r') ? (p.split('\r').pop() || '') : p)).join('\n');
+  if (!text) return "";
+  let s = text.replace(/\r\n/g, "\n");
+  if (s.includes("\r")) {
+    const parts = s.split("\n");
+    s = parts
+      .map((p) => (p.includes("\r") ? p.split("\r").pop() || "" : p))
+      .join("\n");
   }
-  s = s.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-Z\\-_])/g, '');
-  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  s = s.replace(
+    /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-Z\\-_])/g,
+    "",
+  );
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
   return s;
 }
 
@@ -238,26 +403,39 @@ function truncateMiddle(text: string, maxChars: number): string {
   return `${text.slice(0, Math.max(0, Math.floor(maxChars / 2) - 3))}\n...\n${text.slice(-Math.max(0, Math.floor(maxChars / 2) - 3))}`;
 }
 
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars - 3) + "...";
+}
+
 function shouldUseStructuredGitInspection(command: string): boolean {
   const parsed = splitTopLevelBashSegments(command);
   if (parsed.hasUnsupportedSyntax) {
     return false;
   }
-  const segments = parsed.segments.length > 0 ? parsed.segments : [command.trim()];
-  return segments.length > 0 && segments.every((segment) => isGitReadOnlyCommand(segment));
+  const segments =
+    parsed.segments.length > 0 ? parsed.segments : [command.trim()];
+  return (
+    segments.length > 0 &&
+    segments.every((segment) => isGitReadOnlyCommand(segment))
+  );
 }
 
 let turndownServiceCtor: (new (...args: any[]) => any) | null = null;
 let readabilityCtor: (new (...args: any[]) => any) | null = null;
 let parseHtmlFn: ((html: string) => { document: unknown }) | null = null;
 
-async function extractContentFromHtml(html: string, url: string): Promise<{ content: string; title: string | null; isSPA: boolean }> {
+async function extractContentFromHtml(
+  html: string,
+  url: string,
+): Promise<{ content: string; title: string | null; isSPA: boolean }> {
   if (!turndownServiceCtor || !readabilityCtor || !parseHtmlFn) {
-    const [{ default: TurndownService }, { Readability }, { parseHTML }] = await Promise.all([
-      import('turndown'),
-      import('@mozilla/readability'),
-      import('linkedom'),
-    ]);
+    const [{ default: TurndownService }, { Readability }, { parseHTML }] =
+      await Promise.all([
+        import("turndown"),
+        import("@mozilla/readability"),
+        import("linkedom"),
+      ]);
     turndownServiceCtor = TurndownService;
     readabilityCtor = Readability;
     parseHtmlFn = parseHTML;
@@ -267,22 +445,22 @@ async function extractContentFromHtml(html: string, url: string): Promise<{ cont
   const documentAny = document as Document & { title?: string | null };
 
   const turndown = new turndownServiceCtor({
-    headingStyle: 'atx',
-    codeBlockStyle: 'fenced',
-    emDelimiter: '*',
+    headingStyle: "atx",
+    codeBlockStyle: "fenced",
+    emDelimiter: "*",
   });
 
-  turndown.addRule('removeScripts', {
-    filter: ['script', 'style', 'noscript'],
-    replacement: () => '',
+  turndown.addRule("removeScripts", {
+    filter: ["script", "style", "noscript"],
+    replacement: () => "",
   });
 
-  turndown.addRule('preserveLinks', {
-    filter: 'a',
+  turndown.addRule("preserveLinks", {
+    filter: "a",
     replacement: (content: string, node: any) => {
       const element = node as HTMLAnchorElement;
-      const href = element.getAttribute('href');
-      if (!href || href.startsWith('#')) return content;
+      const href = element.getAttribute("href");
+      if (!href || href.startsWith("#")) return content;
 
       try {
         const absoluteUrl = new URL(href, url).toString();
@@ -293,13 +471,13 @@ async function extractContentFromHtml(html: string, url: string): Promise<{ cont
     },
   });
 
-  turndown.addRule('preserveImages', {
-    filter: 'img',
+  turndown.addRule("preserveImages", {
+    filter: "img",
     replacement: (_content: string, node: any) => {
       const element = node as HTMLImageElement;
-      const src = element.getAttribute('src');
-      const alt = element.getAttribute('alt') || '';
-      if (!src) return '';
+      const src = element.getAttribute("src");
+      const alt = element.getAttribute("alt") || "";
+      if (!src) return "";
 
       try {
         const absoluteUrl = new URL(src, url).toString();
@@ -328,26 +506,33 @@ async function extractContentFromHtml(html: string, url: string): Promise<{ cont
 
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   const bodyContent = bodyMatch ? bodyMatch[1] : html;
-  const markdownContent = turndown.turndown(bodyContent || '').trim();
+  const markdownContent = turndown.turndown(bodyContent || "").trim();
 
   if (markdownContent.length > 50) {
-      return {
-        content: markdownContent,
-        title: documentAny.title || null,
-        isSPA: false,
-      };
+    return {
+      content: markdownContent,
+      title: documentAny.title || null,
+      isSPA: false,
+    };
   }
 
-  const isSPA = html.includes('id="root"') ||
+  const isSPA =
+    html.includes('id="root"') ||
     html.includes('id="app"') ||
     html.includes('id="__next"') ||
-    html.includes('data-reactroot') ||
-    html.includes('ng-app');
+    html.includes("data-reactroot") ||
+    html.includes("ng-app");
 
   const metaTags: string[] = [];
-  const metaDescription = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
-  const metaOgTitle = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
-  const metaOgDescription = html.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i);
+  const metaDescription = html.match(
+    /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i,
+  );
+  const metaOgTitle = html.match(
+    /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i,
+  );
+  const metaOgDescription = html.match(
+    /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i,
+  );
 
   if (metaOgTitle) metaTags.push(`**Title:** ${metaOgTitle[1]}`);
   if (metaDescription) metaTags.push(`**Description:** ${metaDescription[1]}`);
@@ -355,11 +540,11 @@ async function extractContentFromHtml(html: string, url: string): Promise<{ cont
     metaTags.push(`**OG Description:** ${metaOgDescription[1]}`);
   }
 
-  let content = '';
+  let content = "";
   if (isSPA) {
     content = `*This appears to be a Single Page Application (SPA/React/Vue/Angular). The content is rendered client-side with JavaScript and cannot be extracted via simple HTTP fetch.*\n\n`;
     if (metaTags.length > 0) {
-      content += `**Available metadata:**\n${metaTags.join('\n')}\n\n`;
+      content += `**Available metadata:**\n${metaTags.join("\n")}\n\n`;
     }
     content += `*To see the actual content, you would need a headless browser. Try using raw=true to see the HTML source.*`;
   } else if (markdownContent) {
@@ -367,7 +552,7 @@ async function extractContentFromHtml(html: string, url: string): Promise<{ cont
   } else {
     content = `*No readable content could be extracted from this page.*\n\n`;
     if (metaTags.length > 0) {
-      content += `**Available metadata:**\n${metaTags.join('\n')}`;
+      content += `**Available metadata:**\n${metaTags.join("\n")}`;
     }
   }
 
@@ -384,9 +569,20 @@ async function fetchUrlContent(
     raw?: boolean;
     timeout?: number;
     userAgent?: string;
-  } = {}
-): Promise<{ content: string; contentType: string; title: string | null; status: number; statusText: string; isSPA?: boolean }> {
-  const { raw = false, timeout = DEFAULT_FETCH_TIMEOUT, userAgent = DEFAULT_USER_AGENT } = options;
+  } = {},
+): Promise<{
+  content: string;
+  contentType: string;
+  title: string | null;
+  status: number;
+  statusText: string;
+  isSPA?: boolean;
+}> {
+  const {
+    raw = false,
+    timeout = DEFAULT_FETCH_TIMEOUT,
+    userAgent = DEFAULT_USER_AGENT,
+  } = options;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -394,12 +590,13 @@ async function fetchUrlContent(
   try {
     const response = await globalThis.fetch(url, {
       headers: {
-        'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        "User-Agent": userAgent,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
       },
       signal: controller.signal,
-      redirect: 'follow',
+      redirect: "follow",
     });
 
     const status = response.status;
@@ -409,12 +606,13 @@ async function fetchUrlContent(
       throw new Error(`HTTP ${status} ${statusText}`);
     }
 
-    const contentType = response.headers.get('content-type') || '';
+    const contentType = response.headers.get("content-type") || "";
     const text = await response.text();
 
-    const isHtml = contentType.includes('text/html') ||
-      text.slice(0, 500).toLowerCase().includes('<html') ||
-      text.slice(0, 500).toLowerCase().includes('<!doctype html');
+    const isHtml =
+      contentType.includes("text/html") ||
+      text.slice(0, 500).toLowerCase().includes("<html") ||
+      text.slice(0, 500).toLowerCase().includes("<!doctype html");
 
     if (isHtml && !raw) {
       const { content, title, isSPA } = await extractContentFromHtml(text, url);
@@ -455,13 +653,18 @@ function countReviewDecisions(results: boolean[]): ReviewDecisionCounts {
   };
 }
 
-function buildReviewRejectionResult(operation: string, counts: ReviewDecisionCounts): ToolResult | null {
+function buildReviewRejectionResult(
+  operation: string,
+  counts: ReviewDecisionCounts,
+): ToolResult | null {
   if (counts.deniedCount <= 0) return null;
 
-  const summary = counts.reviewedCount > 0
-    ? `${counts.keptCount} kept, ${counts.deniedCount} denied`
-    : `${counts.deniedCount} denied`;
-  const userMessage = counts.deniedCount > 1 ? 'Changes denied by user' : 'Change denied by user';
+  const summary =
+    counts.reviewedCount > 0
+      ? `${counts.keptCount} kept, ${counts.deniedCount} denied`
+      : `${counts.deniedCount} denied`;
+  const userMessage =
+    counts.deniedCount > 1 ? "Changes denied by user" : "Change denied by user";
   const error = `OPERATION REJECTED BY USER DURING REVIEW: ${operation}
 
 Review summary: ${summary}
@@ -486,24 +689,28 @@ REQUIRED ACTION: Ask the user to retry and confirm the change in review.`;
   return {
     success: false,
     error,
-    userMessage: 'Review unavailable, change reverted',
+    userMessage: "Review unavailable, change reverted",
   };
 }
 
-async function restoreWorkspaceFile(workspace: string, relativePath: string, content: string): Promise<void> {
+async function restoreWorkspaceFile(
+  workspace: string,
+  relativePath: string,
+  content: string,
+): Promise<void> {
   const fullPath = resolveReviewPath(workspace, relativePath);
-  if (content === '') {
+  if (content === "") {
     try {
       await unlink(fullPath);
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
-      if (err?.code !== 'ENOENT') throw error;
+      if (err?.code !== "ENOENT") throw error;
     }
     return;
   }
 
   await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, content, 'utf-8');
+  await writeFile(fullPath, content, "utf-8");
 }
 
 async function enforceSingleReviewDecision(
@@ -537,15 +744,19 @@ async function requestOutsideWorkspaceApproval(
   args: Record<string, unknown>,
   pathInfo: ResolvedToolPath,
 ): Promise<ToolResult | null> {
-  const approvalResult = await requestApproval(toolName, { ...args, path: pathInfo.absolutePath }, {
-    title: `${toolName} outside workspace (${pathInfo.displayPath})`,
-    content: pathInfo.absolutePath,
-    details: [
-      `Requested path: ${String(args.path ?? pathInfo.requestedPath)}`,
-      `Launch directory: ${process.cwd()}`,
-      'Scope: outside workspace',
-    ],
-  });
+  const approvalResult = await requestApproval(
+    toolName,
+    { ...args, path: pathInfo.absolutePath },
+    {
+      title: `${toolName} outside workspace (${pathInfo.displayPath})`,
+      content: pathInfo.absolutePath,
+      details: [
+        `Requested path: ${String(args.path ?? pathInfo.requestedPath)}`,
+        `Launch directory: ${process.cwd()}`,
+        "Scope: outside workspace",
+      ],
+    },
+  );
 
   if (approvalResult.approved) {
     return null;
@@ -557,7 +768,7 @@ async function requestOutsideWorkspaceApproval(
       error: `OUTSIDE-WORKSPACE ACCESS REJECTED BY USER with custom instructions: "${approvalResult.customResponse}"
 
 The user provided a specific correction. Follow it exactly and do not retry the same path access.`,
-      userMessage: 'Outside-workspace access cancelled by user',
+      userMessage: "Outside-workspace access cancelled by user",
     };
   }
 
@@ -567,7 +778,7 @@ The user provided a specific correction. Follow it exactly and do not retry the 
 
 REQUIRED ACTION: Use the question tool immediately to ask for the exact path, app, or scope to use next.
 Do not keep probing broad local directories without clarification.`,
-    userMessage: 'Outside-workspace access cancelled by user',
+    userMessage: "Outside-workspace access cancelled by user",
   };
 }
 
@@ -578,14 +789,22 @@ async function resolvePathForTool(
   approvalsEnabled: boolean,
   options: ExecuteToolOptions,
 ): Promise<{ pathInfo?: ResolvedToolPath; rejection?: ToolResult }> {
-  const requestedPath = typeof args.path === 'string' ? args.path : '.';
+  const requestedPath = typeof args.path === "string" ? args.path : ".";
   const pathInfo = await resolveToolPath(workspace, requestedPath);
 
-  if (pathInfo.withinWorkspace || options.skipApproval === true || !approvalsEnabled) {
+  if (
+    pathInfo.withinWorkspace ||
+    options.skipApproval === true ||
+    !approvalsEnabled
+  ) {
     return { pathInfo };
   }
 
-  const rejection = await requestOutsideWorkspaceApproval(toolName, args, pathInfo);
+  const rejection = await requestOutsideWorkspaceApproval(
+    toolName,
+    args,
+    pathInfo,
+  );
   return rejection ? { rejection } : { pathInfo };
 }
 
@@ -609,14 +828,15 @@ interface WorkspaceReviewOutcome {
 }
 
 function normalizeWorkspaceRelativePath(path: string): string {
-  return path.split(sep).join('/');
+  return path.split(sep).join("/");
 }
 
 function shouldTrackBashFileChanges(command: string): boolean {
-  const trimmed = (command || '').trim();
+  const trimmed = (command || "").trim();
   if (!trimmed) return false;
 
-  const mutationPattern = /\b(remove-item|ri|del|erase|rmdir|rm|move-item|mv|copy-item|cp|xcopy|robocopy|new-item|mkdir|md|rename-item|ren|set-content|add-content|clear-content|out-file|touch|truncate)\b/i;
+  const mutationPattern =
+    /\b(remove-item|ri|del|erase|rmdir|rm|move-item|mv|copy-item|cp|xcopy|robocopy|new-item|mkdir|md|rename-item|ren|set-content|add-content|clear-content|out-file|touch|truncate)\b/i;
   if (mutationPattern.test(trimmed)) return true;
   if (/\bsed\b.*\s-i\b/i.test(trimmed)) return true;
   if (/\bperl\b.*\s-pe\b/i.test(trimmed)) return true;
@@ -626,15 +846,17 @@ function shouldTrackBashFileChanges(command: string): boolean {
   return !isSafeBashCommand(trimmed);
 }
 
-async function captureWorkspaceReviewSnapshot(workspace: string): Promise<WorkspaceReviewSnapshot> {
+async function captureWorkspaceReviewSnapshot(
+  workspace: string,
+): Promise<WorkspaceReviewSnapshot> {
   const files = new Map<string, string>();
-  const stack: string[] = [''];
+  const stack: string[] = [""];
   let truncated = false;
   let skipped = 0;
   let totalBytes = 0;
 
   while (stack.length > 0) {
-    const relDir = stack.pop() ?? '';
+    const relDir = stack.pop() ?? "";
     const absDir = relDir ? resolve(workspace, relDir) : workspace;
     let entries;
     try {
@@ -666,7 +888,10 @@ async function captureWorkspaceReviewSnapshot(workspace: string): Promise<Worksp
         continue;
       }
 
-      if (fileStats.size > BASH_REVIEW_MAX_FILE_BYTES || (totalBytes + fileStats.size) > BASH_REVIEW_MAX_TOTAL_BYTES) {
+      if (
+        fileStats.size > BASH_REVIEW_MAX_FILE_BYTES ||
+        totalBytes + fileStats.size > BASH_REVIEW_MAX_TOTAL_BYTES
+      ) {
         skipped++;
         continue;
       }
@@ -683,8 +908,8 @@ async function captureWorkspaceReviewSnapshot(workspace: string): Promise<Worksp
         continue;
       }
 
-      const content = raw.toString('utf-8');
-      if (content.includes('\u0000')) {
+      const content = raw.toString("utf-8");
+      if (content.includes("\u0000")) {
         skipped++;
         continue;
       }
@@ -697,9 +922,12 @@ async function captureWorkspaceReviewSnapshot(workspace: string): Promise<Worksp
   return { files, truncated, skipped };
 }
 
-async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceReviewSnapshot | null): Promise<WorkspaceReviewOutcome> {
+async function trackBashWorkspaceChanges(
+  workspace: string,
+  before: WorkspaceReviewSnapshot | null,
+): Promise<WorkspaceReviewOutcome> {
   if (!before) {
-    debugLog('[review] bash track skipped reason=no_snapshot_before');
+    debugLog("[review] bash track skipped reason=no_snapshot_before");
     return {
       changedCount: 0,
       reviewedCount: 0,
@@ -708,32 +936,40 @@ async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceRev
     };
   }
   const after = await captureWorkspaceReviewSnapshot(workspace);
-  const allPaths = Array.from(new Set([...before.files.keys(), ...after.files.keys()])).sort((a, b) => a.localeCompare(b));
+  const allPaths = Array.from(
+    new Set([...before.files.keys(), ...after.files.keys()]),
+  ).sort((a, b) => a.localeCompare(b));
   let changedCount = 0;
   let reviewedCount = 0;
   let keptCount = 0;
   let deniedCount = 0;
-  const changedEntries: Array<{ path: string; oldContent: string; newContent: string }> = [];
+  const changedEntries: Array<{
+    path: string;
+    oldContent: string;
+    newContent: string;
+  }> = [];
 
   for (const path of allPaths) {
-    const oldContent = before.files.get(path) ?? '';
-    const newContent = after.files.get(path) ?? '';
+    const oldContent = before.files.get(path) ?? "";
+    const newContent = after.files.get(path) ?? "";
     if (oldContent === newContent) continue;
 
     trackFileChange(path, oldContent, newContent);
 
     const diff = generateDiff(oldContent, newContent);
     const diffLines = formatDiffForDisplay(diff, 0);
-    const type: 'write' | 'edit' | 'delete' = oldContent === '' ? 'write' : (newContent === '' ? 'delete' : 'edit');
-    const title = type === 'write'
-      ? `Create (${path})`
-      : type === 'delete'
-        ? `Delete (${path})`
-        : `Edit (${path})`;
+    const type: "write" | "edit" | "delete" =
+      oldContent === "" ? "write" : newContent === "" ? "delete" : "edit";
+    const title =
+      type === "write"
+        ? `Create (${path})`
+        : type === "delete"
+          ? `Delete (${path})`
+          : `Edit (${path})`;
 
-    addPendingChange(type, 'bash', path, oldContent, newContent, {
+    addPendingChange(type, "bash", path, oldContent, newContent, {
       title,
-      content: diffLines.join('\n'),
+      content: diffLines.join("\n"),
     });
     changedEntries.push({ path, oldContent, newContent });
     changedCount++;
@@ -744,10 +980,12 @@ async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceRev
   );
 
   if (changedCount > 0 && hasPendingChanges() && !isInReviewMode()) {
-    debugLog('[review] bash startReview requested');
+    debugLog("[review] bash startReview requested");
     const reviewResults = await startReview();
     if (reviewResults.length === 0) {
-      debugLog('[review] bash startReview returned no decisions; restoring all changed entries');
+      debugLog(
+        "[review] bash startReview returned no decisions; restoring all changed entries",
+      );
       for (const entry of changedEntries) {
         await restoreWorkspaceFile(workspace, entry.path, entry.oldContent);
       }
@@ -759,7 +997,7 @@ async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceRev
       keptCount = counts.keptCount;
       deniedCount = counts.deniedCount;
       debugLog(
-        `[review] bash review decisions reviewed=${reviewedCount} kept=${keptCount} denied=${deniedCount} bits=${reviewResults.map(v => (v ? '1' : '0')).join('')}`,
+        `[review] bash review decisions reviewed=${reviewedCount} kept=${keptCount} denied=${deniedCount} bits=${reviewResults.map((v) => (v ? "1" : "0")).join("")}`,
       );
 
       for (let i = 0; i < changedEntries.length; i++) {
@@ -776,11 +1014,18 @@ async function trackBashWorkspaceChanges(workspace: string, before: WorkspaceRev
       `[review] bash review skipped changedCount=${changedCount} hasPending=${hasPendingChanges()} inReview=${isInReviewMode()}`,
     );
   } else {
-    debugLog('[review] bash track found no filesystem changes');
+    debugLog("[review] bash track found no filesystem changes");
   }
 
-  if (before.truncated || before.skipped > 0 || after.truncated || after.skipped > 0) {
-    debugLog(`[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={files:${after.files.size},truncated:${after.truncated},skipped:${after.skipped}}`);
+  if (
+    before.truncated ||
+    before.skipped > 0 ||
+    after.truncated ||
+    after.skipped > 0
+  ) {
+    debugLog(
+      `[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={files:${after.files.size},truncated:${after.truncated},skipped:${after.skipped}}`,
+    );
   }
 
   return {
@@ -795,22 +1040,22 @@ function matchGlob(filename: string, pattern: string): boolean {
   let regex = globPatternCache.get(pattern);
 
   if (!regex) {
-    const normalizedPattern = pattern.replace(/\\/g, '/');
-    const variants = normalizedPattern.startsWith('**/')
+    const normalizedPattern = pattern.replace(/\\/g, "/");
+    const variants = normalizedPattern.startsWith("**/")
       ? [normalizedPattern, normalizedPattern.slice(3)]
       : [normalizedPattern];
     const compiled = variants.map((variant) => {
-      let regexPattern = variant.replace(/[.+^${}()|[\]\\*?]/g, '\\$&');
+      let regexPattern = variant.replace(/[.+^${}()|[\]\\*?]/g, "\\$&");
       regexPattern = regexPattern
-        .replace(/\\\*\\\*\\\//g, '(?:(?:[^/]+/)*)')
-        .replace(/\\\/\*\\\*$/g, '(?:/.*)?')
-        .replace(/\\\*\\\*/g, '.*')
-        .replace(/\\\*/g, '[^/]*')
-        .replace(/\\\?/g, '[^/]');
+        .replace(/\\\*\\\*\\\//g, "(?:(?:[^/]+/)*)")
+        .replace(/\\\/\*\\\*$/g, "(?:/.*)?")
+        .replace(/\\\*\\\*/g, ".*")
+        .replace(/\\\*/g, "[^/]*")
+        .replace(/\\\?/g, "[^/]");
       return regexPattern;
     });
 
-    regex = new RegExp(`^(?:${compiled.join('|')})$`, 'i');
+    regex = new RegExp(`^(?:${compiled.join("|")})$`, "i");
     globPatternCache.set(pattern, regex);
 
     if (globPatternCache.size > 100) {
@@ -819,12 +1064,16 @@ function matchGlob(filename: string, pattern: string): boolean {
     }
   }
 
-  const normalizedFilename = filename.replace(/\\/g, '/');
+  const normalizedFilename = filename.replace(/\\/g, "/");
   return regex.test(normalizedFilename);
 }
 
 interface SearchResult {
-  matches: Array<{ line: number; content: string; context?: { before: string[]; after: string[] } }>;
+  matches: Array<{
+    line: number;
+    content: string;
+    context?: { before: string[]; after: string[] };
+  }>;
   error?: string;
   matchCount?: number;
   skipped?: boolean;
@@ -855,7 +1104,13 @@ function isBinaryFile(buffer: Buffer, bytesToCheck = 8000): boolean {
       nullCount++;
       if (nullCount > 1) return true;
     }
-    if (byte !== undefined && byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
+    if (
+      byte !== undefined &&
+      byte < 32 &&
+      byte !== 9 &&
+      byte !== 10 &&
+      byte !== 13
+    ) {
       controlCount++;
       if (controlCount > checkLength * 0.1) return true;
     }
@@ -865,10 +1120,13 @@ function isBinaryFile(buffer: Buffer, bytesToCheck = 8000): boolean {
 }
 
 function escapeRegexForLiteral(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildSearchRegex(query: string, options: SearchOptions): { regex: RegExp; error?: undefined } | { regex?: undefined; error: string } {
+function buildSearchRegex(
+  query: string,
+  options: SearchOptions,
+): { regex: RegExp; error?: undefined } | { regex?: undefined; error: string } {
   try {
     let pattern = query;
 
@@ -884,17 +1142,21 @@ function buildSearchRegex(query: string, options: SearchOptions): { regex: RegEx
       }
     }
 
-    let flags = 'g';
-    if (!options.caseSensitive) flags += 'i';
-    if (options.multiline) flags += 'm';
+    let flags = "g";
+    if (!options.caseSensitive) flags += "i";
+    if (options.multiline) flags += "m";
 
     return { regex: new RegExp(pattern, flags) };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Invalid pattern' };
+    return { error: e instanceof Error ? e.message : "Invalid pattern" };
   }
 }
 
-async function searchInFile(filePath: string, query: string, options: SearchOptions): Promise<SearchResult> {
+async function searchInFile(
+  filePath: string,
+  query: string,
+  options: SearchOptions,
+): Promise<SearchResult> {
   try {
     const stats = await stat(filePath);
 
@@ -902,7 +1164,7 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
       return {
         matches: [],
         skipped: true,
-        skipReason: `File too large (${Math.round(stats.size / 1024)}KB > ${Math.round(options.maxFileSize / 1024)}KB)`
+        skipReason: `File too large (${Math.round(stats.size / 1024)}KB > ${Math.round(options.maxFileSize / 1024)}KB)`,
       };
     }
 
@@ -912,21 +1174,24 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
       return {
         matches: [],
         skipped: true,
-        skipReason: 'Binary file'
+        skipReason: "Binary file",
       };
     }
 
-    const content = buffer.toString('utf-8');
-    const lines = content.split('\n');
+    const content = buffer.toString("utf-8");
+    const lines = content.split("\n");
 
     const regexResult = buildSearchRegex(query, options);
     if (regexResult.error || !regexResult.regex) {
-      return { matches: [], error: regexResult.error ?? 'Failed to build search pattern' };
+      return {
+        matches: [],
+        error: regexResult.error ?? "Failed to build search pattern",
+      };
     }
     const regex: RegExp = regexResult.regex;
 
     if (options.invertMatch) {
-      const hasMatch = lines.some(line => regex.test(line));
+      const hasMatch = lines.some((line) => regex.test(line));
       return {
         matches: [],
         matchCount: hasMatch ? 0 : 1,
@@ -942,17 +1207,18 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
         const matchStart = match.index;
         let lineNumber = 1;
         for (let i = 0; i < matchStart; i++) {
-          if (content[i] === '\n') lineNumber++;
+          if (content[i] === "\n") lineNumber++;
         }
 
         const matchedText = match[0];
-        const matchLines = matchedText.split('\n');
+        const matchLines = matchedText.split("\n");
 
         multilineMatches.push({
           line: lineNumber,
-          content: matchLines.length > 1
-            ? `${matchLines[0]}... (+${matchLines.length - 1} lines)`
-            : matchedText.slice(0, 200)
+          content:
+            matchLines.length > 1
+              ? `${matchLines[0]}... (+${matchLines.length - 1} lines)`
+              : matchedText.slice(0, 200),
         });
 
         if (regex.lastIndex === match.index) {
@@ -963,7 +1229,11 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
       return { matches: multilineMatches, matchCount: multilineMatches.length };
     }
 
-    const matches: Array<{ line: number; content: string; context?: { before: string[]; after: string[] } }> = [];
+    const matches: Array<{
+      line: number;
+      content: string;
+      context?: { before: string[]; after: string[] };
+    }> = [];
     let matchCount = 0;
 
     for (let i = 0; i < lines.length; i++) {
@@ -985,7 +1255,11 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
         }
 
         if (options.contextAfter > 0) {
-          for (let j = i + 1; j <= Math.min(lines.length - 1, i + options.contextAfter); j++) {
+          for (
+            let j = i + 1;
+            j <= Math.min(lines.length - 1, i + options.contextAfter);
+            j++
+          ) {
             const ctxLine = lines[j];
             if (ctxLine !== undefined) contextAfter.push(ctxLine);
           }
@@ -996,7 +1270,9 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
         matches.push({
           line: i + 1,
           content: line,
-          ...(hasContext && { context: { before: contextBefore, after: contextAfter } })
+          ...(hasContext && {
+            context: { before: contextBefore, after: contextAfter },
+          }),
         });
       }
     }
@@ -1005,7 +1281,7 @@ async function searchInFile(filePath: string, query: string, options: SearchOpti
   } catch (error) {
     return {
       matches: [],
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
@@ -1021,73 +1297,87 @@ interface WalkOutput {
   errors: string[];
 }
 
-async function listFilesRecursive(dirPath: string, workspace: string, filterPattern?: string, includeHidden = false): Promise<WalkOutput> {
+async function listFilesRecursive(
+  dirPath: string,
+  workspace: string,
+  filterPattern?: string,
+  includeHidden = false,
+): Promise<WalkOutput> {
   const { entries, errors } = await walkWorkspace(workspace, dirPath, {
     includeFiles: true,
     includeDirectories: true,
     includeHidden,
     filter: filterPattern,
-    relativeTo: 'workspace',
+    relativeTo: "workspace",
   });
   return {
     results: entries.map((entry) => ({
       path: entry.path,
-      isDirectory: entry.type === 'directory',
+      isDirectory: entry.type === "directory",
       excluded: entry.excluded,
     })),
     errors,
   };
 }
 
-async function findFilesByPattern(pattern: string, searchPath: string): Promise<string[]> {
-  return findFilesByGlob(searchPath, '.', pattern);
+async function findFilesByPattern(
+  pattern: string,
+  searchPath: string,
+): Promise<string[]> {
+  return findFilesByGlob(searchPath, ".", pattern);
 }
 
-async function generatePreview(toolName: string, args: Record<string, unknown>, workspace: string) {
+async function generatePreview(
+  toolName: string,
+  args: Record<string, unknown>,
+  workspace: string,
+) {
   switch (toolName) {
-    case 'write': {
+    case "write": {
       const path = args.path as string;
-      const content = typeof args.content === 'string' ? args.content : '';
+      const content = typeof args.content === "string" ? args.content : "";
       const fullPath = resolve(workspace, path);
 
-      if (!content || content.trim() === '') {
+      if (!content || content.trim() === "") {
         return {
           title: `Write (${path})`,
-          content: 'No new content in the file',
+          content: "No new content in the file",
         };
       }
 
-      let oldContent = '';
+      let oldContent = "";
       try {
-        oldContent = await readFile(fullPath, 'utf-8');
-      } catch {
-      }
+        oldContent = await readFile(fullPath, "utf-8");
+      } catch {}
 
       const diff = generateDiff(oldContent, content);
       const diffLines = formatDiffForDisplay(diff);
 
       return {
         title: `Write (${path})`,
-        content: diffLines.join('\n'),
+        content: diffLines.join("\n"),
       };
     }
 
-    case 'edit': {
+    case "edit": {
       const path = args.path as string;
       const oldContent = args.old_content as string;
       const newContent = args.new_content as string;
-      const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
+      const occurrence =
+        (args.occurrence === null
+          ? undefined
+          : (args.occurrence as number | undefined)) ?? 1;
 
-      const oldLines = oldContent.split('\n');
-      const newLines = newContent.split('\n');
+      const oldLines = oldContent.split("\n");
+      const newLines = newContent.split("\n");
 
       const formattedLines: string[] = [];
 
       let startLineNumber = 1;
       try {
         const fullPath = resolve(workspace, path);
-        const fileContent = await readFile(fullPath, 'utf-8');
-        const fileLines = fileContent.split('\n');
+        const fileContent = await readFile(fullPath, "utf-8");
+        const fileLines = fileContent.split("\n");
 
         let occurrenceCount = 0;
         for (let i = 0; i <= fileLines.length - oldLines.length; i++) {
@@ -1106,27 +1396,30 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
             }
           }
         }
-      } catch {
-      }
+      } catch {}
 
       for (let i = 0; i < oldLines.length; i++) {
-        formattedLines.push(`-${String(startLineNumber + i).padStart(4)} | ${oldLines[i] ?? ''}`);
+        formattedLines.push(
+          `-${String(startLineNumber + i).padStart(4)} | ${oldLines[i] ?? ""}`,
+        );
       }
 
       for (let i = 0; i < newLines.length; i++) {
-        formattedLines.push(`+${String(startLineNumber + i).padStart(4)} | ${newLines[i] ?? ''}`);
+        formattedLines.push(
+          `+${String(startLineNumber + i).padStart(4)} | ${newLines[i] ?? ""}`,
+        );
       }
 
       return {
         title: `Edit (${path})`,
-        content: formattedLines.join('\n'),
+        content: formattedLines.join("\n"),
       };
     }
 
-    case 'bash': {
+    case "bash": {
       let command = args.command as string;
 
-      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, '');
+      const cleanCommand = command.replace(/\s+--timeout\s+\d+$/, "");
 
       return {
         title: `Command (${cleanCommand})`,
@@ -1139,16 +1432,25 @@ async function generatePreview(toolName: string, args: Record<string, unknown>, 
   }
 }
 
-export async function executeTool(toolName: string, args: Record<string, unknown>, options: ExecuteToolOptions = {}): Promise<ToolResult> {
+export async function executeTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  options: ExecuteToolOptions = {},
+): Promise<ToolResult> {
   const workspace = process.cwd();
   const startTime = Date.now();
   const argsPreview = JSON.stringify(args).slice(0, 200);
   debugLog(`[tool] ${toolName} START args=${argsPreview}`);
 
   try {
-    const readOnlyMode = process.env.MOSAIC_READONLY === '1';
+    const readOnlyMode = process.env.MOSAIC_READONLY === "1";
     if (readOnlyMode) {
-      const blockedTools = new Set(['write', 'edit', 'create_directory', 'bash']);
+      const blockedTools = new Set([
+        "write",
+        "edit",
+        "create_directory",
+        "bash",
+      ]);
       if (blockedTools.has(toolName)) {
         return {
           success: false,
@@ -1157,40 +1459,49 @@ export async function executeTool(toolName: string, args: Record<string, unknown
       }
     }
 
-    const isBashTool = toolName === 'bash';
-    const bashCommand = isBashTool ? (args.command as string) : '';
+    const isBashTool = toolName === "bash";
+    const bashCommand = isBashTool ? (args.command as string) : "";
     const approvalsEnabled = shouldRequireApprovals();
-    const localBashDecision = isBashTool ? getLocalBashDecision(bashCommand) : null;
+    const localBashDecision = isBashTool
+      ? getLocalBashDecision(bashCommand)
+      : null;
     const bypassBashApproval = isBashTool && options.skipApproval === true;
     const bashCapability = isBashTool
       ? classifyShellCapability(bashCommand, isSafeBashCommand(bashCommand))
-      : 'unknown';
+      : "unknown";
     const bashApprovalDecision = isBashTool
       ? resolveCapabilityApproval(bashCapability, approvalsEnabled)
       : null;
 
     if (isBashTool) {
-      const commandPreview = bashCommand.replace(/\s+/g, ' ').trim().slice(0, 180);
+      const commandPreview = bashCommand
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 180);
       debugLog(
-        `[review] bash gate setup approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval} localDecision=${localBashDecision ?? 'none'} capability=${bashCapability} policy=${bashApprovalDecision?.policy ?? 'n/a'} command="${commandPreview}"`,
+        `[review] bash gate setup approvalsEnabled=${approvalsEnabled} bypass=${bypassBashApproval} localDecision=${localBashDecision ?? "none"} capability=${bashCapability} policy=${bashApprovalDecision?.policy ?? "n/a"} command="${commandPreview}"`,
       );
     }
 
     if (isBashTool) {
-      if (localBashDecision === 'disallow') {
+      if (localBashDecision === "disallow") {
         return {
           success: false,
           error: `Command disallowed by local rules (.mosaic/rules.json): ${bashCommand}`,
         };
       }
-      if (localBashDecision === 'auto-run') {
+      if (localBashDecision === "auto-run") {
         debugLog(`[tool] bash auto-run by local rules: ${bashCommand}`);
       }
     }
 
-    const bashNeedsApproval = isBashTool && !bypassBashApproval && (bashApprovalDecision?.requiresApproval === true)
-      && localBashDecision !== 'auto-run';
-    const shouldTrackBashChanges = isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
+    const bashNeedsApproval =
+      isBashTool &&
+      !bypassBashApproval &&
+      bashApprovalDecision?.requiresApproval === true &&
+      localBashDecision !== "auto-run";
+    const shouldTrackBashChanges =
+      isBashTool && approvalsEnabled && shouldTrackBashFileChanges(bashCommand);
     let bashSnapshotBefore: WorkspaceReviewSnapshot | null = null;
 
     if (isBashTool) {
@@ -1201,9 +1512,9 @@ export async function executeTool(toolName: string, args: Record<string, unknown
 
     if (bashNeedsApproval) {
       const preview = await generatePreview(toolName, args, workspace);
-      const approvalResult = await requestApproval('bash', args, preview);
+      const approvalResult = await requestApproval("bash", args, preview);
       debugLog(
-        `[review] bash approval result approved=${approvalResult.approved} customResponse=${approvalResult.customResponse ? 'yes' : 'no'}`,
+        `[review] bash approval result approved=${approvalResult.approved} customResponse=${approvalResult.customResponse ? "yes" : "no"}`,
       );
 
       if (!approvalResult.approved) {
@@ -1223,7 +1534,8 @@ DO NOT use the question tool since the user already provided clear instructions 
         }
 
         const operationDescription = `executing command: ${args.command}`;
-        const suggestedOptions = 'Options could be: "Modify the command", "Use a different command", "Cancel operation"';
+        const suggestedOptions =
+          'Options could be: "Modify the command", "Use a different command", "Cancel operation"';
 
         const agentError = `OPERATION REJECTED BY USER: ${operationDescription}
 
@@ -1233,9 +1545,9 @@ Example question tool usage:
 question(
   prompt: "Why did you reject ${operationDescription}?",
   options: [
-    { label: "${suggestedOptions.split(', ')[0]?.replace('Options could be: ', '').replace(/"/g, '')}", value: "modify" },
-    { label: "${suggestedOptions.split(', ')[1]?.replace(/"/g, '')}", value: "alternative" },
-    { label: "${suggestedOptions.split(', ')[2]?.replace(/"/g, '')}", value: "cancel" }
+    { label: "${suggestedOptions.split(", ")[0]?.replace("Options could be: ", "").replace(/"/g, "")}", value: "modify" },
+    { label: "${suggestedOptions.split(", ")[1]?.replace(/"/g, "")}", value: "alternative" },
+    { label: "${suggestedOptions.split(", ")[2]?.replace(/"/g, "")}", value: "cancel" }
   ]
 )
 
@@ -1253,7 +1565,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
     if (shouldTrackBashChanges) {
       try {
-        debugLog('[review] bash snapshot-before start');
+        debugLog("[review] bash snapshot-before start");
         bashSnapshotBefore = await captureWorkspaceReviewSnapshot(workspace);
         debugLog(
           `[review] bash snapshot-before captured files=${bashSnapshotBefore.files.size} truncated=${bashSnapshotBefore.truncated} skipped=${bashSnapshotBefore.skipped}`,
@@ -1269,46 +1581,58 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
     }
 
     switch (toolName) {
-      case 'read': {
+      case "read": {
         const path = args.path as string;
         const startLine = args.start_line as number | undefined;
         const endLine = args.end_line as number | undefined;
-        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        const access = await resolvePathForTool(
+          toolName,
+          args,
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const pathInfo = access.pathInfo!;
-        const content = await readFile(pathInfo.absolutePath, 'utf-8');
+        const content = await readFile(pathInfo.absolutePath, "utf-8");
 
         if (startLine !== undefined || endLine !== undefined) {
-          const lines = content.split('\n');
+          const lines = content.split("\n");
           const start = (startLine ?? 1) - 1;
           const end = endLine ?? lines.length;
 
           if (start < 0 || start >= lines.length) {
             return {
               success: false,
-              error: `Start line ${startLine} is out of bounds (1-${lines.length})`
+              error: `Start line ${startLine} is out of bounds (1-${lines.length})`,
             };
           }
 
           const selectedLines = lines.slice(start, end);
           return {
             success: true,
-            result: selectedLines.join('\n')
+            result: selectedLines.join("\n"),
           };
         }
 
         return {
           success: true,
-          result: content
+          result: content,
         };
       }
 
-      case 'write': {
+      case "write": {
         const path = args.path as string;
-        let content = typeof args.content === 'string' ? args.content : '';
+        let content = typeof args.content === "string" ? args.content : "";
         if (content) content = content.trimEnd();
         const append = args.append === true;
-        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        const access = await resolvePathForTool(
+          toolName,
+          args,
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const pathInfo = access.pathInfo!;
         const fullPath = pathInfo.absolutePath;
@@ -1316,20 +1640,19 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         await mkdir(dirname(fullPath), { recursive: true });
 
-        let oldContent = '';
+        let oldContent = "";
         try {
-          oldContent = await readFile(fullPath, 'utf-8');
-        } catch {
-        }
+          oldContent = await readFile(fullPath, "utf-8");
+        } catch {}
 
         if (append) {
           const updatedContent = `${oldContent}${content}`;
-          await writeFile(fullPath, updatedContent, 'utf-8');
+          await writeFile(fullPath, updatedContent, "utf-8");
 
-          if (!content || content.trim() === '') {
+          if (!content || content.trim() === "") {
             return {
               success: true,
-              result: `Content appended successfully to: ${path}`
+              result: `Content appended successfully to: ${path}`,
             };
           }
 
@@ -1339,10 +1662,17 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange(oldContent === '' ? 'write' : 'edit', 'write', displayPath, oldContent, updatedContent, {
-              title: `Write (${displayPath})`,
-              content: diffLines.join('\n'),
-            });
+            addPendingChange(
+              oldContent === "" ? "write" : "edit",
+              "write",
+              displayPath,
+              oldContent,
+              updatedContent,
+              {
+                title: `Write (${displayPath})`,
+                content: diffLines.join("\n"),
+              },
+            );
             let reviewResults: boolean[] = [];
             if (hasPendingChanges() && !isInReviewMode()) {
               reviewResults = await startReview();
@@ -1360,7 +1690,9 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] write/append auto-apply path=${displayPath} approvalsEnabled=false`);
+            debugLog(
+              `[review] write/append auto-apply path=${displayPath} approvalsEnabled=false`,
+            );
           }
 
           return {
@@ -1369,9 +1701,9 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             diff: diffLines,
           };
         } else {
-          await writeFile(fullPath, content, 'utf-8');
+          await writeFile(fullPath, content, "utf-8");
 
-          if (!content || content.trim() === '') {
+          if (!content || content.trim() === "") {
             return {
               success: true,
               result: `No new content in the file`,
@@ -1384,10 +1716,17 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange('write', 'write', displayPath, oldContent, content, {
-              title: `Write (${displayPath})`,
-              content: diffLines.join('\n'),
-            });
+            addPendingChange(
+              "write",
+              "write",
+              displayPath,
+              oldContent,
+              content,
+              {
+                title: `Write (${displayPath})`,
+                content: diffLines.join("\n"),
+              },
+            );
             let reviewResults: boolean[] = [];
             if (hasPendingChanges() && !isInReviewMode()) {
               reviewResults = await startReview();
@@ -1405,7 +1744,9 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] write auto-apply path=${displayPath} approvalsEnabled=false`);
+            debugLog(
+              `[review] write auto-apply path=${displayPath} approvalsEnabled=false`,
+            );
           }
 
           return {
@@ -1416,35 +1757,61 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
       }
 
-      case 'list': {
+      case "list": {
         const path = args.path as string;
-        const recursive = args.recursive === null ? undefined : (args.recursive as boolean | undefined);
-        const filter = args.filter === null ? undefined : (args.filter as string | undefined);
-        const includeHidden = args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined);
-        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        const recursive =
+          args.recursive === null
+            ? undefined
+            : (args.recursive as boolean | undefined);
+        const filter =
+          args.filter === null
+            ? undefined
+            : (args.filter as string | undefined);
+        const includeHidden =
+          args.include_hidden === null
+            ? undefined
+            : (args.include_hidden as boolean | undefined);
+        const access = await resolvePathForTool(
+          toolName,
+          args,
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const pathInfo = access.pathInfo!;
         const fullPath = pathInfo.absolutePath;
 
         if (recursive) {
           const recursiveRoot = pathInfo.withinWorkspace ? workspace : fullPath;
-          const recursivePath = pathInfo.withinWorkspace ? path : '.';
-          const { results: files, errors: walkErrors } = await listFilesRecursive(recursivePath, recursiveRoot, filter, includeHidden);
+          const recursivePath = pathInfo.withinWorkspace ? path : ".";
+          const { results: files, errors: walkErrors } =
+            await listFilesRecursive(
+              recursivePath,
+              recursiveRoot,
+              filter,
+              includeHidden,
+            );
 
           const RECURSIVE_LIST_ENTRY_CAP = 300;
           if (files.length > RECURSIVE_LIST_ENTRY_CAP) {
-            const dirCounts = new Map<string, { files: number; dirs: number }>();
+            const dirCounts = new Map<
+              string,
+              { files: number; dirs: number }
+            >();
             for (const entry of files) {
-              const normalized = entry.path.replace(/\\/g, '/');
-              const slash = normalized.indexOf('/');
-              const topSegment = slash === -1 ? normalized : normalized.slice(0, slash);
-              const key = topSegment || '.';
-              if (!dirCounts.has(key)) dirCounts.set(key, { files: 0, dirs: 0 });
+              const normalized = entry.path.replace(/\\/g, "/");
+              const slash = normalized.indexOf("/");
+              const topSegment =
+                slash === -1 ? normalized : normalized.slice(0, slash);
+              const key = topSegment || ".";
+              if (!dirCounts.has(key))
+                dirCounts.set(key, { files: 0, dirs: 0 });
               const counts = dirCounts.get(key)!;
               if (entry.isDirectory) counts.dirs++;
               else counts.files++;
             }
-            recordToolMetrics('list', true, { filesDiscovered: files.length });
+            recordToolMetrics("list", true, { filesDiscovered: files.length });
             const summary = {
               truncated: true,
               totalEntries: files.length,
@@ -1463,164 +1830,202 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               if (file.excluded) {
                 return {
                   path: file.path,
-                  type: 'directory',
-                  excluded: true
+                  type: "directory",
+                  excluded: true,
                 };
               }
-              const summary = await getFileStatSummary(resolve(recursiveRoot, file.path));
-              if (summary.type === 'file') {
+              const summary = await getFileStatSummary(
+                resolve(recursiveRoot, file.path),
+              );
+              if (summary.type === "file") {
                 return {
                   path: file.path,
-                  type: 'file',
+                  type: "file",
                   size: summary.size,
                 };
               }
-              if (summary.type === 'directory') {
+              if (summary.type === "directory") {
                 return {
                   path: file.path,
-                  type: 'directory',
+                  type: "directory",
                 };
               }
               return {
                 path: file.path,
-                type: 'unknown',
-                error: 'access denied',
+                type: "unknown",
+                error: "access denied",
               };
-            })
+            }),
           );
-          recordToolMetrics('list', true, { filesDiscovered: fileStats.length });
+          recordToolMetrics("list", true, {
+            filesDiscovered: fileStats.length,
+          });
           const output: Record<string, unknown> = { files: fileStats };
           if (walkErrors.length > 0) {
             output.errors = walkErrors.slice(0, 10);
           }
           return {
             success: true,
-            result: JSON.stringify(output, null, 2)
+            result: JSON.stringify(output, null, 2),
           };
         } else {
           const entries = await readdir(fullPath, { withFileTypes: true });
           let filteredEntries = entries;
 
           if (!includeHidden) {
-            filteredEntries = filteredEntries.filter(entry => !entry.name.startsWith('.'));
+            filteredEntries = filteredEntries.filter(
+              (entry) => !entry.name.startsWith("."),
+            );
           }
 
           if (filter) {
             const escapedFilter = filter
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-              .replace(/\*/g, '.*')
-              .replace(/\?/g, '.');
-            const regex = new RegExp(`^${escapedFilter}$`, 'i');
-            filteredEntries = filteredEntries.filter(entry => regex.test(entry.name));
+              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+              .replace(/\*/g, ".*")
+              .replace(/\?/g, ".");
+            const regex = new RegExp(`^${escapedFilter}$`, "i");
+            filteredEntries = filteredEntries.filter((entry) =>
+              regex.test(entry.name),
+            );
           }
 
-          const files = filteredEntries.map(entry => ({
+          const files = filteredEntries.map((entry) => ({
             name: entry.name,
-            type: entry.isDirectory() ? 'directory' : 'file',
-            ...(entry.isDirectory() && EXCLUDED_DIRECTORIES.has(entry.name) ? { excluded: true } : {})
+            type: entry.isDirectory() ? "directory" : "file",
+            ...(entry.isDirectory() && EXCLUDED_DIRECTORIES.has(entry.name)
+              ? { excluded: true }
+              : {}),
           }));
 
           return {
             success: true,
-            result: JSON.stringify(files, null, 2)
+            result: JSON.stringify(files, null, 2),
           };
         }
       }
 
-      case 'bash': {
+      case "bash": {
         let command = args.command as string;
         let timeout = 30000;
-        const flushBashTrackedChanges = async (): Promise<WorkspaceReviewOutcome | null> => {
-          if (!bashSnapshotBefore) {
-            debugLog('[review] bash flush skipped reason=no_snapshot_before');
-            return null;
-          }
-          try {
-            const reviewOutcome = await trackBashWorkspaceChanges(workspace, bashSnapshotBefore);
-            if (reviewOutcome.changedCount > 0) {
-              debugLog(`[tool] bash queued ${reviewOutcome.changedCount} filesystem change(s) for review`);
+        const flushBashTrackedChanges =
+          async (): Promise<WorkspaceReviewOutcome | null> => {
+            if (!bashSnapshotBefore) {
+              debugLog("[review] bash flush skipped reason=no_snapshot_before");
+              return null;
             }
-            debugLog(
-              `[review] bash flush outcome changed=${reviewOutcome.changedCount} reviewed=${reviewOutcome.reviewedCount} kept=${reviewOutcome.keptCount} denied=${reviewOutcome.deniedCount}`,
-            );
-            return reviewOutcome;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            debugLog(`[tool] bash snapshot-after failed: ${message}`);
-            return null;
-          }
-        };
+            try {
+              const reviewOutcome = await trackBashWorkspaceChanges(
+                workspace,
+                bashSnapshotBefore,
+              );
+              if (reviewOutcome.changedCount > 0) {
+                debugLog(
+                  `[tool] bash queued ${reviewOutcome.changedCount} filesystem change(s) for review`,
+                );
+              }
+              debugLog(
+                `[review] bash flush outcome changed=${reviewOutcome.changedCount} reviewed=${reviewOutcome.reviewedCount} kept=${reviewOutcome.keptCount} denied=${reviewOutcome.deniedCount}`,
+              );
+              return reviewOutcome;
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              debugLog(`[tool] bash snapshot-after failed: ${message}`);
+              return null;
+            }
+          };
 
         const timeoutMatch = command.match(/\s+--timeout\s+(\d+)$/);
         if (timeoutMatch) {
-          timeout = Math.min(parseInt(timeoutMatch[1] || '30000', 10), 90000);
-          command = command.replace(/\s+--timeout\s+\d+$/, '');
+          timeout = Math.min(parseInt(timeoutMatch[1] || "30000", 10), 90000);
+          command = command.replace(/\s+--timeout\s+\d+$/, "");
         }
 
-        const isWindows = process.platform === 'win32';
-        const execOptions = {
-          cwd: workspace,
-          timeout,
-          ...(isWindows && { shell: 'powershell.exe' as const }),
-          env: {
-            ...process.env,
-            CI: process.env.CI || '1',
-            TERM: process.env.TERM || 'dumb',
-            NO_COLOR: process.env.NO_COLOR || '1',
-            npm_config_loglevel: process.env.npm_config_loglevel || 'silent',
-            GIT_PAGER: process.env.GIT_PAGER || 'cat',
-            PAGER: process.env.PAGER || 'cat',
-          },
-        };
-        const structuredGitExecOptions = {
-          cwd: workspace,
-          timeout,
-          env: execOptions.env,
-        };
+        const preferredSubsystemId = getPreferredSubsystem();
+        const initialSubsystem =
+          await getEffectiveSubsystem(preferredSubsystemId);
+        const allSubsystems = await discoverSubsystems();
 
-        try {
-          let output = '';
-          if (shouldUseStructuredGitInspection(command)) {
-            const parsed = splitTopLevelBashSegments(command);
-            const segments = parsed.segments.length > 0 ? parsed.segments : [command];
-            const captures: GitCommandCapture[] = [];
-            for (const segment of segments) {
-              const { stdout, stderr } = await execAsync(segment, structuredGitExecOptions);
-              captures.push({
-                command: segment,
-                output: normalizeCommandOutput((stdout || '') + (stderr || '')),
+        const fallbacks: SubsystemInfo[] = [initialSubsystem];
+        const others = allSubsystems
+          .filter(
+            (s) =>
+              s.id !== "auto" && s.id !== initialSubsystem.id && s.available,
+          )
+          .sort((a, b) => b.priority - a.priority);
+        fallbacks.push(...others);
+
+        let lastResult: ToolResult | null = null;
+        const attempts: Array<{
+          id: string;
+          success: boolean;
+          error?: string;
+        }> = [];
+
+        for (const subsystem of fallbacks) {
+          try {
+            debugLog(
+              `[tool] bash attempt subsystem=${subsystem.id} command="${command.slice(0, 100)}"`,
+            );
+            const env = {
+              CI: process.env.CI || "1",
+              TERM: process.env.TERM || "dumb",
+              NO_COLOR: process.env.NO_COLOR || "1",
+              npm_config_loglevel: process.env.npm_config_loglevel || "silent",
+              GIT_PAGER: process.env.GIT_PAGER || "cat",
+              PAGER: process.env.PAGER || "cat",
+            };
+
+            let output = "";
+            let success = true;
+
+            if (shouldUseStructuredGitInspection(command)) {
+              const captures: GitCommandCapture[] = [];
+              const parsed = splitTopLevelBashSegments(command);
+              const segments =
+                parsed.segments.length > 0 ? parsed.segments : [command];
+
+              for (const segment of segments) {
+                const stepResult = await runCommand(subsystem, segment, {
+                  cwd: workspace,
+                  timeout: Math.floor(timeout / segments.length),
+                  env,
+                });
+
+                captures.push({
+                  command: segment,
+                  output: stepResult.output,
+                });
+
+                if (!stepResult.success && stepResult.isCompatibilityFailure) {
+                  throw new Error(
+                    stepResult.error ||
+                      "Compatibility failure during git inspection",
+                  );
+                }
+              }
+              output = formatStructuredGitInspection(captures);
+            } else {
+              const runResult = await runCommand(subsystem, command, {
+                cwd: workspace,
+                timeout,
+                env,
               });
-            }
-            output = formatStructuredGitInspection(captures);
-          } else {
-            const { stdout, stderr } = await execAsync(command, execOptions);
-            output = normalizeCommandOutput((stdout || '') + (stderr || ''));
-          }
-          const reviewOutcome = await flushBashTrackedChanges();
-          const reviewRejection = buildReviewRejectionResult(
-            `executing command: ${command}`,
-            {
-              reviewedCount: reviewOutcome?.reviewedCount ?? 0,
-              keptCount: reviewOutcome?.keptCount ?? 0,
-              deniedCount: reviewOutcome?.deniedCount ?? 0,
-            }
-          );
-          if (reviewRejection) {
-            return reviewRejection;
-          }
-          return {
-            success: true,
-            result: output || 'Command executed with no output'
-          };
-        } catch (error: unknown) {
-          const execError = error as { stdout?: string; stderr?: string; message?: string; code?: number };
-          const errorMessage = execError.message || String(error);
+              output = runResult.output;
+              success = runResult.success;
 
-          if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
-            const partialOutput = normalizeCommandOutput((execError.stdout || '') + (execError.stderr || ''));
-            const output = partialOutput
-              ? `Command output (timed out after ${timeout}ms):\n${partialOutput}\n\n[Process continues running in background]`
-              : `Command timed out after ${timeout}ms and produced no output.\n\n[Process may be running in background]`;
+              if (!success) {
+                if (runResult.isCompatibilityFailure) {
+                  throw new Error(runResult.error || "Compatibility failure");
+                }
+
+                lastResult = {
+                  success: false,
+                  result: output || runResult.error || "Command failed",
+                };
+                break;
+              }
+            }
 
             const reviewOutcome = await flushBashTrackedChanges();
             const reviewRejection = buildReviewRejectionResult(
@@ -1629,46 +2034,99 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                 reviewedCount: reviewOutcome?.reviewedCount ?? 0,
                 keptCount: reviewOutcome?.keptCount ?? 0,
                 deniedCount: reviewOutcome?.deniedCount ?? 0,
-              }
+              },
             );
             if (reviewRejection) {
               return reviewRejection;
             }
-            return {
-              success: false,
-              result: output
-            };
-          }
 
-          const output = normalizeCommandOutput((execError.stdout || '') + (execError.stderr || ''));
-          const exitCode = execError.code;
-          const fullOutput = output
-            ? `Command exited with code ${exitCode ?? 'unknown'}:\n${output}`
-            : `Command failed: ${errorMessage}`;
-
-          const reviewOutcome = await flushBashTrackedChanges();
-          const reviewRejection = buildReviewRejectionResult(
-            `executing command: ${command}`,
-            {
-              reviewedCount: reviewOutcome?.reviewedCount ?? 0,
-              keptCount: reviewOutcome?.keptCount ?? 0,
-              deniedCount: reviewOutcome?.deniedCount ?? 0,
+            let result = output || "Command executed with no output";
+            if (attempts.length > 0) {
+              const fallbackChain = attempts
+                .map(
+                  (a) =>
+                    `${a.id} (failed: ${truncateText(a.error || "unknown", 40)})`,
+                )
+                .join(" -> ");
+              result = `[Subsystem Fallback: ${fallbackChain} -> ${subsystem.id} (success)]\n\n${result}`;
             }
-          );
-          if (reviewRejection) {
-            return reviewRejection;
+
+            return {
+              success: true,
+              result,
+            };
+          } catch (error: unknown) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
+
+            attempts.push({
+              id: subsystem.id,
+              success: false,
+              error: errorMessage,
+            });
+
+            if (
+              errorMessage.includes("timeout") ||
+              errorMessage.includes("timed out")
+            ) {
+              const reviewOutcome = await flushBashTrackedChanges();
+              return {
+                success: false,
+                result: `Command timed out after ${timeout}ms.\n\n${errorMessage}`,
+              };
+            }
+
+            if (attempts.length >= fallbacks.length) {
+              lastResult = {
+                success: false,
+                result: `All subsystems failed. Last error: ${errorMessage}`,
+              };
+              break;
+            }
           }
-          return {
-            success: false,
-            result: fullOutput
-          };
         }
+
+        const reviewOutcome = await flushBashTrackedChanges();
+        const reviewRejection = buildReviewRejectionResult(
+          `executing command: ${command}`,
+          {
+            reviewedCount: reviewOutcome?.reviewedCount ?? 0,
+            keptCount: reviewOutcome?.keptCount ?? 0,
+            deniedCount: reviewOutcome?.deniedCount ?? 0,
+          },
+        );
+        if (reviewRejection) {
+          return reviewRejection;
+        }
+
+        if (lastResult && attempts.length > 1) {
+          const fallbackChain = attempts
+            .map((a) => `${a.id} (failed)`)
+            .join(" -> ");
+          lastResult.result = `[Subsystem Fallback: ${fallbackChain} (all failed)]\n\n${lastResult.result}`;
+        }
+
+        return (
+          lastResult || {
+            success: false,
+            error: "Command failed to execute on any subsystem",
+          }
+        );
       }
 
-      case 'glob': {
+      case "glob": {
         const pattern = args.pattern as string;
-        const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
-        const access = await resolvePathForTool(toolName, { ...args, path: searchPath }, workspace, approvalsEnabled, options);
+        const searchPath =
+          (args.path === null
+            ? undefined
+            : (args.path as string | undefined)) || ".";
+        const access = await resolvePathForTool(
+          toolName,
+          { ...args, path: searchPath },
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const fullPath = access.pathInfo!.absolutePath;
 
@@ -1676,31 +2134,88 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         return {
           success: true,
-          result: JSON.stringify(files)
+          result: JSON.stringify(files),
         };
       }
 
-      case 'grep': {
-        const { FILE_TYPE_EXTENSIONS } = await import('./grep.ts');
+      case "grep": {
+        const { FILE_TYPE_EXTENSIONS } = await import("./grep.ts");
 
-        const pattern = args.pattern === null ? undefined : (args.pattern as string | undefined);
-        const fileType = args.file_type === null ? undefined : (args.file_type as string | undefined);
+        const pattern =
+          args.pattern === null
+            ? undefined
+            : (args.pattern as string | undefined);
+        const fileType =
+          args.file_type === null
+            ? undefined
+            : (args.file_type as string | undefined);
         const query = args.query as string;
-        const searchPath = (args.path === null ? undefined : (args.path as string | undefined)) || '.';
-        const caseSensitive = ((args.case_sensitive === null ? undefined : (args.case_sensitive as boolean | undefined)) ?? false);
-        const isRegex = ((args.regex === null ? undefined : (args.regex as boolean | undefined)) ?? false);
-        const wholeWord = ((args.whole_word === null ? undefined : (args.whole_word as boolean | undefined)) ?? false);
-        const multiline = ((args.multiline === null ? undefined : (args.multiline as boolean | undefined)) ?? false);
-        const context = ((args.context === null ? undefined : (args.context as number | undefined)) ?? 0);
-        const contextBefore = ((args.context_before === null ? undefined : (args.context_before as number | undefined)) ?? context);
-        const contextAfter = ((args.context_after === null ? undefined : (args.context_after as number | undefined)) ?? context);
-        const maxResults = ((args.max_results === null ? undefined : (args.max_results as number | undefined)) ?? 500);
-        const maxFileSize = ((args.max_file_size === null ? undefined : (args.max_file_size as number | undefined)) ?? DEFAULT_MAX_FILE_SIZE);
-        const includeHidden = ((args.include_hidden === null ? undefined : (args.include_hidden as boolean | undefined)) ?? false);
-        const excludePattern = args.exclude_pattern === null ? undefined : (args.exclude_pattern as string | undefined);
-        const outputMode = ((args.output_mode === null ? undefined : (args.output_mode as string | undefined)) ?? 'matches') as 'matches' | 'files' | 'count';
-        const invertMatch = ((args.invert_match === null ? undefined : (args.invert_match as boolean | undefined)) ?? false);
-        const access = await resolvePathForTool(toolName, { ...args, path: searchPath }, workspace, approvalsEnabled, options);
+        const searchPath =
+          (args.path === null
+            ? undefined
+            : (args.path as string | undefined)) || ".";
+        const caseSensitive =
+          (args.case_sensitive === null
+            ? undefined
+            : (args.case_sensitive as boolean | undefined)) ?? false;
+        const isRegex =
+          (args.regex === null
+            ? undefined
+            : (args.regex as boolean | undefined)) ?? false;
+        const wholeWord =
+          (args.whole_word === null
+            ? undefined
+            : (args.whole_word as boolean | undefined)) ?? false;
+        const multiline =
+          (args.multiline === null
+            ? undefined
+            : (args.multiline as boolean | undefined)) ?? false;
+        const context =
+          (args.context === null
+            ? undefined
+            : (args.context as number | undefined)) ?? 0;
+        const contextBefore =
+          (args.context_before === null
+            ? undefined
+            : (args.context_before as number | undefined)) ?? context;
+        const contextAfter =
+          (args.context_after === null
+            ? undefined
+            : (args.context_after as number | undefined)) ?? context;
+        const maxResults =
+          (args.max_results === null
+            ? undefined
+            : (args.max_results as number | undefined)) ?? 500;
+        const maxFileSize =
+          (args.max_file_size === null
+            ? undefined
+            : (args.max_file_size as number | undefined)) ??
+          DEFAULT_MAX_FILE_SIZE;
+        const includeHidden =
+          (args.include_hidden === null
+            ? undefined
+            : (args.include_hidden as boolean | undefined)) ?? false;
+        const excludePattern =
+          args.exclude_pattern === null
+            ? undefined
+            : (args.exclude_pattern as string | undefined);
+        const outputMode = ((args.output_mode === null
+          ? undefined
+          : (args.output_mode as string | undefined)) ?? "matches") as
+          | "matches"
+          | "files"
+          | "count";
+        const invertMatch =
+          (args.invert_match === null
+            ? undefined
+            : (args.invert_match as boolean | undefined)) ?? false;
+        const access = await resolvePathForTool(
+          toolName,
+          { ...args, path: searchPath },
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const pathInfo = access.pathInfo!;
         const fullPath = pathInfo.absolutePath;
@@ -1719,46 +2234,67 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         if (regexTest.error) {
           return {
             success: false,
-            error: `Invalid search pattern: ${regexTest.error}`
+            error: `Invalid search pattern: ${regexTest.error}`,
           };
         }
 
-        const normalizedFileType = typeof fileType === 'string' ? fileType.trim().toLowerCase() : undefined;
+        const normalizedFileType =
+          typeof fileType === "string"
+            ? fileType.trim().toLowerCase()
+            : undefined;
         const fileTypeParts = normalizedFileType
-          ? normalizedFileType.split(',').map(p => p.trim()).filter(Boolean)
+          ? normalizedFileType
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean)
           : [];
-        const resolvedExtensions = fileTypeParts.length > 0
-          ? Array.from(new Set(fileTypeParts.flatMap((part) => {
-            const mapped = FILE_TYPE_EXTENSIONS[part];
-            if (mapped && mapped.length > 0) return mapped;
-            if (part.startsWith('.')) return [part];
-            return [`.${part}`];
-          })))
-          : undefined;
+        const resolvedExtensions =
+          fileTypeParts.length > 0
+            ? Array.from(
+                new Set(
+                  fileTypeParts.flatMap((part) => {
+                    const mapped = FILE_TYPE_EXTENSIONS[part];
+                    if (mapped && mapped.length > 0) return mapped;
+                    if (part.startsWith(".")) return [part];
+                    return [`.${part}`];
+                  }),
+                ),
+              )
+            : undefined;
 
-        const isPatternActualGlob = pattern && pattern !== '.' && pattern !== './' && (pattern.includes('*') || pattern.includes('?') || pattern.includes('['));
+        const isPatternActualGlob =
+          pattern &&
+          pattern !== "." &&
+          pattern !== "./" &&
+          (pattern.includes("*") ||
+            pattern.includes("?") ||
+            pattern.includes("["));
 
         let finalPattern: string;
         if (isPatternActualGlob) {
-          finalPattern = pattern!.includes('**') ? pattern! : `**/${pattern}`;
+          finalPattern = pattern!.includes("**") ? pattern! : `**/${pattern}`;
         } else if (resolvedExtensions && resolvedExtensions.length === 1) {
           finalPattern = `**/*${resolvedExtensions[0]}`;
         } else {
-          finalPattern = '**/*';
+          finalPattern = "**/*";
         }
 
         let allFiles = await findFilesByPattern(finalPattern, fullPath);
 
         if (!includeHidden) {
-          allFiles = allFiles.filter(f => !f.split('/').some(part => part.startsWith('.')));
+          allFiles = allFiles.filter(
+            (f) => !f.split("/").some((part) => part.startsWith(".")),
+          );
         }
 
         if (resolvedExtensions && !isPatternActualGlob) {
-          allFiles = allFiles.filter(f => resolvedExtensions.some(ext => f.toLowerCase().endsWith(ext)));
+          allFiles = allFiles.filter((f) =>
+            resolvedExtensions.some((ext) => f.toLowerCase().endsWith(ext)),
+          );
         }
 
         if (excludePattern) {
-          allFiles = allFiles.filter(f => !matchGlob(f, excludePattern));
+          allFiles = allFiles.filter((f) => !matchGlob(f, excludePattern));
         }
 
         const searchOptions: SearchOptions = {
@@ -1772,8 +2308,16 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           invertMatch,
         };
 
-        type MatchType = { line: number; content: string; context?: { before: string[]; after: string[] } };
-        const results: Array<{ file: string; matches: MatchType[]; count?: number }> = [];
+        type MatchType = {
+          line: number;
+          content: string;
+          context?: { before: string[]; after: string[] };
+        };
+        const results: Array<{
+          file: string;
+          matches: MatchType[];
+          count?: number;
+        }> = [];
         const skippedFiles: Array<{ file: string; reason: string }> = [];
         let totalResults = 0;
         let totalMatchCount = 0;
@@ -1785,19 +2329,32 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           const batch = allFiles.slice(i, i + BATCH_SIZE);
           const batchResults = await Promise.all(
             batch.map(async (file) => {
-                const filePath = resolve(fullPath, file);
-                const searchResult = await searchInFile(filePath, query, searchOptions);
-                return {
-                file: pathInfo.withinWorkspace ? join(searchPath, file) : join(pathInfo.displayPath, file),
-                  matches: searchResult.matches,
-                  matchCount: searchResult.matchCount ?? searchResult.matches.length,
-                  skipped: searchResult.skipped,
+              const filePath = resolve(fullPath, file);
+              const searchResult = await searchInFile(
+                filePath,
+                query,
+                searchOptions,
+              );
+              return {
+                file: pathInfo.withinWorkspace
+                  ? join(searchPath, file)
+                  : join(pathInfo.displayPath, file),
+                matches: searchResult.matches,
+                matchCount:
+                  searchResult.matchCount ?? searchResult.matches.length,
+                skipped: searchResult.skipped,
                 skipReason: searchResult.skipReason,
               };
-            })
+            }),
           );
 
-          for (const { file, matches, matchCount, skipped, skipReason } of batchResults) {
+          for (const {
+            file,
+            matches,
+            matchCount,
+            skipped,
+            skipReason,
+          } of batchResults) {
             if (skipped && skipReason) {
               skippedFiles.push({ file, reason: skipReason });
               continue;
@@ -1814,16 +2371,20 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             if (matches.length > 0 || matchCount > 0) {
               totalMatchCount += matchCount;
 
-              if (outputMode === 'files') {
+              if (outputMode === "files") {
                 results.push({ file, matches: [] });
                 totalResults++;
-              } else if (outputMode === 'count') {
+              } else if (outputMode === "count") {
                 results.push({ file, matches: [], count: matchCount });
                 totalResults++;
               } else {
                 const remainingSlots = maxResults - totalResults;
                 const matchesToInclude = matches.slice(0, remainingSlots);
-                results.push({ file, matches: matchesToInclude, count: matchCount });
+                results.push({
+                  file,
+                  matches: matchesToInclude,
+                  count: matchCount,
+                });
                 totalResults += matchesToInclude.length;
               }
             }
@@ -1832,25 +2393,37 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         let formattedResult: string;
 
-        const skippedDetails = skippedFiles.length > 0
-          ? skippedFiles.slice(0, 5).map(s => ({ file: s.file, reason: s.reason }))
-          : undefined;
+        const skippedDetails =
+          skippedFiles.length > 0
+            ? skippedFiles
+                .slice(0, 5)
+                .map((s) => ({ file: s.file, reason: s.reason }))
+            : undefined;
 
-        if (outputMode === 'files') {
-          const filesOnly = results.map(r => r.file);
+        if (outputMode === "files") {
+          const filesOnly = results.map((r) => r.file);
           const summary = {
             files_found: filesOnly.length,
             files: filesOnly,
-            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length, skipped_details: skippedDetails })
+            ...(skippedFiles.length > 0 && {
+              skipped: skippedFiles.length,
+              skipped_details: skippedDetails,
+            }),
           };
           formattedResult = JSON.stringify(summary, null, 2);
-        } else if (outputMode === 'count') {
-          const counts = results.map(r => ({ file: r.file, count: r.count ?? 0 }));
+        } else if (outputMode === "count") {
+          const counts = results.map((r) => ({
+            file: r.file,
+            count: r.count ?? 0,
+          }));
           const summary = {
             total_matches: totalMatchCount,
             files_with_matches: counts.length,
             counts,
-            ...(skippedFiles.length > 0 && { skipped: skippedFiles.length, skipped_details: skippedDetails })
+            ...(skippedFiles.length > 0 && {
+              skipped: skippedFiles.length,
+              skipped_details: skippedDetails,
+            }),
           };
           formattedResult = JSON.stringify(summary, null, 2);
         } else {
@@ -1858,39 +2431,57 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             total_matches: totalMatchCount,
             files_searched: allFiles.length,
             files_with_matches: results.length,
-            ...(skippedFiles.length > 0 && { skipped_files: skippedFiles.length, skipped_details: skippedDetails }),
-            ...(totalResults >= maxResults && { truncated: true, max_results: maxResults }),
-            results: results.map(r => ({
+            ...(skippedFiles.length > 0 && {
+              skipped_files: skippedFiles.length,
+              skipped_details: skippedDetails,
+            }),
+            ...(totalResults >= maxResults && {
+              truncated: true,
+              max_results: maxResults,
+            }),
+            results: results.map((r) => ({
               file: r.file,
               match_count: r.count ?? r.matches.length,
-              matches: r.matches.map(m => {
-                if (m.context && (m.context.before.length > 0 || m.context.after.length > 0)) {
+              matches: r.matches.map((m) => {
+                if (
+                  m.context &&
+                  (m.context.before.length > 0 || m.context.after.length > 0)
+                ) {
                   return {
                     line: m.line,
                     content: m.content,
-                    context: m.context
+                    context: m.context,
                   };
                 }
                 return { line: m.line, content: m.content };
-              })
-            }))
+              }),
+            })),
           };
           formattedResult = JSON.stringify(summary, null, 2);
         }
 
         return {
           success: true,
-          result: formattedResult
+          result: formattedResult,
         };
       }
 
-      case 'edit': {
+      case "edit": {
         const path = args.path as string;
         const oldContent = args.old_content as string;
         let newContent = args.new_content as string;
         if (newContent) newContent = newContent.trimEnd();
-        const occurrence = ((args.occurrence === null ? undefined : (args.occurrence as number | undefined)) ?? 1);
-        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        const occurrence =
+          (args.occurrence === null
+            ? undefined
+            : (args.occurrence as number | undefined)) ?? 1;
+        const access = await resolvePathForTool(
+          toolName,
+          args,
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const pathInfo = access.pathInfo!;
         const fullPath = pathInfo.absolutePath;
@@ -1898,25 +2489,25 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         await mkdir(dirname(fullPath), { recursive: true });
 
-        let content = '';
+        let content = "";
         try {
-          content = await readFile(fullPath, 'utf-8');
+          content = await readFile(fullPath, "utf-8");
         } catch {
-          content = '';
+          content = "";
         }
 
-        if (oldContent === '' && content === '') {
-          await writeFile(fullPath, newContent, 'utf-8');
+        if (oldContent === "" && content === "") {
+          await writeFile(fullPath, newContent, "utf-8");
 
           trackFileCreated(displayPath, newContent);
 
-          const diff = generateDiff('', newContent);
+          const diff = generateDiff("", newContent);
           const diffLines = formatDiffForDisplay(diff);
 
           if (approvalsEnabled) {
-            addPendingChange('write', 'edit', displayPath, '', newContent, {
+            addPendingChange("write", "edit", displayPath, "", newContent, {
               title: `Create (${displayPath})`,
-              content: diffLines.join('\n'),
+              content: diffLines.join("\n"),
             });
             let reviewResults: boolean[] = [];
             if (hasPendingChanges() && !isInReviewMode()) {
@@ -1929,13 +2520,15 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             const reviewResult = await enforceSingleReviewDecision(
               workspace,
               displayPath,
-              '',
+              "",
               `creating file: ${displayPath}`,
               reviewResults,
             );
             if (reviewResult) return reviewResult;
           } else {
-            debugLog(`[review] edit/create auto-apply path=${displayPath} approvalsEnabled=false`);
+            debugLog(
+              `[review] edit/create auto-apply path=${displayPath} approvalsEnabled=false`,
+            );
           }
 
           return {
@@ -1950,7 +2543,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         if (parts.length < occurrence + 1) {
           return {
             success: false,
-            error: `Could not find occurrence ${occurrence} of the specified content`
+            error: `Could not find occurrence ${occurrence} of the specified content`,
           };
         }
 
@@ -1958,7 +2551,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const after = parts.slice(occurrence).join(oldContent);
         const updatedContent = before + newContent + after;
 
-        await writeFile(fullPath, updatedContent, 'utf-8');
+        await writeFile(fullPath, updatedContent, "utf-8");
 
         trackFileChange(displayPath, content, updatedContent);
 
@@ -1966,10 +2559,17 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const diffLines = formatDiffForDisplay(diff);
 
         if (approvalsEnabled) {
-          addPendingChange('edit', 'edit', displayPath, content, updatedContent, {
-            title: `Edit (${displayPath})`,
-            content: diffLines.join('\n'),
-          });
+          addPendingChange(
+            "edit",
+            "edit",
+            displayPath,
+            content,
+            updatedContent,
+            {
+              title: `Edit (${displayPath})`,
+              content: diffLines.join("\n"),
+            },
+          );
           let reviewResults: boolean[] = [];
           if (hasPendingChanges() && !isInReviewMode()) {
             reviewResults = await startReview();
@@ -1987,7 +2587,9 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           );
           if (reviewResult) return reviewResult;
         } else {
-          debugLog(`[review] edit auto-apply path=${displayPath} approvalsEnabled=false`);
+          debugLog(
+            `[review] edit auto-apply path=${displayPath} approvalsEnabled=false`,
+          );
         }
 
         return {
@@ -1997,25 +2599,57 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         };
       }
 
-      case 'create_directory': {
+      case "create_directory": {
         const path = args.path as string;
-        const extension = extname(path || '');
+        const extension = extname(path || "");
         const knownFileExtensions = new Set([
-          '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-          '.py', '.go', '.java', '.kt', '.rb', '.php', '.rs',
-          '.c', '.cc', '.cpp', '.h', '.hpp',
-          '.json', '.yaml', '.yml', '.toml', '.ini',
-          '.md', '.txt', '.env',
-          '.sh', '.bat', '.ps1',
-          '.html', '.css', '.scss', '.less',
+          ".ts",
+          ".tsx",
+          ".js",
+          ".jsx",
+          ".mjs",
+          ".cjs",
+          ".py",
+          ".go",
+          ".java",
+          ".kt",
+          ".rb",
+          ".php",
+          ".rs",
+          ".c",
+          ".cc",
+          ".cpp",
+          ".h",
+          ".hpp",
+          ".json",
+          ".yaml",
+          ".yml",
+          ".toml",
+          ".ini",
+          ".md",
+          ".txt",
+          ".env",
+          ".sh",
+          ".bat",
+          ".ps1",
+          ".html",
+          ".css",
+          ".scss",
+          ".less",
         ]);
         if (extension && knownFileExtensions.has(extension.toLowerCase())) {
           return {
             success: false,
-            error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write with path "${path}" to create a file instead.`
+            error: `Refusing to create a directory at "${path}" because it looks like a file path. Use write with path "${path}" to create a file instead.`,
           };
         }
-        const access = await resolvePathForTool(toolName, args, workspace, approvalsEnabled, options);
+        const access = await resolvePathForTool(
+          toolName,
+          args,
+          workspace,
+          approvalsEnabled,
+          options,
+        );
         if (access.rejection) return access.rejection;
         const fullPath = access.pathInfo!.absolutePath;
 
@@ -2023,16 +2657,18 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         return {
           success: true,
-          result: `Directory created: ${access.pathInfo!.displayPath}`
+          result: `Directory created: ${access.pathInfo!.displayPath}`,
         };
       }
 
-      case 'fetch': {
+      case "fetch": {
         const url = args.url as string;
-        const maxLength = (args.max_length as number | undefined) ?? DEFAULT_FETCH_MAX_LENGTH;
+        const maxLength =
+          (args.max_length as number | undefined) ?? DEFAULT_FETCH_MAX_LENGTH;
         const startIndex = (args.start_index as number | undefined) ?? 0;
         const raw = (args.raw as boolean | undefined) ?? false;
-        const timeout = (args.timeout as number | undefined) ?? DEFAULT_FETCH_TIMEOUT;
+        const timeout =
+          (args.timeout as number | undefined) ?? DEFAULT_FETCH_TIMEOUT;
 
         try {
           new URL(url);
@@ -2045,10 +2681,14 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         try {
           let fetchResult = await fetchUrlContent(url, { raw, timeout });
-          let { content, contentType, title, isSPA, status, statusText } = fetchResult;
+          let { content, contentType, title, isSPA, status, statusText } =
+            fetchResult;
 
           if (isSPA && !raw) {
-            const rawResult = await fetchUrlContent(url, { raw: true, timeout });
+            const rawResult = await fetchUrlContent(url, {
+              raw: true,
+              timeout,
+            });
             content = rawResult.content;
             contentType = rawResult.contentType;
             title = rawResult.title;
@@ -2066,7 +2706,10 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             };
           }
 
-          const extractedContent = content.slice(startIndex, startIndex + maxLength);
+          const extractedContent = content.slice(
+            startIndex,
+            startIndex + maxLength,
+          );
           const truncated = startIndex + maxLength < totalLength;
           const nextStartIndex = truncated ? startIndex + maxLength : undefined;
 
@@ -2079,31 +2722,40 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
           parts.push(`**URL:** ${url}`);
           parts.push(`**Status:** ${status} ${statusText}`);
           parts.push(`**Content-Type:** ${contentType}`);
-          parts.push(`**Length:** ${extractedContent.length} / ${totalLength} characters`);
+          parts.push(
+            `**Length:** ${extractedContent.length} / ${totalLength} characters`,
+          );
 
           if (fetchResult.isSPA) {
-            parts.push(`**Note:** SPA detected (React/Vue/Angular). Showing raw HTML source.`);
+            parts.push(
+              `**Note:** SPA detected (React/Vue/Angular). Showing raw HTML source.`,
+            );
           }
 
           if (truncated && nextStartIndex !== undefined) {
-            parts.push(`**Status:** Content truncated. Use start_index=${nextStartIndex} to continue reading.`);
+            parts.push(
+              `**Status:** Content truncated. Use start_index=${nextStartIndex} to continue reading.`,
+            );
           }
 
-          parts.push('\n---\n');
+          parts.push("\n---\n");
           parts.push(extractedContent);
 
           if (truncated && nextStartIndex !== undefined) {
-            parts.push(`\n\n---\n*Content truncated at ${extractedContent.length} characters. Call fetch again with start_index=${nextStartIndex} to continue reading.*`);
+            parts.push(
+              `\n\n---\n*Content truncated at ${extractedContent.length} characters. Call fetch again with start_index=${nextStartIndex} to continue reading.*`,
+            );
           }
 
           return {
             success: true,
-            result: parts.join('\n'),
+            result: parts.join("\n"),
           };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
 
-          if (message.includes('abort')) {
+          if (message.includes("abort")) {
             return {
               success: false,
               error: `Request timed out after ${timeout}ms`,
@@ -2122,17 +2774,20 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         debugLog(`[tool] ${toolName} ERROR unknown tool (${duration}ms)`);
         return {
           success: false,
-          error: `Unknown tool: ${toolName}`
+          error: `Unknown tool: ${toolName}`,
         };
       }
     }
   } catch (error) {
     const duration = Date.now() - startTime;
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred';
-    debugLog(`[tool] ${toolName} ERROR ${errorMsg.slice(0, 100)} (${duration}ms)`);
+    const errorMsg =
+      error instanceof Error ? error.message : "Unknown error occurred";
+    debugLog(
+      `[tool] ${toolName} ERROR ${errorMsg.slice(0, 100)} (${duration}ms)`,
+    );
     return {
       success: false,
-      error: errorMsg
+      error: errorMsg,
     };
   }
 }
