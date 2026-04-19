@@ -277,12 +277,15 @@ export function ThinkingIndicator(props: ThinkingIndicatorProps) {
     const isFlashing = Date.now() < flashUntilRef.current;
 
     const bd = props.tokenBreakdown;
-    const breakdownParts: string[] = [];
-    if (bd && bd.prompt > 0) breakdownParts.push(`prompt ${bd.prompt.toLocaleString()}`);
-    if (bd && bd.reasoning > 0) breakdownParts.push(`reasoning ${bd.reasoning.toLocaleString()}`);
-    if (bd && bd.tools > 0) breakdownParts.push(`tools ${bd.tools.toLocaleString()}`);
-    if (bd && bd.output > 0) breakdownParts.push(`output ${bd.output.toLocaleString()}`);
-    const breakdownStr = breakdownParts.length > 0 ? ` (${breakdownParts.join(" · ")})` : "";
+    const parts: string[] = [];
+    if (bd && bd.prompt > 0) parts.push(`input ${bd.prompt.toLocaleString()}`);
+    if (bd && bd.reasoning > 0) parts.push(`reasoning ${bd.reasoning.toLocaleString()}`);
+    if (bd && bd.tools > 0) parts.push(`tools ${bd.tools.toLocaleString()}`);
+    if (bd && bd.output > 0) parts.push(`output ${bd.output.toLocaleString()}`);
+    if (parts.length === 0 && bd && bd.completion && bd.completion > 0) {
+        parts.push(`completion ${bd.completion.toLocaleString()}`);
+    }
+    const breakdownStr = parts.length > 0 ? ` (${parts.join(" · ")})` : "";
 
     const sliderFrame = slider.frames[animTick % slider.frames.length] ?? "";
     const trailOptions = {
