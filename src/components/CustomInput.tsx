@@ -25,6 +25,7 @@ interface CustomInputProps {
   submitDisabled?: boolean
   maxWidth?: number
   initialValue?: string
+  historyVersion?: number
 }
 
 interface SlashCompletionItem {
@@ -92,7 +93,7 @@ function applySlashCompletion(input: string, token: string): string {
   return `${nextBase} `
 }
 
-export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth, initialValue }: CustomInputProps) {
+export function CustomInput({ onSubmit, placeholder = '', password = false, focused = true, pasteRequestId = 0, disableHistory = false, submitDisabled = false, maxWidth, initialValue, historyVersion }: CustomInputProps) {
   const [value, setValue] = useState(initialValue ?? '')
   const [cursorPosition, setCursorPosition] = useState(0)
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
@@ -214,7 +215,7 @@ export function CustomInput({ onSubmit, placeholder = '', password = false, focu
 
   useEffect(() => {
     setInputHistory(getInputHistory())
-  }, [])
+  }, [historyVersion])
 
   useEffect(() => {
     valueRef.current = value
