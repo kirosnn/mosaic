@@ -19,7 +19,7 @@ Examples:
 - glob(pattern="src/**/*.js") - All JS files in src/`,
   parameters: z.object({
     pattern: z.string().describe('Glob pattern (use **/ for recursive search, e.g., "**/*.ts")'),
-    path: z.string().optional().describe('Directory to search in (defaults to workspace root)'),
+    path: z.string().optional().describe('Directory to search in. Relative paths resolve from the launch directory; absolute and home-directory paths are allowed.'),
   }),
   execute: async (args) => {
     const cleanArgs = {
