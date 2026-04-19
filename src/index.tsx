@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 
