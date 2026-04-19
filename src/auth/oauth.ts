@@ -54,7 +54,7 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
 
 const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
-  openai: {
+  'openai-oauth': {
     authorizeUrl: OPENAI_AUTHORIZE_URL,
     tokenUrl: OPENAI_TOKEN_URL,
     clientId: OPENAI_CLIENT_ID,
@@ -68,7 +68,7 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
       originator: 'codex_cli_rs',
     },
   },
-  google: {
+  'google-oauth': {
     authorizeUrl: GOOGLE_AUTHORIZE_URL,
     tokenUrl: GOOGLE_TOKEN_URL,
     clientId: GOOGLE_CLIENT_ID,
@@ -163,33 +163,26 @@ async function askInput(prompt: string): Promise<string> {
   return answer.trim();
 }
 
-function startLocalOAuthServer(expectedState: string, port: number, callbackPath: string = '/auth/callback'): {
-  ready: boolean;
-  actualPort: number;
-  close: () => void;
-  waitForCode: () => Promise<{ code?: string } | null>;
-} {
-  let lastCode: string | undefined;
-  let ready = true;
-  let actualPort = port;
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-    if (url.pathname !== callbackPath) {
-      res.writeHead(404);
-      res.end('Not Found');
-      return;
-    }
-    const code = url.searchParams.get('code') ?? undefined;
-    const state = url.searchParams.get('state') ?? undefined;
-    if (!code || !state || state !== expectedState) {
-      res.writeHead(400, { 'Content-Type': 'text/html' });
-      res.end(`<!DOCTYPE html>
+function buildOAuthPageHtml(title: string, message: string, kind: 'success' | 'error', detail?: string): string {
+  const headingColor = kind === 'success' ? 'var(--text-primary)' : 'var(--error-color)';
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
+  const safeDetail = detail ? `<pre>${escapeHtml(detail)}</pre>` : '';
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mosaic Authorization Failed</title>
+    <title>${safeTitle}</title>
     <style>
         :root {
             --bg-app: #171717;
@@ -211,7 +204,7 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
             color: var(--text-primary);
             font-family: var(--font-family);
             margin: 0;
-            height: 100vh;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -220,97 +213,34 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
         }
         .container {
             padding: 2rem;
+            max-width: 720px;
             animation: fadeIn 0.5s ease-out;
         }
         .logo {
             width: 80px;
             height: 80px;
             margin-bottom: 1.5rem;
-            opacity: 0.8;
+            opacity: 0.9;
         }
         h1 {
             font-size: 2rem;
             font-weight: 600;
             margin-bottom: 0.5rem;
-            color: var(--error-color);
+            color: ${headingColor};
         }
         p {
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             color: var(--text-secondary);
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-             <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
-            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
-        </svg>
-        <h1>Authorization Failed</h1>
-        <p>Please return to the terminal and try again.</p>
-    </div>
-</body>
-</html>`);
-      return;
-    }
-    lastCode = code;
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mosaic Authorization</title>
-    <style>
-        :root {
-            --bg-app: #171717;
-            --text-primary: #ffffff;
-            --text-secondary: #aaaaaa;
-            --accent-color: #ffca38;
-            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-        }
-        @media (prefers-color-scheme: light) {
-            :root {
-                --bg-app: #ffffff;
-                --text-primary: #1a1a1a;
-                --text-secondary: #555555;
-                --accent-color: #d9a510;
-            }
-        }
-        body {
-            background-color: var(--bg-app);
+        pre {
+            margin-top: 1rem;
+            padding: 1rem;
+            text-align: left;
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: rgba(255,255,255,0.06);
+            border-radius: 10px;
             color: var(--text-primary);
-            font-family: var(--font-family);
-            margin: 0;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-        }
-        .container {
-            padding: 2rem;
-            animation: fadeIn 0.5s ease-out;
-        }
-        .logo {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            font-size: 2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text-primary);
-        }
-        p {
-            font-size: 1.1rem;
-            color: var(--text-secondary);
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(20px); }
@@ -324,37 +254,166 @@ function startLocalOAuthServer(expectedState: string, port: number, callbackPath
             <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
             <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
         </svg>
-        <h1>Authorization Complete</h1>
-        <p>You can close this tab and return to the terminal.</p>
+        <h1>${safeTitle}</h1>
+        <p>${safeMessage}</p>
+        ${safeDetail}
     </div>
 </body>
-</html>`);
+</html>`;
+}
+
+interface OAuthBrowserResult<T> {
+  response:
+    | { type: 'redirect'; location: string }
+    | { type: 'html'; statusCode: number; title: string; message: string; detail?: string };
+  result: T;
+}
+
+interface LocalOAuthCallbackServer<T> {
+  actualPort: number;
+  close: () => Promise<void>;
+  waitForResult: (timeoutMs?: number) => Promise<T | null>;
+}
+
+interface LocalOAuthCallbackContext {
+  code?: string;
+  state?: string;
+  url: URL;
+}
+
+export async function startLocalOAuthCallbackServer<T>(options: {
+  providerId: string;
+  expectedState: string;
+  port: number;
+  callbackPath: string;
+  onValidCallback: (context: LocalOAuthCallbackContext) => Promise<OAuthBrowserResult<T>>;
+}): Promise<LocalOAuthCallbackServer<T>> {
+  let actualPort = options.port;
+  let handled = false;
+  let closed = false;
+  let resolveResult!: (value: T | null) => void;
+  const resultPromise = new Promise<T | null>((resolve) => {
+    resolveResult = resolve;
   });
 
-  server.on('error', () => {
-    ready = false;
-  });
-  try {
-    server.listen(port, '127.0.0.1');
-    const addr = server.address();
-    if (addr && typeof addr === 'object') {
-      actualPort = addr.port;
+  const server = http.createServer(async (req, res) => {
+    const host = req.headers.host || `127.0.0.1:${actualPort}`;
+    const url = new URL(req.url ?? '/', `http://${host}`);
+    if (url.pathname !== options.callbackPath) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Not Found');
+      return;
     }
-  } catch {
-    ready = false;
-  }
+
+    debugLog(`[oauth][${options.providerId}] callback received path=${url.pathname} query=${url.search}`);
+
+    if (handled) {
+      res.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(buildOAuthPageHtml('Authorization Already Processed', 'This OAuth callback was already handled. Return to the terminal.', 'error'));
+      return;
+    }
+    handled = true;
+
+    const finalize = (result: T | null) => {
+      res.once('finish', () => {
+        resolveResult(result);
+        void closeServer();
+      });
+    };
+
+    const code = url.searchParams.get('code') ?? undefined;
+    const state = url.searchParams.get('state') ?? undefined;
+
+    if (!code) {
+      debugLog(`[oauth][${options.providerId}] callback rejected missing_code`);
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      finalize(null);
+      res.end(buildOAuthPageHtml('Authorization Failed', 'The OAuth callback is missing the authorization code.', 'error'));
+      return;
+    }
+
+    if (!state || state !== options.expectedState) {
+      debugLog(`[oauth][${options.providerId}] state rejected expected=${options.expectedState} actual=${state ?? ''}`);
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      finalize(null);
+      res.end(buildOAuthPageHtml('Authorization Failed', 'The OAuth state parameter is invalid.', 'error', `Expected: ${options.expectedState}\nReceived: ${state ?? '(missing)'}`));
+      return;
+    }
+
+    debugLog(`[oauth][${options.providerId}] state validated`);
+
+    try {
+      const outcome = await options.onValidCallback({ code, state, url });
+      if (outcome.response.type === 'redirect') {
+        debugLog(`[oauth][${options.providerId}] redirect sent to browser location=${outcome.response.location}`);
+        res.writeHead(302, { Location: outcome.response.location });
+        finalize(outcome.result);
+        res.end();
+        return;
+      }
+
+      res.writeHead(outcome.response.statusCode, { 'Content-Type': 'text/html; charset=utf-8' });
+      finalize(outcome.result);
+      res.end(buildOAuthPageHtml(
+        outcome.response.title,
+        outcome.response.message,
+        outcome.response.statusCode >= 400 ? 'error' : 'success',
+        outcome.response.detail,
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      debugLog(`[oauth][${options.providerId}] callback handling failed error=${message}`);
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+      finalize(null);
+      res.end(buildOAuthPageHtml('Authorization Failed', 'The local callback failed while processing the OAuth response.', 'error', message));
+    }
+  });
+
+  const closeServer = () => new Promise<void>((resolve) => {
+    if (closed) {
+      resolve();
+      return;
+    }
+    closed = true;
+    debugLog(`[oauth][${options.providerId}] callback server shutdown requested`);
+    server.close(() => {
+      debugLog(`[oauth][${options.providerId}] callback server shutdown complete`);
+      resolve();
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      const addr = server.address();
+      if (addr && typeof addr === 'object') {
+        actualPort = addr.port;
+      }
+      debugLog(`[oauth][${options.providerId}] callback server started`);
+      debugLog(`[oauth][${options.providerId}] callback server listening address=http://127.0.0.1:${actualPort}${options.callbackPath}`);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(options.port, '127.0.0.1');
+  });
 
   return {
-    ready,
     actualPort,
-    close: () => server.close(),
-    waitForCode: async () => {
-      const deadline = Date.now() + 60000;
-      while (Date.now() < deadline) {
-        if (lastCode) return { code: lastCode };
-        await sleep(500);
+    close: closeServer,
+    waitForResult: async (timeoutMs = 60000) => {
+      const timeout = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), timeoutMs);
+      });
+      const result = await Promise.race([resultPromise, timeout]);
+      if (result === null) {
+        await closeServer();
       }
-      return null;
+      return result;
     },
   };
 }
@@ -382,6 +441,18 @@ async function exchangeAuthorizationCode(
   tokenUrl: string,
   params: Record<string, string>
 ): Promise<OAuthTokenState | null> {
+  const result = await exchangeAuthorizationCodeDetailed(providerId, tokenUrl, params);
+  return result.ok ? result.tokens : null;
+}
+
+async function exchangeAuthorizationCodeDetailed(
+  providerId: string,
+  tokenUrl: string,
+  params: Record<string, string>
+): Promise<
+  | { ok: true; tokens: OAuthTokenState }
+  | { ok: false; reason: string }
+> {
   debugLog(`[oauth][${providerId}] exchanging authorization code`);
   const res = await fetch(tokenUrl, {
     method: 'POST',
@@ -391,15 +462,21 @@ async function exchangeAuthorizationCode(
   const data = await res.json() as OAuthTokenResponse;
   if (!res.ok || data.error) {
     debugLog(`[oauth][${providerId}] token exchange failed status=${res.status} error=${data.error ?? ''} desc=${data.error_description ?? ''}`);
-    return null;
+    return {
+      ok: false,
+      reason: `status=${res.status} error=${data.error ?? 'unknown_error'} description=${data.error_description ?? 'none'}`,
+    };
   }
   debugLog(`[oauth][${providerId}] token exchange ok access=${maskToken(data.access_token)} refresh=${maskToken(data.refresh_token)}`);
   return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-    tokenType: data.token_type,
-    scope: data.scope,
+    ok: true,
+    tokens: {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+      tokenType: data.token_type,
+      scope: data.scope,
+    },
   };
 }
 
@@ -483,12 +560,12 @@ async function syncOpenAICodexModels(): Promise<Array<{ id: string; name: string
       name: id,
       description: 'OpenAI OAuth model',
     }));
-  setOAuthModelsForProvider('openai', models);
+  setOAuthModelsForProvider('openai-oauth', models);
   return models;
 }
 
 export async function refreshOpenAIOAuthToken(refreshToken: string): Promise<OAuthTokenState | null> {
-  return refreshOAuthTokenGeneric('openai', OPENAI_TOKEN_URL, {
+  return refreshOAuthTokenGeneric('openai-oauth', OPENAI_TOKEN_URL, {
     grant_type: 'refresh_token',
     client_id: OPENAI_CLIENT_ID,
     refresh_token: refreshToken,
@@ -497,7 +574,7 @@ export async function refreshOpenAIOAuthToken(refreshToken: string): Promise<OAu
 
 export async function refreshGoogleOAuthToken(refreshToken: string): Promise<OAuthTokenState | null> {
   if (!hasGoogleOAuthCredentials()) return null;
-  return refreshOAuthTokenGeneric('google', GOOGLE_TOKEN_URL, {
+  return refreshOAuthTokenGeneric('google-oauth', GOOGLE_TOKEN_URL, {
     grant_type: 'refresh_token',
     client_id: GOOGLE_CLIENT_ID,
     client_secret: GOOGLE_CLIENT_SECRET,
@@ -542,7 +619,8 @@ export function getSupportedOAuthProviders(): string[] {
 }
 
 async function runOpenAIOAuthFlow(): Promise<boolean> {
-  const config = OAUTH_PROVIDERS.openai;
+  const providerId = 'openai-oauth';
+  const config = OAUTH_PROVIDERS[providerId];
   if (!config) {
     console.error('OpenAI OAuth configuration not found');
     return false;
@@ -550,26 +628,40 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
   const pkce = generatePKCE();
   const state = createState();
   const authorizeUrl = buildAuthorizeUrl(config, pkce, state);
-  debugLog(`[oauth][openai] authorize url=${authorizeUrl}`);
+  debugLog(`[oauth][${providerId}] authorize url=${authorizeUrl}`);
 
   console.log('');
   console.log(gold('Mosaic OAuth Login'));
-  console.log(gray('Provider: openai'));
+  console.log(gray(`Provider: ${providerId}`));
   console.log('');
 
-  const server = startLocalOAuthServer(state, 1455, config.callbackPath);
-  if (server.ready) {
+  try {
+    const server = await startLocalOAuthCallbackServer<{ code: string } | null>({
+      providerId,
+      expectedState: state,
+      port: 1455,
+      callbackPath: config.callbackPath ?? '/auth/callback',
+      onValidCallback: async ({ code }) => ({
+        response: {
+          type: 'html',
+          statusCode: 200,
+          title: 'Authorization Complete',
+          message: 'You can close this tab and return to the terminal.',
+        },
+        result: code ? { code } : null,
+      }),
+    });
     try {
+      debugLog(`[oauth][${providerId}] browser launch`);
       openBrowser(authorizeUrl);
       console.log(gray('Browser opened automatically.'));
     } catch {
       console.log(gray('Open the URL below manually.'));
       console.log(`  ${bold(authorizeUrl)}`);
     }
-    const result = await server.waitForCode();
-    server.close();
+    const result = await server.waitForResult();
     if (result?.code) {
-      const tokens = await exchangeAuthorizationCode('openai', OPENAI_TOKEN_URL, {
+      const tokens = await exchangeAuthorizationCode(providerId, OPENAI_TOKEN_URL, {
         grant_type: 'authorization_code',
         client_id: OPENAI_CLIENT_ID,
         code: result.code,
@@ -577,14 +669,16 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
         redirect_uri: OPENAI_REDIRECT_URI,
       });
       if (!tokens) return false;
-      setOAuthTokenForProvider('openai', tokens);
+      setOAuthTokenForProvider(providerId, tokens);
       const models = await syncOpenAICodexModels();
-      autoSetupProvider('openai', models);
+      autoSetupProvider(providerId, models);
       console.log('');
       console.log(gold('Authorized successfully!'));
-      console.log(gray('Token stored for provider "openai".'));
+      console.log(gray(`Token stored for provider "${providerId}".`));
       return true;
     }
+  } catch (error) {
+    debugLog(`[oauth][${providerId}] local callback flow failed error=${error instanceof Error ? error.message : error}`);
   }
 
   console.log('');
@@ -595,7 +689,7 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
   const input = await askInput('Paste the redirect URL (or code): ');
   const parsed = parseAuthCode(input);
   if (!parsed.code) return false;
-  const tokens = await exchangeAuthorizationCode('openai', OPENAI_TOKEN_URL, {
+  const tokens = await exchangeAuthorizationCode(providerId, OPENAI_TOKEN_URL, {
     grant_type: 'authorization_code',
     client_id: OPENAI_CLIENT_ID,
     code: parsed.code,
@@ -603,17 +697,18 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
     redirect_uri: OPENAI_REDIRECT_URI,
   });
   if (!tokens) return false;
-  setOAuthTokenForProvider('openai', tokens);
+  setOAuthTokenForProvider(providerId, tokens);
   const models = await syncOpenAICodexModels();
-  autoSetupProvider('openai', models);
+  autoSetupProvider(providerId, models);
   console.log('');
   console.log(gold('Authorized successfully!'));
-  console.log(gray('Token stored for provider "openai".'));
+  console.log(gray(`Token stored for provider "${providerId}".`));
   return true;
 }
 
 async function runGoogleOAuthFlow(): Promise<boolean> {
-  const config = OAUTH_PROVIDERS.google;
+  const providerId = 'google-oauth';
+  const config = OAUTH_PROVIDERS[providerId];
   if (!config) {
     console.error('Google OAuth configuration not found');
     return false;
@@ -627,20 +722,69 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
 
   console.log('');
   console.log(gold('Mosaic OAuth Login'));
-  console.log(gray('Provider: google'));
+  console.log(gray(`Provider: ${providerId}`));
   console.log('');
 
-  const server = startLocalOAuthServer(state, 0, config.callbackPath);
-  if (!server.ready) {
+  const serverPort = 0;
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase();
+  const hl = locale.startsWith('fr') ? 'fr' : 'en';
+  const successRedirectUrl = `https://developers.google.com/gemini-code-assist/auth/auth_success_gemini?hl=${hl}`;
+
+  let server: LocalOAuthCallbackServer<boolean>;
+  try {
+    server = await startLocalOAuthCallbackServer<boolean>({
+      providerId,
+      expectedState: state,
+      port: serverPort,
+      callbackPath: config.callbackPath ?? '/oauth2callback',
+      onValidCallback: async ({ code }) => {
+        debugLog(`[oauth][${providerId}] token exchange started`);
+        const redirectUri = `http://127.0.0.1:${server.actualPort}${config.callbackPath}`;
+        const exchange = await exchangeAuthorizationCodeDetailed(providerId, GOOGLE_TOKEN_URL, {
+          grant_type: 'authorization_code',
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          code: code ?? '',
+          code_verifier: pkce.verifier,
+          redirect_uri: redirectUri,
+        });
+        if (!exchange.ok) {
+          debugLog(`[oauth][${providerId}] token exchange failed reason=${exchange.reason}`);
+          return {
+            response: {
+              type: 'html',
+              statusCode: 502,
+              title: 'Authorization Failed',
+              message: 'Google token exchange failed. Return to the terminal and try again.',
+              detail: exchange.reason,
+            },
+            result: false,
+          };
+        }
+        debugLog(`[oauth][${providerId}] token exchange succeeded`);
+        setOAuthTokenForProvider(providerId, exchange.tokens);
+        autoSetupProvider(providerId, []);
+        return {
+          response: {
+            type: 'redirect',
+            location: successRedirectUrl,
+          },
+          result: true,
+        };
+      },
+    });
+  } catch (error) {
+    debugLog(`[oauth][${providerId}] callback server failed to start error=${error instanceof Error ? error.message : error}`);
     console.error('Failed to start local OAuth server');
     return false;
   }
 
   const redirectUri = `http://127.0.0.1:${server.actualPort}${config.callbackPath}`;
   const authorizeUrl = buildAuthorizeUrl(config, pkce, state, redirectUri);
-  debugLog(`[oauth][google] authorize url=${authorizeUrl}`);
+  debugLog(`[oauth][${providerId}] authorize url=${authorizeUrl}`);
 
   try {
+    debugLog(`[oauth][${providerId}] browser launch`);
     openBrowser(authorizeUrl);
     console.log(gray('Browser opened automatically.'));
   } catch {
@@ -648,10 +792,8 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
     console.log(`  ${bold(authorizeUrl)}`);
   }
 
-  const result = await server.waitForCode();
-  server.close();
-
-  if (!result?.code) {
+  const result = await server.waitForResult();
+  if (result === null) {
     console.log('');
     console.log(gray('Manual OAuth required.'));
     console.log(`Open this URL in your browser:\n`);
@@ -660,7 +802,7 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
     const input = await askInput('Paste the redirect URL (or code): ');
     const parsed = parseAuthCode(input);
     if (!parsed.code) return false;
-    const tokens = await exchangeAuthorizationCode('google', GOOGLE_TOKEN_URL, {
+    const tokens = await exchangeAuthorizationCode(providerId, GOOGLE_TOKEN_URL, {
       grant_type: 'authorization_code',
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
@@ -669,28 +811,18 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
       redirect_uri: redirectUri,
     });
     if (!tokens) return false;
-    setOAuthTokenForProvider('google', tokens);
-    autoSetupProvider('google', []);
+    setOAuthTokenForProvider(providerId, tokens);
+    autoSetupProvider(providerId, []);
     console.log('');
     console.log(gold('Authorized successfully!'));
-    console.log(gray('Token stored for provider "google".'));
+    console.log(gray(`Token stored for provider "${providerId}".`));
     return true;
   }
 
-  const tokens = await exchangeAuthorizationCode('google', GOOGLE_TOKEN_URL, {
-    grant_type: 'authorization_code',
-    client_id: GOOGLE_CLIENT_ID,
-    client_secret: GOOGLE_CLIENT_SECRET,
-    code: result.code,
-    code_verifier: pkce.verifier,
-    redirect_uri: redirectUri,
-  });
-  if (!tokens) return false;
-  setOAuthTokenForProvider('google', tokens);
-  autoSetupProvider('google', []);
+  if (!result) return false;
   console.log('');
   console.log(gold('Authorized successfully!'));
-  console.log(gray('Token stored for provider "google".'));
+  console.log(gray(`Token stored for provider "${providerId}".`));
   return true;
 }
 
@@ -708,8 +840,13 @@ function autoSetupProvider(providerId: string, models: Array<{ id: string }>) {
 }
 
 export async function runOAuthFlow(providerId: string): Promise<boolean> {
+  if (providerId === 'openai-oauth') return runOpenAIOAuthFlow();
+  if (providerId === 'google-oauth') return runGoogleOAuthFlow();
+  
+  // Legacy fallback if called with old IDs
   if (providerId === 'openai') return runOpenAIOAuthFlow();
   if (providerId === 'google') return runGoogleOAuthFlow();
+
   console.error(`OAuth is not configured for provider "${providerId}".`);
   console.error(`Supported providers: ${getSupportedOAuthProviders().join(', ')}`);
   return false;
