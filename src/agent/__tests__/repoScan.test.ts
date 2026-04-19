@@ -56,6 +56,27 @@ describe('scanRepository', () => {
     expect(summary.topLevelDirectories).toContain('apps');
   });
 
+  it('prefers the declared package manager when generating command hints', () => {
+    const workspace = createWorkspace();
+    mkdirSync(join(workspace, 'src'), { recursive: true });
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({
+      packageManager: 'bun@1.3.10',
+      scripts: {
+        dev: 'bun run dev',
+        test: 'bun test',
+      },
+    }, null, 2), 'utf-8');
+    writeFileSync(join(workspace, 'bun.lock'), '', 'utf-8');
+    writeFileSync(join(workspace, 'src', 'index.ts'), 'export const value = 1;\n', 'utf-8');
+
+    process.chdir(workspace);
+    const summary = scanRepository();
+
+    expect(summary.commands.install).toEqual(['bun install']);
+    expect(summary.commands.dev).toContain('bun run dev');
+    expect(summary.commands.dev.some((command) => command.includes('npm run'))).toBe(false);
+  });
+
   it('formatArchitectureSummary produces a ranked compact summary within the char budget', () => {
     const workspace = createWorkspace();
     mkdirSync(join(workspace, '.git'), { recursive: true });
