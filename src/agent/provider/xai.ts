@@ -16,7 +16,7 @@ export class XaiProvider implements Provider {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
     const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    const xaiReasoning = getXaiReasoningOptions(reasoningEnabled, config.modelReasoningEffort);
+    const xaiReasoning = await getXaiReasoningOptions(config.provider, cleanModel, reasoningEnabled, config.modelReasoningEffort);
     debugLog(`[xai] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
 
     const xai = createXai({
