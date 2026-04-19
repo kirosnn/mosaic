@@ -1,43 +1,51 @@
-import { extractReasoningMiddleware, type LanguageModel, wrapLanguageModel } from 'ai';
-import { supportsReasoningOutput, supportsReasoningEffort } from './reasoning';
-import { debugLog } from '../../utils/debug';
-import type { ReasoningEffort } from '../../utils/config';
+import {
+  extractReasoningMiddleware,
+  type LanguageModel,
+  wrapLanguageModel,
+} from "ai";
+import { supportsReasoningOutput, supportsReasoningEffort } from "./reasoning";
+import { debugLog } from "../../utils/debug";
+import type { ReasoningEffort } from "../../utils/config";
 
 export type ReasoningDecision = {
   enabled: boolean;
 };
 
-/**
- * Determines if we should ask the model to produce reasoning output.
- */
-export async function resolveReasoningEnabled(providerId: string, modelId: string): Promise<ReasoningDecision> {
+export async function resolveReasoningEnabled(
+  providerId: string,
+  modelId: string,
+): Promise<ReasoningDecision> {
   const enabled = await supportsReasoningOutput(providerId, modelId);
-  debugLog(`[reasoning] output_support provider=${providerId} model=${modelId} enabled=${enabled}`);
+  debugLog(
+    `[reasoning] output_support provider=${providerId} model=${modelId} enabled=${enabled}`,
+  );
   return { enabled };
 }
 
-/**
- * Determines if we should show/allow reasoning effort configuration.
- */
-export async function resolveReasoningEffortSupported(providerId: string, modelId: string): Promise<boolean> {
+export async function resolveReasoningEffortSupported(
+  providerId: string,
+  modelId: string,
+): Promise<boolean> {
   const supported = await supportsReasoningEffort(providerId, modelId);
-  debugLog(`[reasoning] effort_support provider=${providerId} model=${modelId} supported=${supported}`);
+  debugLog(
+    `[reasoning] effort_support provider=${providerId} model=${modelId} supported=${supported}`,
+  );
   return supported;
 }
 
 function resolveReasoningEffort(effort?: ReasoningEffort): ReasoningEffort {
-  return effort ?? 'medium';
+  return effort ?? "medium";
 }
 
 function getAnthropicBudgetTokens(effort: ReasoningEffort): number {
   switch (effort) {
-    case 'low':
+    case "low":
       return 1024;
-    case 'medium':
+    case "medium":
       return 4000;
-    case 'high':
+    case "high":
       return 12000;
-    case 'xhigh':
+    case "xhigh":
       return 24000;
   }
 }
@@ -46,10 +54,10 @@ export async function getOpenAIReasoningOptions(
   providerId: string,
   modelId: string,
   outputEnabled: boolean,
-  effort?: ReasoningEffort
+  effort?: ReasoningEffort,
 ): Promise<{ reasoningEffort: ReasoningEffort } | undefined> {
   if (!outputEnabled) return undefined;
-  
+
   const effortSupported = await supportsReasoningEffort(providerId, modelId);
   if (!effortSupported) return undefined;
 
@@ -62,7 +70,7 @@ export async function getXaiReasoningOptions(
   providerId: string,
   modelId: string,
   outputEnabled: boolean,
-  effort?: ReasoningEffort
+  effort?: ReasoningEffort,
 ): Promise<{ reasoningEffort: ReasoningEffort } | undefined> {
   if (!outputEnabled) return undefined;
 
@@ -74,9 +82,11 @@ export async function getXaiReasoningOptions(
   return { reasoningEffort: resolved };
 }
 
-export function getGoogleReasoningOptions(enabled: boolean): { thinkingConfig: { includeThoughts: boolean } } | undefined {
+export function getGoogleReasoningOptions(
+  enabled: boolean,
+): { thinkingConfig: { includeThoughts: boolean } } | undefined {
   if (!enabled) return undefined;
-  debugLog('[reasoning][google] thinkingConfig.includeThoughts=true');
+  debugLog("[reasoning][google] thinkingConfig.includeThoughts=true");
   return {
     thinkingConfig: {
       includeThoughts: true,
@@ -88,16 +98,20 @@ export async function getAnthropicReasoningOptions(
   providerId: string,
   modelId: string,
   outputEnabled: boolean,
-  effort?: ReasoningEffort
-): Promise<{ thinking: { type: 'enabled'; budgetTokens: number } } | undefined> {
+  effort?: ReasoningEffort,
+): Promise<
+  { thinking: { type: "enabled"; budgetTokens: number } } | undefined
+> {
   if (!outputEnabled) return undefined;
 
   const resolved = resolveReasoningEffort(effort);
   const budgetTokens = getAnthropicBudgetTokens(resolved);
-  debugLog(`[reasoning][anthropic] thinking=enabled budgetTokens=${budgetTokens} effort=${resolved}`);
+  debugLog(
+    `[reasoning][anthropic] thinking=enabled budgetTokens=${budgetTokens} effort=${resolved}`,
+  );
   return {
     thinking: {
-      type: 'enabled',
+      type: "enabled",
       budgetTokens,
     },
   };
@@ -106,21 +120,23 @@ export async function getAnthropicReasoningOptions(
 export function applyMistralReasoning(
   baseModel: LanguageModel,
   systemPrompt: string,
-  enabled: boolean
+  enabled: boolean,
 ): { model: LanguageModel; systemPrompt: string } {
   if (!enabled) {
-    debugLog('[reasoning][mistral] disabled');
+    debugLog("[reasoning][mistral] disabled");
     return { model: baseModel, systemPrompt };
   }
 
   const model = wrapLanguageModel({
     model: baseModel,
-    middleware: extractReasoningMiddleware({ tagName: 'reasoning' }),
+    middleware: extractReasoningMiddleware({ tagName: "reasoning" }),
   });
 
   const reasoningInstruction =
-    'When reasoning is enabled, wrap your reasoning in <reasoning>...</reasoning> and then provide the final answer.';
-  const nextPrompt = systemPrompt ? `${systemPrompt}\n\n${reasoningInstruction}` : reasoningInstruction;
+    "When reasoning is enabled, wrap your reasoning in <reasoning>...</reasoning> and then provide the final answer.";
+  const nextPrompt = systemPrompt
+    ? `${systemPrompt}\n\n${reasoningInstruction}`
+    : reasoningInstruction;
   debugLog(`[reasoning][mistral] enabled promptLen=${nextPrompt.length}`);
 
   return { model, systemPrompt: nextPrompt };
