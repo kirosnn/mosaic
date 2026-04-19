@@ -1,6 +1,7 @@
 import type { SmartContextMessage } from './context';
+import { isEnvironmentConfigIntent } from './environmentContext';
 
-export type TaskMode = 'chat' | 'assistant_capabilities' | 'explore_readonly' | 'plan' | 'edit' | 'run' | 'review';
+export type TaskMode = 'chat' | 'assistant_capabilities' | 'environment_config' | 'explore_readonly' | 'plan' | 'edit' | 'run' | 'review';
 
 export interface TaskModeDecision {
   mode: TaskMode;
@@ -158,6 +159,10 @@ export function isLightweightTaskMode(mode: TaskMode | null | undefined): boolea
   return mode === 'chat' || mode === 'assistant_capabilities';
 }
 
+export function shouldUseRepositoryContext(mode: TaskMode | null | undefined): boolean {
+  return mode !== 'chat' && mode !== 'assistant_capabilities' && mode !== 'environment_config';
+}
+
 export function isLightweightChatIntent(text: string): boolean {
   const normalized = text.trim();
   if (!normalized) {
@@ -219,6 +224,10 @@ function classifyTextTaskMode(text: string): Omit<TaskModeDecision, 'latestUserR
 
   if (isAssistantCapabilityIntent(normalized)) {
     return { mode: 'assistant_capabilities', confidence: 'high', reason: 'assistant capability question detected' };
+  }
+
+  if (isEnvironmentConfigIntent(normalized)) {
+    return { mode: 'environment_config', confidence: 'high', reason: 'local machine or app configuration request detected' };
   }
 
   if (matchesAny(lower, REVIEW_PATTERNS)) {
@@ -309,6 +318,8 @@ export function getTaskModeLabel(mode: TaskMode): string {
       return 'Chat';
     case 'assistant_capabilities':
       return 'Assistant Capabilities';
+    case 'environment_config':
+      return 'Environment / Local Config';
     case 'explore_readonly':
       return 'Explore / ReadOnly';
     case 'plan':
@@ -336,6 +347,15 @@ export function buildTaskModePrompt(mode: TaskMode): string {
 - Answer questions about Mosaic's own modes, tools, skills, permissions, and limitations.
 - Do not rely on repository scans, repo summaries, workspace context, or file-specific context.
 - Ground the answer in the provided local capability summary and avoid generic claims.`;
+    case 'environment_config':
+      return `${header}
+- Treat the request as local machine, app, editor, folder, or MCP configuration work rather than repository exploration.
+- Do NOT trigger repository-oriented discovery or assume the launch directory is the main scope unless the user explicitly makes it relevant.
+- Prefer exact paths, known config roots, exact filenames, and app-specific expected locations before any broader search.
+- Ask early for missing critical values such as the exact folder path, app/profile name, or whether to create versus update a config.
+- Use bounded discovery: known paths first, high-confidence candidates second, small targeted searches third, broad fallback only as a last resort.
+- Do not recursively list a home directory, desktop root, or other broad local scope.
+- Keep outside-workspace reads and writes policy-aware; approvals and review still apply when required.`;
     case 'explore_readonly':
       return `${header}
 - Start from the deterministic repo scan summary. It already contains manifests, entrypoints, and key config files.
