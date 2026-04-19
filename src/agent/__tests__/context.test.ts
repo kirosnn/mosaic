@@ -6,6 +6,7 @@ import {
   buildAssistantCapabilitiesConversationHistoryResult,
   buildLightweightChatConversationHistory,
   buildSmartConversationHistory,
+  buildSmartConversationHistoryResult,
 } from '../context';
 import { buildAgentRuntimeContext } from '../runtimeContext';
 
@@ -100,6 +101,23 @@ describe('buildSmartConversationHistory', () => {
     expect(runtimeContext.assistantCapabilitySummary).toContain('LOCAL ASSISTANT CAPABILITY SUMMARY');
   });
 
+  it('skips repo-aware context for machine configuration requests', async () => {
+    const workspace = createWorkspace();
+    mkdirSync(join(workspace, 'src'), { recursive: true });
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ scripts: { build: 'bun run build' } }, null, 2), 'utf-8');
+    process.chdir(workspace);
+
+    const runtimeContext = await buildAgentRuntimeContext([
+      { role: 'user', content: 'Configure a local MCP server for my notes app and connect it to a folder outside this repo.' },
+    ]);
+
+    expect(runtimeContext.taskModeDecision?.mode).toBe('environment_config');
+    expect(runtimeContext.repoSummary).toBeUndefined();
+    expect(runtimeContext.gitWorkspaceState).toBeUndefined();
+    expect(runtimeContext.environmentContextSummary).toContain('LOCAL MACHINE TASK SUMMARY');
+    expect(runtimeContext.environmentContextSummary).toContain('Repo scan: skipped');
+  });
+
   it('keeps assistant capability history focused on the latest capability turn', () => {
     const history = buildAssistantCapabilitiesConversationHistoryResult({
       messages: [
@@ -144,5 +162,48 @@ describe('buildSmartConversationHistory', () => {
     expect(snapshot).toContain('Repo map:');
     expect(snapshot).toContain('package.json');
     expect(snapshot).toContain('src');
+  });
+
+  it('compacts older dialogue into a summary while preserving the latest turns', () => {
+    const messages = [
+      { role: 'user' as const, content: 'Implement a release workflow for this repository.' },
+      ...Array.from({ length: 18 }, (_, index) => ({
+        role: (index % 2 === 0 ? 'assistant' : 'user') as 'assistant' | 'user',
+        content: `Turn ${index} `.repeat(80),
+      })),
+      { role: 'user' as const, content: 'Keep the release notes concise and Bun-first.' },
+    ];
+
+    const result = buildSmartConversationHistoryResult({
+      messages,
+      includeImages: false,
+      maxContextTokens: 1200,
+      taskModeDecision: {
+        mode: 'edit',
+        confidence: 'high',
+        reason: 'implementation language detected',
+        latestUserRequest: 'Keep the release notes concise and Bun-first.',
+      },
+      repoSummary: {
+        workspaceRoot: '/repo',
+        generatedAt: Date.now(),
+        projectRoots: [{ path: '.', markers: ['.git'], manifests: ['package.json'], entrypoints: ['src/app/cli/main.tsx'], topLevelDirectories: ['src', 'docs'] }],
+        manifests: ['package.json', 'bun.lock'],
+        dependencyManifests: ['package.json'],
+        architectureFiles: ['README.md'],
+        importantFiles: ['package.json', 'README.md', 'src/app/cli/main.tsx'],
+        entrypoints: ['src/app/cli/main.tsx'],
+        topLevelDirectories: ['src', 'docs'],
+        commands: { install: ['bun install'], dev: ['bun run dev'], build: [], test: ['bun test'], lint: ['bun run lint'] },
+        cacheHit: false,
+      },
+    });
+
+    expect(result.metrics.historyStrategy).toBe('smart');
+    expect(result.metrics.compactedContextSize).toBeLessThan(messages.length);
+    expect(result.history[result.history.length - 1]).toEqual({
+      role: 'user',
+      content: 'Keep the release notes concise and Bun-first.',
+    });
   });
 });
