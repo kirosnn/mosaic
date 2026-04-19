@@ -743,6 +743,12 @@ export function App() {
       return;
     }
 
+    if (event.type === "fallback") {
+      console.log(`[ui] stream fallback detected: switching to ${event.provider}/${event.model}`);
+      // In the desktop app, we could potentially update some visual indicator if we had one for the current provider
+      return;
+    }
+
     if (event.type === "tool-result") {
       const callId = event.toolCallId ?? "";
       const pending = pendingToolCallsRef.current.get(callId);
