@@ -140,7 +140,6 @@ export function ApprovalPanel({ request, disabled = false, onRespond }: Approval
   return (
     <box flexDirection="column" width="100%">
       <box flexDirection="row">
-        <text fg="#9a9a9a">• </text>
         <text fg="#ffffff" attributes={TextAttributes.BOLD}>Running</text>
         <text fg="#9a9a9a" attributes={TextAttributes.DIM}>{` ${runningTarget}`}</text>
       </box>
