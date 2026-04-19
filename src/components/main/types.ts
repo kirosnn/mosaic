@@ -44,6 +44,8 @@ export interface Message {
   responseReasoningEffort?: string;
   blendWord?: string;
   thinkingContent?: string;
+  thinkingCollapsed?: boolean;
+  thinkingRunning?: boolean;
   isRunning?: boolean;
   runningStartTime?: number;
   timestamp?: number;
@@ -54,6 +56,7 @@ export interface TokenBreakdown {
   reasoning: number;
   output: number;
   tools: number;
+  completion?: number;
 }
 
 export interface MainProps {
