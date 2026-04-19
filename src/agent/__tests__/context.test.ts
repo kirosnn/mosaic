@@ -115,7 +115,57 @@ describe('buildSmartConversationHistory', () => {
     expect(runtimeContext.repoSummary).toBeUndefined();
     expect(runtimeContext.gitWorkspaceState).toBeUndefined();
     expect(runtimeContext.environmentContextSummary).toContain('LOCAL MACHINE TASK SUMMARY');
+    expect(runtimeContext.environmentContextSummary).toContain('Platform:');
+    expect(runtimeContext.environmentContextSummary).toContain('Parent shell hint:');
     expect(runtimeContext.environmentContextSummary).toContain('Repo scan: skipped');
+  });
+
+  it('marks direct subsystem questions for lightweight environment handling', async () => {
+    const workspace = createWorkspace();
+    process.chdir(workspace);
+
+    const runtimeContext = await buildAgentRuntimeContext([
+      { role: 'user', content: 'Quel est mon subsystem ?' },
+    ]);
+
+    expect(runtimeContext.taskModeDecision?.mode).toBe('environment_config');
+    expect(runtimeContext.repoSummary).toBeUndefined();
+    expect(runtimeContext.gitWorkspaceState).toBeUndefined();
+    expect(runtimeContext.environmentHandlingMode).toBe('lightweight');
+    expect(runtimeContext.environmentContextSummary).toContain('Platform:');
+    expect(runtimeContext.environmentContextSummary).toContain('Parent shell hint:');
+    expect(runtimeContext.subsystemContextSummary).toContain('Preferred:');
+    expect(runtimeContext.subsystemContextSummary).toContain('Fallback order:');
+    expect(runtimeContext.subsystemContextSummary).toContain('Executable hints:');
+  });
+
+  it('keeps subsystem follow-ups in lightweight environment handling', async () => {
+    const workspace = createWorkspace();
+    process.chdir(workspace);
+
+    const runtimeContext = await buildAgentRuntimeContext([
+      { role: 'user', content: '/subsystem' },
+      { role: 'slash', content: 'Shell subsystem set to WSL (wsl).' },
+      { role: 'user', content: 'Et maintenant ?' },
+    ]);
+
+    expect(runtimeContext.taskModeDecision?.mode).toBe('environment_config');
+    expect(runtimeContext.repoSummary).toBeUndefined();
+    expect(runtimeContext.gitWorkspaceState).toBeUndefined();
+    expect(runtimeContext.environmentHandlingMode).toBe('lightweight');
+  });
+
+  it('keeps complex environment analysis on the full environment path', async () => {
+    const workspace = createWorkspace();
+    process.chdir(workspace);
+
+    const runtimeContext = await buildAgentRuntimeContext([
+      { role: 'user', content: 'Explain fallback behavior across sessions for WSL vs pwsh and recommend which one I should use for this repo.' },
+    ]);
+
+    expect(runtimeContext.taskModeDecision?.mode).toBe('environment_config');
+    expect(runtimeContext.environmentHandlingMode).toBe('full');
+    expect(runtimeContext.repoSummary).toBeUndefined();
   });
 
   it('keeps assistant capability history focused on the latest capability turn', () => {
