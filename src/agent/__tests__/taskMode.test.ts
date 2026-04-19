@@ -27,6 +27,23 @@ describe('task mode fallback heuristics', () => {
     expect(decision.mode).toBe('explore_readonly');
   });
 
+  it('routes machine-level setup requests to environment_config', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'Install and configure a local MCP server for my notes app and connect it to a folder on my machine.' },
+    ]);
+
+    expect(decision.mode).toBe('environment_config');
+    expect(decision.reason).toContain('local machine');
+  });
+
+  it('keeps repo configuration requests in repo-centric modes', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'Configure the lint setup in this repo and update package.json scripts.' },
+    ]);
+
+    expect(decision.mode).toBe('edit');
+  });
+
   it('inherits the recent technical mode for short acknowledgements', () => {
     const decision = detectTaskMode([
       { role: 'user', content: 'Fix the failing tests in the auth module.' },
