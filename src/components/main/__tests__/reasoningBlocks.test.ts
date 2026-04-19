@@ -13,7 +13,11 @@ describe("reasoningBlocks", () => {
   });
 
   it("builds blocks for markdown text", () => {
-    const blocks = buildReasoningRenderBlocks("I am **thinking** about `code`", 80, "msg1");
+    const blocks = buildReasoningRenderBlocks(
+      "I am **thinking** about `code`",
+      80,
+      "msg1",
+    );
     expect(blocks).toHaveLength(1);
     expect(blocks[0].type).toBe("line");
     if (blocks[0].type === "line") {
@@ -23,7 +27,11 @@ describe("reasoningBlocks", () => {
   });
 
   it("builds blocks for code blocks", () => {
-    const blocks = buildReasoningRenderBlocks("Here is code:\n```js\nconsole.log(1);\n```", 80, "msg1");
+    const blocks = buildReasoningRenderBlocks(
+      "Here is code:\n```js\nconsole.log(1);\n```",
+      80,
+      "msg1",
+    );
     expect(blocks).toHaveLength(2);
     expect(blocks[0].type).toBe("line");
     expect(blocks[1].type).toBe("code");
@@ -37,10 +45,8 @@ describe("reasoningBlocks", () => {
   });
 
   it("uses raw fallback when content would otherwise be empty", () => {
-    // This is hard to trigger with real text because parseAndWrapMarkdown is thorough,
-    // but we want to ensure it works if we have valid-ish content that doesn't yield lines.
     const blocks = buildReasoningRenderBlocks("   ", 80, "msg1");
-    expect(blocks).toHaveLength(0); // Whitespace only is still empty
+    expect(blocks).toHaveLength(0);
 
     const blocksWithContent = buildReasoningRenderBlocks(".", 80, "msg1");
     expect(blocksWithContent.length).toBeGreaterThan(0);
@@ -48,11 +54,11 @@ describe("reasoningBlocks", () => {
 
   it("calculates visual lines correctly for collapsed and expanded states", () => {
     const blocks = buildReasoningRenderBlocks("Line 1\nLine 2", 80, "msg1");
-    
+
     const collapsedLines = getReasoningPanelVisualLines(blocks, true);
-    expect(collapsedLines).toBe(2); // Header + bottom spacer
+    expect(collapsedLines).toBe(2);
 
     const expandedLines = getReasoningPanelVisualLines(blocks, false);
-    expect(expandedLines).toBe((blocks.length * 2 - 1) + 1 + 1); // Content + spacers + header + bottom spacer
+    expect(expandedLines).toBe(blocks.length * 2 - 1 + 1 + 1);
   });
 });
