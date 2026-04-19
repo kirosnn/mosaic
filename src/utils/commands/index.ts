@@ -12,6 +12,7 @@ import { modelCommand } from './model';
 import { lightweightCommand } from './lightweight';
 import { reasoningCommand } from './reasoning';
 import { contextCommand } from './context';
+import { subsystemCommand } from './subsystem';
 import { skillCommand } from './skill';
 import { buildForcedSkillInvocationPrompt, resolveSkillSlashCommand } from '../skills';
 
@@ -96,5 +97,6 @@ export function initializeCommands(): void {
   commandRegistry.register(lightweightCommand);
   commandRegistry.register(reasoningCommand);
   commandRegistry.register(contextCommand);
+  commandRegistry.register(subsystemCommand);
   commandRegistry.register(skillCommand);
 }
