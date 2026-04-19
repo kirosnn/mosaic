@@ -87,6 +87,32 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
   const [reviewProgress, setReviewProgress] = useState({ current: 0, total: 0 });
   const pendingChangesRef = useRef<PendingChange[]>([]);
 
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const handleToggleThinking = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        const nextCollapsed = !m.thinkingCollapsed;
+        setThinkingCollapsed(nextCollapsed);
+        return { ...m, thinkingCollapsed: nextCollapsed };
+      }
+      return m;
+    }));
+  }, []);
+
+  const handleAnswerQuestion = useCallback((index: number, customText?: string) => {
+    const question = getCurrentQuestion();
+    if (question) {
+      const option = question.options[index];
+      const textToAdd = customText || option?.label;
+      if (textToAdd) {
+        addInputToHistory(textToAdd);
+        setHistoryVersion(v => v + 1);
+      }
+    }
+    answerQuestion(index, customText);
+  }, []);
+
   const createId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const toLogPreview = (value: string, max = 1200) => {
     const normalized = value
@@ -445,12 +471,14 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     const maxContextTokens = config.maxContextTokens ?? getDefaultContextBudget(config.provider);
     const built = await buildRuntimeContextForMessages(base);
     const mode = built.runtimeContext.taskModeDecision?.mode;
+    const useLightweightEnvironmentHandling = mode === 'environment_config'
+      && built.runtimeContext.environmentHandlingMode === 'lightweight';
     const historyResult = mode === 'assistant_capabilities'
       ? buildAssistantCapabilitiesConversationHistoryResult({
         messages: built.normalizedMessages,
         includeImages,
       })
-      : isLightweightTaskMode(mode)
+      : isLightweightTaskMode(mode) || useLightweightEnvironmentHandling
         ? buildLightweightChatConversationHistoryResult({
           messages: built.normalizedMessages,
           includeImages,
@@ -936,32 +964,6 @@ Analyze the output and continue. Do not run the same command again unless I expl
       onClose={() => setSelectMenu(null)}
     />
   ) : undefined;
-
-  const [historyVersion, setHistoryVersion] = useState(0);
-
-  const handleToggleThinking = useCallback((messageId: string) => {
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId) {
-        const nextCollapsed = !m.thinkingCollapsed;
-        setThinkingCollapsed(nextCollapsed);
-        return { ...m, thinkingCollapsed: nextCollapsed };
-      }
-      return m;
-    }));
-  }, []);
-
-  const handleAnswerQuestion = useCallback((index: number, customText?: string) => {
-    const question = getCurrentQuestion();
-    if (question) {
-      const option = question.options[index];
-      const textToAdd = customText || option?.label;
-      if (textToAdd) {
-        addInputToHistory(textToAdd);
-        setHistoryVersion(v => v + 1);
-      }
-    }
-    answerQuestion(index, customText);
-  }, []);
 
   return (
     <ChatPage
