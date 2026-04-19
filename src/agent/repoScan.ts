@@ -11,6 +11,8 @@ export interface RepositoryCommandHints {
   lint: string[];
 }
 
+type PackageManagerId = 'bun' | 'pnpm' | 'yarn' | 'npm' | 'unknown';
+
 export interface RepositoryRootSummary {
   path: string;
   markers: string[];
@@ -76,7 +78,6 @@ const ARCHITECTURE_FILE_NAMES = new Set([
   'eslint.config.mjs',
   'prettier.config.js',
   'prettier.config.mjs',
-  'mosaic.md',
   'agents.md',
   'readme.md',
 ]);
@@ -143,17 +144,79 @@ function createEmptyCommands(): RepositoryCommandHints {
   };
 }
 
+function normalizePackageManager(raw: unknown): PackageManagerId {
+  if (typeof raw !== 'string') {
+    return 'unknown';
+  }
+  const value = raw.trim().toLowerCase();
+  if (value.startsWith('bun@')) return 'bun';
+  if (value.startsWith('pnpm@')) return 'pnpm';
+  if (value.startsWith('yarn@')) return 'yarn';
+  if (value.startsWith('npm@')) return 'npm';
+  return 'unknown';
+}
+
+function detectPackageManager(packageJsonPath: string): PackageManagerId {
+  try {
+    const packageDir = dirname(packageJsonPath);
+    const raw = readFileSync(packageJsonPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { packageManager?: string };
+    const declared = normalizePackageManager(parsed.packageManager);
+    if (declared !== 'unknown') {
+      return declared;
+    }
+
+    const lockfiles: Array<[string, PackageManagerId]> = [
+      ['bun.lock', 'bun'],
+      ['bun.lockb', 'bun'],
+      ['pnpm-lock.yaml', 'pnpm'],
+      ['yarn.lock', 'yarn'],
+      ['package-lock.json', 'npm'],
+    ];
+
+    for (const [filename, manager] of lockfiles) {
+      if (existsSync(resolve(packageDir, filename))) {
+        return manager;
+      }
+    }
+  } catch {}
+
+  return 'unknown';
+}
+
+function getPackageManagerCommand(manager: PackageManagerId): string {
+  switch (manager) {
+    case 'bun':
+      return 'bun';
+    case 'pnpm':
+      return 'pnpm';
+    case 'yarn':
+      return 'yarn';
+    case 'npm':
+      return 'npm';
+    default:
+      return 'bun';
+  }
+}
+
 function addPackageJsonCommands(commands: RepositoryCommandHints, packageJsonPath: string, workspaceRoot: string): void {
   try {
     const raw = readFileSync(packageJsonPath, 'utf-8');
-    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> };
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, string>; packageManager?: string };
     const scripts = parsed.scripts ?? {};
     const relativeDir = normalizePath(relative(workspaceRoot, dirname(packageJsonPath)) || '.');
     const prefix = relativeDir === '.' ? '' : `cd ${relativeDir} && `;
+    const packageManager = normalizePackageManager(parsed.packageManager) !== 'unknown'
+      ? normalizePackageManager(parsed.packageManager)
+      : detectPackageManager(packageJsonPath);
+    const runner = getPackageManagerCommand(packageManager);
     const addScript = (name: string, target: keyof RepositoryCommandHints) => {
       if (!scripts[name]) return;
-      pushUnique(commands[target], `${prefix}bun run ${name}`);
-      pushUnique(commands[target], `${prefix}npm run ${name}`);
+      if (runner === 'yarn') {
+        pushUnique(commands[target], `${prefix}yarn ${name}`);
+        return;
+      }
+      pushUnique(commands[target], `${prefix}${runner} run ${name}`);
     };
 
     addScript('dev', 'dev');
@@ -163,8 +226,7 @@ function addPackageJsonCommands(commands: RepositoryCommandHints, packageJsonPat
     addScript('lint', 'lint');
 
     if (commands.install.length === 0) {
-      pushUnique(commands.install, `${prefix}bun install`);
-      pushUnique(commands.install, `${prefix}npm install`);
+      pushUnique(commands.install, runner === 'yarn' ? `${prefix}yarn install` : `${prefix}${runner} install`);
     }
   } catch {}
 }
@@ -401,7 +463,7 @@ export function formatArchitectureSummary(summary: RepositorySummary, maxChars =
   const configFiles = summary.architectureFiles
     .filter((f) => {
       const lower = basename(f).toLowerCase();
-      return lower !== 'readme.md' && lower !== 'agents.md' && lower !== 'mosaic.md';
+      return lower !== 'readme.md' && lower !== 'agents.md';
     })
     .slice(0, 8);
   if (configFiles.length > 0) {
