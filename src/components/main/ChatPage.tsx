@@ -1,9 +1,22 @@
 import { useEffect, useState, useRef } from "react";
-import { TextAttributes, SyntaxStyle, RGBA, type KeyEvent } from "@opentui/core";
+import {
+  TextAttributes,
+  SyntaxStyle,
+  RGBA,
+  type KeyEvent,
+} from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import { renderMarkdownSegment } from "../../utils/markdown";
-import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../../utils/questionBridge";
-import { subscribeApproval, respondApproval, type ApprovalRequest } from "../../utils/approvalBridge";
+import {
+  subscribeQuestion,
+  answerQuestion,
+  type QuestionRequest,
+} from "../../utils/questionBridge";
+import {
+  subscribeApproval,
+  respondApproval,
+  type ApprovalRequest,
+} from "../../utils/approvalBridge";
 import { subscribeApprovalMode } from "../../utils/approvalModeBridge";
 import { shouldRequireApprovals } from "../../utils/config";
 import { subscribeFileChanges } from "../../utils/fileChangesBridge";
@@ -15,10 +28,24 @@ import type { ImageAttachment } from "../../utils/images";
 import { QuestionPanel } from "./QuestionPanel";
 import { ApprovalPanel, type RuleAction } from "./ApprovalPanel";
 import { addAutoRunRule } from "../../utils/localRules";
-import { ThinkingIndicatorBlock, getBottomReservedLinesForInputBar, getInputBarBaseLines } from "./ThinkingIndicator";
-import { renderInlineDiffLine, getDiffLineBackground } from "../../utils/diffRendering";
-import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuilder";
-import { UserMessageModal, type UserMessageModalState } from "./UserMessageModal";
+import {
+  ThinkingIndicatorBlock,
+  getBottomReservedLinesForInputBar,
+  getInputBarBaseLines,
+} from "./ThinkingIndicator";
+import {
+  renderInlineDiffLine,
+  getDiffLineBackground,
+} from "../../utils/diffRendering";
+import {
+  buildChatItems,
+  getPlanProgress,
+  type RenderItem,
+} from "./chatItemBuilder";
+import {
+  UserMessageModal,
+  type UserMessageModalState,
+} from "./UserMessageModal";
 import { wrapText } from "./wrapText";
 import { getAllProviders } from "../../utils/config";
 import { ReasoningPanel } from "./ReasoningPanel";
@@ -66,32 +93,49 @@ function normalizeCodeFiletype(language?: string): string {
   return CODE_FILETYPE_MAP[key] || "javascript";
 }
 
-function renderToolText(content: string, paragraphIndex: number, indent: number, wrappedLineIndex: number, toolName?: string, planStatus?: 'pending' | 'in_progress' | 'completed', codeLanguage?: string) {
-  if (toolName === 'plan') {
+function renderToolText(
+  content: string,
+  paragraphIndex: number,
+  indent: number,
+  wrappedLineIndex: number,
+  toolName?: string,
+  planStatus?: "pending" | "in_progress" | "completed",
+  codeLanguage?: string,
+) {
+  if (toolName === "plan") {
     const leftPad = paragraphIndex === 0 ? 3 : indent + 1;
-    const padText = ' '.repeat(leftPad);
-    const trimmed = content || '';
+    const padText = " ".repeat(leftPad);
+    const trimmed = content || "";
     const match = trimmed.match(/^\[(.)\]\s*(.*)$/);
     if (match) {
-      const marker = match[1] || ' ';
-      const rest = match[2] || '';
-      const resolvedStatus = planStatus
-        ?? (marker === '~' || marker === '●' ? 'in_progress' : (marker === 'x' || marker === '✓' ? 'completed' : 'pending'));
-      const isInProgress = resolvedStatus === 'in_progress';
-      const isCompleted = resolvedStatus === 'completed';
-      const markerColor = isInProgress ? '#ffca38' : '#9a9a9a';
-      const markerChar = isInProgress ? '●' : (isCompleted ? '✓' : ' ');
+      const marker = match[1] || " ";
+      const rest = match[2] || "";
+      const resolvedStatus =
+        planStatus ??
+        (marker === "~" || marker === "●"
+          ? "in_progress"
+          : marker === "x" || marker === "✓"
+            ? "completed"
+            : "pending");
+      const isInProgress = resolvedStatus === "in_progress";
+      const isCompleted = resolvedStatus === "completed";
+      const markerColor = isInProgress ? "#ffca38" : "#9a9a9a";
+      const markerChar = isInProgress ? "●" : isCompleted ? "✓" : " ";
       return (
         <box flexDirection="row">
           <text attributes={TextAttributes.DIM}>{padText}</text>
           <text attributes={TextAttributes.DIM}>[</text>
           <text fg={markerColor}>{markerChar}</text>
           <text attributes={TextAttributes.DIM}>]</text>
-          <text attributes={TextAttributes.DIM}>{rest ? ` ${rest}` : ''}</text>
+          <text attributes={TextAttributes.DIM}>{rest ? ` ${rest}` : ""}</text>
         </box>
       );
     }
-    return <text attributes={TextAttributes.DIM}>{`${padText}${trimmed || ' '}`}</text>;
+    return (
+      <text
+        attributes={TextAttributes.DIM}
+      >{`${padText}${trimmed || " "}`}</text>
+    );
   }
 
   if (paragraphIndex === 0) {
@@ -102,121 +146,147 @@ function renderToolText(content: string, paragraphIndex: number, indent: number,
         return (
           <box flexDirection="row">
             <text fg="white">{toolName} </text>
-            <text fg="white" attributes={TextAttributes.DIM}>{toolInfo}</text>
+            <text fg="white" attributes={TextAttributes.DIM}>
+              {toolInfo}
+            </text>
           </box>
         );
       }
     } else {
-      return <text fg="white" attributes={TextAttributes.DIM}>{`  ${content || ' '}`}</text>;
+      return (
+        <text
+          fg="white"
+          attributes={TextAttributes.DIM}
+        >{`  ${content || " "}`}</text>
+      );
     }
   }
 
   const planMatch = content.match(/^(\s*)>\s*(\[[~x ]\])?\s*(.*)$/);
   if (planMatch) {
     const [, leading, bracket, rest] = planMatch;
-    const bracketColor = bracket === '[~]' ? '#ffca38' : 'white';
+    const bracketColor = bracket === "[~]" ? "#ffca38" : "white";
     return (
       <box flexDirection="row">
-        <text fg="white">{leading || ''}</text>
-        <text fg="#ffca38">{'>'}</text>
+        <text fg="white">{leading || ""}</text>
+        <text fg="#ffca38">{">"}</text>
         <text fg="white"> </text>
         {bracket ? <text fg={bracketColor}>{bracket}</text> : null}
         {bracket ? <text fg="white"> </text> : null}
-        <text fg="white">{rest || ' '}</text>
+        <text fg="white">{rest || " "}</text>
       </box>
     );
   }
-
 
   const diffLineRender = renderInlineDiffLine(content, codeLanguage);
   if (diffLineRender) {
     return diffLineRender;
   }
 
-  return <text fg="white" attributes={paragraphIndex > 0 ? TextAttributes.DIM : 0}>{`${' '.repeat(indent)}${content || ' '}`}</text>;
+  return (
+    <text
+      fg="white"
+      attributes={paragraphIndex > 0 ? TextAttributes.DIM : 0}
+    >{`${" ".repeat(indent)}${content || " "}`}</text>
+  );
 }
 
 function renderSlashText(content: string, indent: number) {
-  const line = content || ' ';
-  const padded = `${' '.repeat(indent)}${line}`;
+  const line = content || " ";
+  const padded = `${" ".repeat(indent)}${line}`;
 
-  if (!line.startsWith('[CTX_')) {
+  if (!line.startsWith("[CTX_")) {
     return <text fg="white">{padded}</text>;
   }
 
-  const parts = line.split('|');
-  const head = parts[0] || '';
+  const parts = line.split("|");
+  const head = parts[0] || "";
 
-  if (head === '[CTX_HEADER]') {
-    return <text fg="#ffffffff" attributes={TextAttributes.BOLD}>{parts[1] || 'Context Usage'}</text>;
+  if (head === "[CTX_HEADER]") {
+    return (
+      <text fg="#ffffffff" attributes={TextAttributes.BOLD}>
+        {parts[1] || "Context Usage"}
+      </text>
+    );
   }
 
-  if (head === '[CTX_MODEL]') {
-    const model = parts[1] || 'model';
-    const used = parts[2] || '0';
-    const max = parts[3] || '0';
+  if (head === "[CTX_MODEL]") {
+    const model = parts[1] || "model";
+    const used = parts[2] || "0";
+    const max = parts[3] || "0";
     return (
       <box flexDirection="row">
         <text fg="#ffca38">Model in use : </text>
-        <text fg="white" attributes={TextAttributes.BOLD}>{model}</text>
+        <text fg="white" attributes={TextAttributes.BOLD}>
+          {model}
+        </text>
         <text fg="#9a9a9a">{` · ${used}/${max} tokens`}</text>
       </box>
     );
   }
 
-  if (head === '[CTX_BAR]') {
-    const usedCells = Math.max(0, parseInt(parts[1] || '0', 10) || 0);
-    const bufferCells = Math.max(0, parseInt(parts[2] || '0', 10) || 0);
-    const freeCells = Math.max(0, parseInt(parts[3] || '0', 10) || 0);
-    const usedPct = parts[4] || '0';
+  if (head === "[CTX_BAR]") {
+    const usedCells = Math.max(0, parseInt(parts[1] || "0", 10) || 0);
+    const bufferCells = Math.max(0, parseInt(parts[2] || "0", 10) || 0);
+    const freeCells = Math.max(0, parseInt(parts[3] || "0", 10) || 0);
+    const usedPct = parts[4] || "0";
     const remainingCells = bufferCells + freeCells;
     return (
       <box flexDirection="row">
         <box flexDirection="row">
-          <text bg="#c8a84a">{' '.repeat(usedCells)}</text>
-          <text bg="#45546a">{' '.repeat(remainingCells)}</text>
+          <text bg="#c8a84a">{" ".repeat(usedCells)}</text>
+          <text bg="#45546a">{" ".repeat(remainingCells)}</text>
         </box>
         <text fg="#c6d3e3">{` ${usedPct}% used`}</text>
       </box>
     );
   }
 
-  if (head === '[CTX_SECTION]') {
-    return <text fg="#9a9a9a" attributes={TextAttributes.DIM | TextAttributes.ITALIC}>{parts[1] || ''}</text>;
+  if (head === "[CTX_SECTION]") {
+    return (
+      <text
+        fg="#9a9a9a"
+        attributes={TextAttributes.DIM | TextAttributes.ITALIC}
+      >
+        {parts[1] || ""}
+      </text>
+    );
   }
 
-  const catLineMatch = line.match(/^\[CTX_CAT\|([A-Z]+)\]\|([^|]+)\|([^|]+)\|([^|]+)$/);
+  const catLineMatch = line.match(
+    /^\[CTX_CAT\|([A-Z]+)\]\|([^|]+)\|([^|]+)\|([^|]+)$/,
+  );
   if (catLineMatch) {
-    const code = catLineMatch[1] || '';
-    const label = catLineMatch[2] || '';
-    const value = catLineMatch[3] || '';
-    const pct = catLineMatch[4] || '';
+    const code = catLineMatch[1] || "";
+    const label = catLineMatch[2] || "";
+    const value = catLineMatch[3] || "";
+    const pct = catLineMatch[4] || "";
 
     const colorByCode: Record<string, string> = {
-      SP: '#5cc8ff',
-      SK: '#f778ba',
-      ST: '#ffb454',
-      MI: '#7ee787',
-      MC: '#d2a8ff',
-      UP: '#58a6ff',
-      MS: '#79c0ff',
-      FS: '#8b949e',
-      AB: '#ffca38',
+      SP: "#5cc8ff",
+      SK: "#f778ba",
+      ST: "#ffb454",
+      MI: "#7ee787",
+      MC: "#d2a8ff",
+      UP: "#58a6ff",
+      MS: "#79c0ff",
+      FS: "#8b949e",
+      AB: "#ffca38",
     };
-    const color = colorByCode[code] || 'white';
+    const color = colorByCode[code] || "white";
 
     return (
       <box flexDirection="row">
-        <text fg={color}>{'• '}</text>
+        <text fg={color}>{"• "}</text>
         <text fg="white">{label}</text>
         <text fg="#9a9a9a">{`: ${value} tokens (${pct}%)`}</text>
       </box>
     );
   }
 
-  if (head === '[CTX_MEM]') {
-    const path = parts[1] || '';
-    const tokens = parts[2] || '0';
+  if (head === "[CTX_MEM]") {
+    const path = parts[1] || "";
+    const tokens = parts[2] || "0";
     return (
       <box flexDirection="row">
         <text fg="#7ee787">- </text>
@@ -226,11 +296,13 @@ function renderSlashText(content: string, indent: number) {
     );
   }
 
-  if (head === '[CTX_NOTE]') {
+  if (head === "[CTX_NOTE]") {
     return (
       <box flexDirection="row">
         <text fg="#ffca38">! </text>
-        <text fg="#ffca38" attributes={TextAttributes.DIM}>{parts.slice(1).join('|') || ''}</text>
+        <text fg="#ffca38" attributes={TextAttributes.DIM}>
+          {parts.slice(1).join("|") || ""}
+        </text>
       </box>
     );
   }
@@ -238,8 +310,10 @@ function renderSlashText(content: string, indent: number) {
   return <text fg="white">{padded}</text>;
 }
 
-function formatAssistantResponseDuration(ms: number | null | undefined): string {
-  if (typeof ms !== 'number' || ms < 0) return '';
+function formatAssistantResponseDuration(
+  ms: number | null | undefined,
+): string {
+  if (typeof ms !== "number" || ms < 0) return "";
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -254,7 +328,7 @@ function formatAssistantResponseDuration(ms: number | null | undefined): string 
 }
 
 function formatModelToken(token: string): string {
-  if (!token) return '';
+  if (!token) return "";
   if (/^\d+(\.\d+)?$/.test(token)) return token;
   if (/^[a-z]+$/i.test(token)) {
     if (token.length <= 3) return token.toUpperCase();
@@ -265,28 +339,28 @@ function formatModelToken(token: string): string {
 
 function formatModelIdFallback(modelId: string): string {
   const normalized = modelId
-    .replace(/^openai\//i, '')
-    .replace(/^x-ai\//i, '')
-    .replace(/^anthropic\//i, '')
-    .replace(/-\d{4}-\d{2}-\d{2}$/i, '')
+    .replace(/^openai\//i, "")
+    .replace(/^x-ai\//i, "")
+    .replace(/^anthropic\//i, "")
+    .replace(/-\d{4}-\d{2}-\d{2}$/i, "")
     .trim();
 
   return normalized
     .split(/[-_/]+/)
     .filter(Boolean)
     .map(formatModelToken)
-    .join(' ');
+    .join(" ");
 }
 
 function formatAssistantModelName(modelId: string | null | undefined): string {
-  const raw = typeof modelId === 'string' ? modelId.trim() : '';
-  if (!raw) return '';
+  const raw = typeof modelId === "string" ? modelId.trim() : "";
+  if (!raw) return "";
 
   const providers = getAllProviders();
   for (const provider of providers) {
-    const match = provider.models.find(model => model.id === raw);
+    const match = provider.models.find((model) => model.id === raw);
     if (match?.name) {
-      return match.name.replace(/^GPT-/i, 'GPT ').trim();
+      return match.name.replace(/^GPT-/i, "GPT ").trim();
     }
   }
 
@@ -301,9 +375,12 @@ function formatAssistantMetaLine(
 ): string {
   const time = formatAssistantResponseDuration(responseDuration);
   const modelName = formatAssistantModelName(responseModel);
-  const reasoning = typeof responseReasoningEffort === 'string' ? responseReasoningEffort.trim() : '';
-  const modelLabel = [modelName, reasoning].filter(Boolean).join(' ');
-  const brewWord = blendWord?.trim() || BLEND_WORDS[0] || 'Brewed';
+  const reasoning =
+    typeof responseReasoningEffort === "string"
+      ? responseReasoningEffort.trim()
+      : "";
+  const modelLabel = [modelName, reasoning].filter(Boolean).join(" ");
+  const brewWord = blendWord?.trim() || BLEND_WORDS[0] || "Brewed";
   if (modelLabel && time) {
     return `${modelLabel} · ${brewWord} in ${time}`;
   }
@@ -327,9 +404,17 @@ interface ChatPageProps {
   terminalWidth: number;
   pasteRequestId: number;
   shortcutsOpen: boolean;
-  onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
+  onSubmit: (
+    value: string,
+    meta?: import("../CustomInput").InputSubmitMeta,
+  ) => void;
   onCopyMessage?: (text: string) => void;
-  onResubmitUserMessage?: (payload: { id: string; index: number; content: string; images: ImageAttachment[] }) => void;
+  onResubmitUserMessage?: (payload: {
+    id: string;
+    index: number;
+    content: string;
+    images: ImageAttachment[];
+  }) => void;
   pendingImages: ImageAttachment[];
   chatError?: string | null;
   reviewPanel?: React.ReactNode;
@@ -367,15 +452,26 @@ export function ChatPage({
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const renderer = useRenderer();
-  const [questionRequest, setQuestionRequest] = useState<QuestionRequest | null>(null);
-  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
-  const [fileChanges, setFileChanges] = useState<FileChanges>({ linesAdded: 0, linesRemoved: 0, filesModified: 0 });
+  const [questionRequest, setQuestionRequest] =
+    useState<QuestionRequest | null>(null);
+  const [approvalRequest, setApprovalRequest] =
+    useState<ApprovalRequest | null>(null);
+  const [fileChanges, setFileChanges] = useState<FileChanges>({
+    linesAdded: 0,
+    linesRemoved: 0,
+    filesModified: 0,
+  });
   const [timerTick, setTimerTick] = useState(0);
-  const [requireApprovals, setRequireApprovals] = useState(shouldRequireApprovals());
-  const [hoveredUserMessageId, setHoveredUserMessageId] = useState<string | null>(null);
-  const [userMessageModal, setUserMessageModal] = useState<UserMessageModalState | null>(null);
+  const [requireApprovals, setRequireApprovals] = useState(
+    shouldRequireApprovals(),
+  );
+  const [hoveredUserMessageId, setHoveredUserMessageId] = useState<
+    string | null
+  >(null);
+  const [userMessageModal, setUserMessageModal] =
+    useState<UserMessageModalState | null>(null);
   const [chatInputHintIndex, setChatInputHintIndex] = useState(() =>
-    Math.floor(Math.random() * CHAT_INPUT_HINTS.length)
+    Math.floor(Math.random() * CHAT_INPUT_HINTS.length),
   );
   const scrollboxRef = useRef<any>(null);
   const prevScrollOffsetRef = useRef(scrollOffset);
@@ -401,9 +497,9 @@ export function ChatPage({
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const hasRunning = messages.some(m => m.isRunning);
+      const hasRunning = messages.some((m) => m.isRunning);
       if (hasRunning) {
-        setTimerTick(tick => tick + 1);
+        setTimerTick((tick) => tick + 1);
       }
     }, 500);
     return () => clearInterval(interval);
@@ -458,16 +554,23 @@ export function ChatPage({
   const extraInputLines = pendingImages.length > 0 ? 1 : 0;
   const inputBottomOffset = 1;
   const inputBarBaseLines = getInputBarBaseLines() + extraInputLines;
-  const bottomReservedLines = getBottomReservedLinesForInputBar({
-    isProcessing,
-    hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
-    inProgressStep: planProgress.inProgressStep,
-    nextStep: planProgress.nextStep,
-  }) + extraInputLines;
+  const bottomReservedLines =
+    getBottomReservedLinesForInputBar({
+      isProcessing,
+      hasQuestion: Boolean(questionRequest) || Boolean(approvalRequest),
+      inProgressStep: planProgress.inProgressStep,
+      nextStep: planProgress.nextStep,
+    }) + extraInputLines;
   const viewportHeight = Math.max(5, terminalHeight - bottomReservedLines);
   const isUserModalOpen = Boolean(userMessageModal);
-  const modalWidth = Math.min(70, Math.max(28, Math.floor(terminalWidth * 0.6)));
-  const modalHeight = Math.max(7, Math.min(16, Math.floor(terminalHeight * 0.4)));
+  const modalWidth = Math.min(
+    70,
+    Math.max(28, Math.floor(terminalWidth * 0.6)),
+  );
+  const modalHeight = Math.max(
+    7,
+    Math.min(16, Math.floor(terminalHeight * 0.4)),
+  );
 
   const handleCopyMessage = () => {
     if (!userMessageModal) return;
@@ -482,8 +585,8 @@ export function ChatPage({
     onResubmitUserMessage?.({
       id: userMessageModal.id,
       index: userMessageModal.index,
-      content: userMessageModal.content ?? '',
-      images: userMessageModal.images ?? []
+      content: userMessageModal.content ?? "",
+      images: userMessageModal.images ?? [],
     });
     setUserMessageModal(null);
   };
@@ -492,8 +595,8 @@ export function ChatPage({
     if (!userMessageModal) return;
     setUserMessageModal({
       ...userMessageModal,
-      mode: 'edit',
-      editSeed: userMessageModal.content ?? ''
+      mode: "edit",
+      editSeed: userMessageModal.content ?? "",
     });
   };
 
@@ -501,7 +604,7 @@ export function ChatPage({
     if (!userMessageModal) return;
     setUserMessageModal({
       ...userMessageModal,
-      mode: 'actions'
+      mode: "actions",
     });
   };
 
@@ -512,24 +615,39 @@ export function ChatPage({
       id: userMessageModal.id,
       index: userMessageModal.index,
       content: value,
-      images: userMessageModal.images ?? []
+      images: userMessageModal.images ?? [],
     });
     setUserMessageModal(null);
   };
 
   const defaultInputPlaceholder = `Ask anything... (${CHAT_INPUT_HINTS[chatInputHintIndex] || "implement {feature}"})`;
 
-  const allItems = buildChatItems({ messages, maxWidth, viewportHeight, questionRequest, approvalRequest });
+  const allItems = buildChatItems({
+    messages,
+    maxWidth,
+    viewportHeight,
+    questionRequest,
+    approvalRequest,
+  });
   const hasApprovalPanel = Boolean(approvalRequest);
 
-  const totalVisualLines = allItems.reduce((sum, item) => sum + item.visualLines, 0);
+  const totalVisualLines = allItems.reduce(
+    (sum, item) => sum + item.visualLines,
+    0,
+  );
   const maxScrollOffset = Math.max(0, totalVisualLines - viewportHeight);
-  const clampedScrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollOffset));
-  const scrollYPosition = Math.max(0, totalVisualLines - viewportHeight - clampedScrollOffset);
+  const clampedScrollOffset = Math.max(
+    0,
+    Math.min(scrollOffset, maxScrollOffset),
+  );
+  const scrollYPosition = Math.max(
+    0,
+    totalVisualLines - viewportHeight - clampedScrollOffset,
+  );
 
   useEffect(() => {
     const sb = scrollboxRef.current;
-    if (!sb || typeof sb.scrollTo !== 'function') return;
+    if (!sb || typeof sb.scrollTo !== "function") return;
 
     if (scrollOffset !== prevScrollOffsetRef.current) {
       sb.scrollTo(scrollYPosition);
@@ -540,7 +658,12 @@ export function ChatPage({
 
   if (reviewPanel) {
     return (
-      <box flexDirection="column" width="100%" height="100%" position="relative">
+      <box
+        flexDirection="column"
+        width="100%"
+        height="100%"
+        position="relative"
+      >
         <box
           position="absolute"
           top={0}
@@ -566,12 +689,12 @@ export function ChatPage({
         viewportCulling
         width="100%"
         height={viewportHeight}
-        paddingLeft={hasApprovalPanel ? 0 : 1}
-        paddingRight={hasApprovalPanel ? 0 : 1}
+        paddingLeft={0}
+        paddingRight={0}
         paddingTop={1}
       >
         {allItems.map((item) => {
-          if (item.type === 'question') {
+          if (item.type === "question") {
             const req = item.questionRequest;
             if (!req) return null;
             return (
@@ -579,14 +702,18 @@ export function ChatPage({
                 <QuestionPanel
                   request={req}
                   disabled={shortcutsOpen}
-                  onAnswer={(index, customText) => onAnswer ? onAnswer(index, customText) : answerQuestion(index, customText)}
+                  onAnswer={(index, customText) =>
+                    onAnswer
+                      ? onAnswer(index, customText)
+                      : answerQuestion(index, customText)
+                  }
                   maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
             );
           }
 
-          if (item.type === 'approval') {
+          if (item.type === "approval") {
             const req = item.approvalRequest;
             if (!req) return null;
             return (
@@ -595,8 +722,8 @@ export function ChatPage({
                   request={req}
                   disabled={shortcutsOpen}
                   onRespond={(approved, customResponse, ruleAction) => {
-                    if (ruleAction === 'auto-run' && req.toolName === 'bash') {
-                      const command = String(req.args.command ?? '');
+                    if (ruleAction === "auto-run" && req.toolName === "bash") {
+                      const command = String(req.args.command ?? "");
                       if (command) addAutoRunRule(command);
                     }
                     respondApproval(approved, customResponse);
@@ -606,66 +733,111 @@ export function ChatPage({
             );
           }
 
-          if (item.type === 'blend') {
+          if (item.type === "blend") {
             return null;
           }
 
-          if (item.type === 'reasoning') {
+          if (item.type === "reasoning") {
             return (
               <ReasoningPanel
                 key={item.key}
                 blocks={item.reasoningBlocks ?? []}
-                collapsed={item.thinkingCollapsed ?? getDefaultThinkingCollapsed()}
-                onToggle={() => item.messageId && onToggleThinking?.(item.messageId)}
+                collapsed={
+                  item.thinkingCollapsed ?? getDefaultThinkingCollapsed()
+                }
+                onToggle={() =>
+                  item.messageId && onToggleThinking?.(item.messageId)
+                }
                 isStreaming={item.thinkingRunning}
-              />            );
+              />
+            );
           }
 
-          const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
+          const showErrorBar =
+            item.role === "assistant" &&
+            item.isError &&
+            item.isFirst &&
+            item.content;
           const showSlashBar = item.role === "slash" && item.isSpacer === false;
-          const showSlashBackground = item.role === "slash" && item.isSpacer === false;
+          const isCommandRow = showSlashBar;
+          const showSlashBackground = false;
           const isRunningTool = item.isRunning && item.runningStartTime;
 
           const isToolItem = item.role === "tool";
-          const needsToolPadding = isToolItem && !item.isSpacer && !item.isCompactTool && !isRunningTool && item.toolName !== "plan";
-          const diffBackground = item.isCodeBlock || item.isTableRow ? null : getDiffLineBackground(item.content || '');
+          const diffBackground =
+            item.isCodeBlock || item.isTableRow
+              ? null
+              : getDiffLineBackground(item.content || "");
           const isInlineDiff = isToolItem && Boolean(diffBackground);
-          const isWriteEditInlineDiff = isToolItem
-            && (item.toolName === "write" || item.toolName === "edit")
-            && Boolean(diffBackground);
-          const leftPadding = needsToolPadding ? 1 : 0;
+          const isWriteEditInlineDiff =
+            isToolItem &&
+            (item.toolName === "write" || item.toolName === "edit") &&
+            Boolean(diffBackground);
+          const leftPadding = 0;
 
           const codeBackground = null;
-          const isUserMessageLine = item.role === "user" && Boolean(item.messageId) && !item.isSpacer;
-          const isUserHover = isUserMessageLine && hoveredUserMessageId === item.messageId;
+          const isUserMessageLine =
+            item.role === "user" && Boolean(item.messageId) && !item.isSpacer;
+          const isUserHover =
+            isUserMessageLine && hoveredUserMessageId === item.messageId;
           const isErrorMessageRow = item.role === "assistant" && item.isError;
-          const hasMessageBackground = (item.isPadding && !isToolItem && item.role !== "assistant" && !isErrorMessageRow)
-            || ((item.role === "user" && item.content) || showSlashBackground);
+          const hasMessageBackground =
+            ((item.isPadding &&
+              !isToolItem &&
+              item.role !== "assistant" &&
+              !isErrorMessageRow) ||
+              (item.role === "user" && item.content) ||
+              showSlashBackground) &&
+            !isCommandRow;
           const hoverBackground = isUserHover ? "#262626" : null;
-          const runningBackground = isRunningTool || item.isCompactTool
+          const runningBackground =
+            isRunningTool || item.isCompactTool
+              ? "transparent"
+              : hoverBackground ||
+                codeBackground ||
+                diffBackground ||
+                (hasMessageBackground ? "#1a1a1a" : "transparent");
+          const rowBackground = isInlineDiff
             ? "transparent"
-            : (hoverBackground || codeBackground || diffBackground || (hasMessageBackground ? "#1a1a1a" : "transparent"));
-          const rowBackground = isInlineDiff ? "transparent" : runningBackground;
-          const handleUserMouseOver = isUserMessageLine ? () => {
-            if (!isUserModalOpen) {
-              setHoveredUserMessageId(item.messageId!);
-            }
-          } : undefined;
-          const handleUserMouseOut = isUserMessageLine ? () => {
-            setHoveredUserMessageId(prev => (prev === item.messageId ? null : prev));
-          } : undefined;
-          const handleUserMouseDown = isUserMessageLine ? (event: any) => {
-            if (event?.isSelecting) return;
-            if (event?.button !== undefined && event.button !== 0) return;
-            setUserMessageModal({
-              id: item.messageId!,
-              index: item.messageIndex ?? 0,
-              content: item.userMessageText ?? '',
-              images: item.userMessageImages ?? [],
-              mode: 'actions'
-            });
-            setHoveredUserMessageId(null);
-          } : undefined;
+            : runningBackground;
+          const showToolBullet =
+            item.role === "tool" &&
+            rowBackground === "transparent" &&
+            !item.isPadding &&
+            !item.isCodeBlock &&
+            !item.isTableRow &&
+            !isInlineDiff &&
+            item.type !== "tool_compact" &&
+            item.isFirst &&
+            !isRunningTool;
+          const handleUserMouseOver = isUserMessageLine
+            ? () => {
+                if (!isUserModalOpen) {
+                  setHoveredUserMessageId(item.messageId!);
+                }
+              }
+            : undefined;
+          const handleUserMouseOut = isUserMessageLine
+            ? () => {
+                setHoveredUserMessageId((prev) =>
+                  prev === item.messageId ? null : prev,
+                );
+              }
+            : undefined;
+          const handleUserMouseDown = isUserMessageLine
+            ? (event: any) => {
+                if (event?.isSelecting) return;
+                if (event?.button !== undefined && event.button !== 0) return;
+                setUserMessageModal({
+                  id: item.messageId!,
+                  index: item.messageIndex ?? 0,
+                  content: item.userMessageText ?? "",
+                  images: item.userMessageImages ?? [],
+                  mode: "actions",
+                });
+                setHoveredUserMessageId(null);
+              }
+            : undefined;
 
           return (
             <box
@@ -674,7 +846,13 @@ export function ChatPage({
               width="100%"
               backgroundColor={rowBackground}
               paddingLeft={leftPadding}
-              paddingRight={((item.role === "user" && item.content) || showSlashBackground) ? 1 : 0}
+              paddingRight={
+                ((item.role === "user" && item.content) ||
+                  showSlashBackground) &&
+                !isCommandRow
+                  ? 1
+                  : 0
+              }
               onMouseOver={handleUserMouseOver}
               onMouseOut={handleUserMouseOut}
               onMouseDown={handleUserMouseDown}
@@ -682,36 +860,46 @@ export function ChatPage({
               {item.role === "user" && (item.content || item.isPadding) && (
                 <text fg="#ffca38">▎ </text>
               )}
-              {showSlashBar && (
-                <text fg="white">▎ </text>
-              )}
+              {showSlashBar && <text fg="#9a9a9a">• </text>}
+              {showToolBullet && <text fg="#9a9a9a">• </text>}
 
-              {showErrorBar && (
-                <text fg="#ff3838">■ </text>
-              )}
-              {item.type === 'tool_compact' ? (
+              {showErrorBar && <text fg="#ff3838">■ </text>}
+              {item.type === "tool_compact" ? (
                 (() => {
                   const isRunning = Boolean(item.isRunning);
                   const blinkOn = timerTick % 2 === 0;
                   const resolvedSuccess = item.success !== false;
                   const arrowColor = isRunning
-                    ? (blinkOn ? 'white' : '#808080')
-                    : (resolvedSuccess ? '#44aa88' : '#ff3838');
-                  const label = item.compactLabel || '';
-                  const result = item.compactResult || '';
+                    ? blinkOn
+                      ? "white"
+                      : "#808080"
+                    : resolvedSuccess
+                      ? "#44aa88"
+                      : "#ff3838";
+                  const label = item.compactLabel || "";
+                  const result = item.compactResult || "";
                   return (
                     <box flexDirection="row">
-                      <text fg={arrowColor}>{''}➔  </text>
-                      <text attributes={TextAttributes.DIM}>{`${label}${result ? ` : ${result}` : ''}`}</text>
+                      <text fg={arrowColor}>{"➔  "}</text>
+                      <text
+                        attributes={TextAttributes.DIM}
+                      >{`${label}${result ? ` : ${result}` : ""}`}</text>
                     </box>
                   );
                 })()
               ) : item.isHorizontalRule ? (
-                <text fg="#3a3a3a">{'─'.repeat(Math.max(0, terminalWidth - 4))}</text>
+                <text fg="#3a3a3a">
+                  {"─".repeat(Math.max(0, terminalWidth - 4))}
+                </text>
               ) : item.isCodeBlock ? (
-                <box flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={1}>
+                <box
+                  flexDirection="column"
+                  paddingTop={1}
+                  paddingBottom={1}
+                  paddingLeft={1}
+                >
                   <code
-                    content={item.codeContent ?? ''}
+                    content={item.codeContent ?? ""}
                     filetype={normalizeCodeFiletype(item.codeLanguage)}
                     syntaxStyle={CODE_SYNTAX_STYLE}
                     width="100%"
@@ -719,19 +907,31 @@ export function ChatPage({
                     wrapMode="none"
                   />
                 </box>
-              ) : item.isTableRow && item.tableCells && item.tableColumnWidths ? (
+              ) : item.isTableRow &&
+                item.tableCells &&
+                item.tableColumnWidths ? (
                 <box flexDirection="row">
                   {item.tableColumnWidths.map((width, colIndex) => {
-                    const cell = item.tableCells?.[colIndex] ?? '';
+                    const cell = item.tableCells?.[colIndex] ?? "";
                     const padded = ` ${cell.padEnd(width)} `;
                     const isHeader = item.tableRowIndex === 0;
                     const isLeftColumn = colIndex === 0;
-                    const cellBg = isHeader || isLeftColumn ? TABLE_HEADER_BG : TABLE_BODY_BG;
-                    const isLast = colIndex === item.tableColumnWidths!.length - 1;
+                    const cellBg =
+                      isHeader || isLeftColumn
+                        ? TABLE_HEADER_BG
+                        : TABLE_BODY_BG;
+                    const isLast =
+                      colIndex === item.tableColumnWidths!.length - 1;
                     return (
                       <box key={colIndex} flexDirection="row">
-                        <text bg={cellBg} fg="white">{padded}</text>
-                        {isLast ? null : <text bg={cellBg} fg="white"> </text>}
+                        <text bg={cellBg} fg="white">
+                          {padded}
+                        </text>
+                        {isLast ? null : (
+                          <text bg={cellBg} fg="white">
+                            {" "}
+                          </text>
+                        )}
                       </box>
                     );
                   })}
@@ -740,21 +940,47 @@ export function ChatPage({
                 <box flexDirection="row">
                   {isInlineDiff && diffBackground ? (
                     <box flexDirection="row" width="100%">
-                      {isWriteEditInlineDiff ? <text>{'   '}</text> : null}
-                      <box flexDirection="row" flexGrow={1} minWidth={0} backgroundColor={diffBackground}>
-                        {renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus, item.codeLanguage)}
+                      {isWriteEditInlineDiff ? <text>{"   "}</text> : null}
+                      <box
+                        flexDirection="row"
+                        flexGrow={1}
+                        minWidth={0}
+                        backgroundColor={diffBackground}
+                      >
+                        {renderToolText(
+                          item.content || " ",
+                          item.paragraphIndex || 0,
+                          item.indent || 0,
+                          item.wrappedLineIndex || 0,
+                          item.toolName,
+                          item.planStatus,
+                          item.codeLanguage,
+                        )}
                       </box>
                     </box>
-                  ) : isRunningTool && item.runningStartTime && item.paragraphIndex === 1 ? (
-                    <text fg="#ffffff" attributes={TextAttributes.DIM}>  Running... {Math.floor((Date.now() - item.runningStartTime) / 1000)}s</text>
+                  ) : isRunningTool &&
+                    item.runningStartTime &&
+                    item.paragraphIndex === 1 ? (
+                    <text fg="#ffffff" attributes={TextAttributes.DIM}>
+                      Running...{" "}
+                      {Math.floor((Date.now() - item.runningStartTime) / 1000)}s
+                    </text>
                   ) : (
-                    renderToolText(item.content || ' ', item.paragraphIndex || 0, item.indent || 0, item.wrappedLineIndex || 0, item.toolName, item.planStatus, item.codeLanguage)
+                    renderToolText(
+                      item.content || " ",
+                      item.paragraphIndex || 0,
+                      item.indent || 0,
+                      item.wrappedLineIndex || 0,
+                      item.toolName,
+                      item.planStatus,
+                      item.codeLanguage,
+                    )
                   )}
                 </box>
               ) : item.role === "user" ? (
-                <text fg="white">{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
+                <text fg="white">{`${" ".repeat(item.indent || 0)}${item.content || " "}`}</text>
               ) : item.role === "slash" ? (
-                renderSlashText(item.content || ' ', item.indent || 0)
+                renderSlashText(item.content || " ", item.indent || 0)
               ) : item.isAssistantMeta ? (
                 (() => {
                   const label = formatAssistantMetaLine(
@@ -765,26 +991,49 @@ export function ChatPage({
                   );
                   const innerWidth = Math.max(10, terminalWidth - 2);
                   const leftSegment = `─ `;
-                  const rightCount = Math.max(0, innerWidth - (leftSegment.length + label.length + 1));
+                  const rightCount = Math.max(
+                    0,
+                    innerWidth - (leftSegment.length + label.length + 1),
+                  );
                   return (
-                    <box flexDirection="row" width="100%" marginTop={1} marginBottom={1}>
-                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{leftSegment}</text>
-                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{label} </text>
-                      <text fg="#ffffff" attributes={TextAttributes.DIM}>{'─'.repeat(rightCount)}</text>
+                    <box
+                      flexDirection="row"
+                      width="100%"
+                      marginTop={1}
+                      marginBottom={1}
+                    >
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>
+                        {leftSegment}
+                      </text>
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>
+                        {label}{" "}
+                      </text>
+                      <text fg="#ffffff" attributes={TextAttributes.DIM}>
+                        {"─".repeat(rightCount)}
+                      </text>
                     </box>
                   );
                 })()
               ) : item.segments && item.segments.length > 0 ? (
                 <box flexDirection="row">
                   {item.segments.map((segment, segIndex) => {
-                    if (item.role === "assistant" && item.isError && segment.type === "code") {
-                      return <text key={segIndex} fg="#ff3838">{`${segment.content}`}</text>;
+                    if (
+                      item.role === "assistant" &&
+                      item.isError &&
+                      segment.type === "code"
+                    ) {
+                      return (
+                        <text
+                          key={segIndex}
+                          fg="#ff3838"
+                        >{`${segment.content}`}</text>
+                      );
                     }
                     return renderMarkdownSegment(segment, segIndex);
                   })}
                 </box>
               ) : (
-                <text fg="white">{item.content || ' '}</text>
+                <text fg="white">{item.content || " "}</text>
               )}
             </box>
           );
@@ -824,17 +1073,46 @@ export function ChatPage({
         {pendingImages.length > 0 && (
           <box flexDirection="row" width="100%" marginBottom={1}>
             <text fg="#ffca38">Images: </text>
-            <text fg="gray">{pendingImages.map((img) => img.name).join(", ")}</text>
+            <text fg="gray">
+              {pendingImages.map((img) => img.name).join(", ")}
+            </text>
           </box>
         )}
-        <box flexDirection="row" alignItems="center" width="100%" flexGrow={1} minWidth={0}>
+        <box
+          flexDirection="row"
+          alignItems="center"
+          width="100%"
+          flexGrow={1}
+          minWidth={0}
+        >
           <box flexGrow={1} flexShrink={1} minWidth={0}>
             <CustomInput
               onSubmit={onSubmit}
-              placeholder={reviewPanel ? "Review changes above..." : defaultInputPlaceholder}
-              focused={!shortcutsOpen && !questionRequest && !approvalRequest && !reviewPanel && !isUserModalOpen && !selectMenu}
-              pasteRequestId={(shortcutsOpen || isUserModalOpen) ? 0 : pasteRequestId}
-              submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen || Boolean(selectMenu)}
+              placeholder={
+                reviewPanel
+                  ? "Review changes above..."
+                  : defaultInputPlaceholder
+              }
+              focused={
+                !shortcutsOpen &&
+                !questionRequest &&
+                !approvalRequest &&
+                !reviewPanel &&
+                !isUserModalOpen &&
+                !selectMenu
+              }
+              pasteRequestId={
+                shortcutsOpen || isUserModalOpen ? 0 : pasteRequestId
+              }
+              submitDisabled={
+                isProcessing ||
+                shortcutsOpen ||
+                Boolean(questionRequest) ||
+                Boolean(approvalRequest) ||
+                Boolean(reviewPanel) ||
+                isUserModalOpen ||
+                Boolean(selectMenu)
+              }
               maxWidth={Math.max(10, terminalWidth - 6)}
               historyVersion={historyVersion}
             />
@@ -842,11 +1120,27 @@ export function ChatPage({
         </box>
       </box>
 
-      <box position="absolute" bottom={0} left={0} right={0} flexDirection="row" paddingLeft={1} paddingRight={1} justifyContent="space-between">
-      </box>
+      <box
+        position="absolute"
+        bottom={0}
+        left={0}
+        right={0}
+        flexDirection="row"
+        paddingLeft={1}
+        paddingRight={1}
+        justifyContent="space-between"
+      ></box>
 
       {!reviewMenu && (
-        <box position="absolute" bottom={inputBarBaseLines + 1} left={0} right={0} flexDirection="column" paddingLeft={1} paddingRight={1}>
+        <box
+          position="absolute"
+          bottom={inputBarBaseLines + 1}
+          left={0}
+          right={0}
+          flexDirection="column"
+          paddingLeft={1}
+          paddingRight={1}
+        >
           <ThinkingIndicatorBlock
             isProcessing={isProcessing}
             hasQuestion={Boolean(questionRequest) || Boolean(approvalRequest)}
