@@ -947,12 +947,12 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
   const auth = getAuthForProvider(config.provider);
   const isOAuth = auth?.type === 'oauth';
 
-  if (isOAuth && config.provider === 'openai' && !isSupportedOpenAIOAuthModel(cleanModel)) {
+  if (isOAuth && (config.provider === 'openai' || config.provider === 'openai-oauth') && !isSupportedOpenAIOAuthModel(cleanModel)) {
     const supported = getSupportedOpenAIOAuthModels().join(', ');
     throw new Error(`OpenAI OAuth with a ChatGPT account does not support model "${cleanModel}". Supported models: ${supported}. Use an OpenAI API key to use GPT-5.4.`);
   }
 
-  if (isOAuth && config.provider === 'openai') {
+  if (isOAuth && (config.provider === 'openai' || config.provider === 'openai-oauth')) {
     currentOAuthState = {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
@@ -964,7 +964,7 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
     currentOAuthState = null;
   }
 
-  if (isOAuth && config.provider === 'google') {
+  if (isOAuth && (config.provider === 'google' || config.provider === 'google-oauth')) {
     currentGoogleOAuthState = {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
@@ -981,7 +981,8 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       const anthropic = createAnthropic({ apiKey: cleanApiKey });
       return anthropic(cleanModel);
     }
-    case 'openai': {
+    case 'openai':
+    case 'openai-oauth': {
       if (isOAuth) {
         const openai = createOpenAI({
           apiKey: 'oauth',
@@ -1008,7 +1009,8 @@ function createModelProvider(config: { provider: string; model: string; apiKey?:
       });
       return openrouter(cleanModel);
     }
-    case 'google': {
+    case 'google':
+    case 'google-oauth': {
       if (isOAuth) {
         const google = createGoogleGenerativeAI({
           apiKey: 'oauth',
@@ -1548,7 +1550,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
   try {
     const tools = createExploreTools();
-    const isOpenAI = userConfig.provider === 'openai';
+    const isOpenAI = userConfig.provider === 'openai' || userConfig.provider === 'openai-oauth';
     const toolsToUse = isOpenAI
       ? transformToolsForResponsesApi(tools)
       : tools;
@@ -1592,7 +1594,7 @@ export async function executeExploreTool(purpose: string): Promise<ExploreResult
 
     const auth = getAuthForProvider(userConfig.provider);
     const isOAuth = auth?.type === 'oauth';
-    const isGoogleOAuth = isOAuth && userConfig.provider === 'google';
+    const isGoogleOAuth = isOAuth && (userConfig.provider === 'google' || userConfig.provider === 'google-oauth');
     const endpoints: ExploreEndpoint[] = (isOpenAI && isOAuth) ? ['responses', 'chat'] : ['responses'];
 
     let lastError: string | null = null;
