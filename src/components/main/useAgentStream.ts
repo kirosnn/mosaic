@@ -14,33 +14,16 @@ import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
 import { debugLog } from "../../utils/debug";
 import { hasPendingChanges, cancelReview, isInReviewMode, startReview } from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
-import { shouldEnableReasoning } from "../../agent/provider/reasoning";
+import { shouldEnableReasoning, supportsReasoningEffort } from "../../agent/provider/reasoning";
 import { finishRuntimeMetrics, markFirstUsefulAnswer, recordPromptTokens, recordToolMetrics, startRuntimeMetrics } from "../../agent/runtimeMetrics";
 import { runTaskLifecycleStage } from "../../agent/lifecycle";
 import { isLightweightTaskMode } from "../../agent/taskMode";
+import { applyToolResultToContinuationLedger } from "../../agent/continuationLedger";
+import { calculateHonestTokenBreakdown } from "../../utils/tokenAccounting";
+import { upsertAssistantMessage } from "./assistantMessageState";
 
 const MAX_CONTINUATIONS = 3;
-const MAX_CONTINUATION_TOOL_MESSAGES = 8;
-const MAX_CONTINUATION_TOOL_RESULT_CHARS = 900;
 const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
-const CONTINUATION_LEDGER_PREFIX = 'TOOL LEDGER (continuation context):';
-const CONTINUATION_TOOL_PRIORITY = ['explore', 'grep', 'glob', 'read', 'write', 'edit', 'plan'];
-const CONTINUATION_TOOL_SKIP = new Set(['title', 'question', 'abort', 'review']);
-const CONTINUATION_LEDGER_ONLY_TOOLS = new Set(['plan', 'grep', 'glob', 'fetch', 'list']);
-
-function stringifyUnknown(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateForContinuation(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return text.slice(0, Math.max(0, maxChars - 3)) + '...';
-}
 
 function toLogPreview(value: string, maxChars: number): string {
   const normalized = value
@@ -50,80 +33,6 @@ function toLogPreview(value: string, maxChars: number): string {
     .replace(/"/g, "'");
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`;
-}
-
-function getToolNameFromHistoryMessage(message: AgentMessage): string | null {
-  if (message.role !== 'tool') return null;
-  const content = message.content as any;
-  const part = Array.isArray(content) ? content[0] : undefined;
-  const rawName = part?.toolName ?? part?.tool_name;
-  if (typeof rawName !== 'string' || !rawName.trim()) return null;
-  return rawName;
-}
-
-function buildContinuationLedgerLine(
-  toolName: string,
-  toolArgs: Record<string, unknown>,
-  toolResult: unknown,
-  success: boolean
-): string {
-  const status = success ? 'OK' : 'FAILED';
-  const argsText = truncateForContinuation(stringifyUnknown(toolArgs).replace(/\s+/g, ' ').trim(), 80);
-  const resultText = truncateForContinuation(stringifyUnknown(toolResult).replace(/\s+/g, ' ').trim(), 140);
-  return `- [${status}] ${toolName}(${argsText}) => ${resultText}`;
-}
-
-function upsertContinuationLedgerMessage(history: AgentMessage[], ledgerEntries: string[]): void {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const msg = history[i];
-    if (msg?.role === 'assistant' && typeof msg.content === 'string' && msg.content.startsWith(CONTINUATION_LEDGER_PREFIX)) {
-      history.splice(i, 1);
-    }
-  }
-  if (ledgerEntries.length === 0) return;
-  history.push({
-    role: 'assistant',
-    content: `${CONTINUATION_LEDGER_PREFIX}\n${ledgerEntries.join('\n')}`,
-  });
-}
-
-function pruneContinuationToolMessages(history: AgentMessage[]): void {
-  const toolIndexes: number[] = [];
-  for (let i = 0; i < history.length; i++) {
-    if (history[i]?.role === 'tool') {
-      toolIndexes.push(i);
-    }
-  }
-
-  if (toolIndexes.length <= MAX_CONTINUATION_TOOL_MESSAGES) return;
-
-  const keep = new Set<number>();
-  for (const toolName of CONTINUATION_TOOL_PRIORITY) {
-    for (let i = toolIndexes.length - 1; i >= 0; i--) {
-      const idx = toolIndexes[i]!;
-      if (getToolNameFromHistoryMessage(history[idx]!) === toolName) {
-        keep.add(idx);
-        break;
-      }
-    }
-  }
-
-  for (let i = toolIndexes.length - 1; i >= 0 && keep.size < MAX_CONTINUATION_TOOL_MESSAGES; i--) {
-    keep.add(toolIndexes[i]!);
-  }
-
-  const nextHistory: AgentMessage[] = [];
-  for (let i = 0; i < history.length; i++) {
-    const msg = history[i]!;
-    if (msg.role === 'tool' && !keep.has(i)) continue;
-    nextHistory.push(msg);
-  }
-
-  history.splice(0, history.length, ...nextHistory);
-  const removed = toolIndexes.length - keep.size;
-  if (removed > 0) {
-    debugLog(`[context] continuation tool-prune removed=${removed} kept=${keep.size} max=${MAX_CONTINUATION_TOOL_MESSAGES}`);
-  }
 }
 
 function summarizeContinuationHistory(history: AgentMessage[]): string {
@@ -154,45 +63,20 @@ function countDiscoveredFiles(result: unknown): number {
 function pushContinuationToolContext(
   history: AgentMessage[],
   ledgerEntries: string[],
-  toolCallId: string,
   toolName: string,
   toolArgs: Record<string, unknown>,
   toolResult: unknown,
   success: boolean
 ): void {
-  if (CONTINUATION_TOOL_SKIP.has(toolName)) return;
-
-  const rawResult = stringifyUnknown(toolResult);
-  const isLargePayload = rawResult.length > MAX_CONTINUATION_TOOL_RESULT_CHARS;
-  const compactResult = truncateForContinuation(rawResult, MAX_CONTINUATION_TOOL_RESULT_CHARS);
-  const continuationResult = isLargePayload
-    ? `${compactResult} [truncated for continuation context]`
-    : toolResult;
-
-  const normalizedToolCallId = toolCallId && toolCallId.trim()
-    ? toolCallId
-    : `continuation-${toolName}-${Date.now()}`;
-
-  const ledgerOnly = CONTINUATION_LEDGER_ONLY_TOOLS.has(toolName) || toolName.startsWith('mcp__');
-  if (!ledgerOnly) {
-    history.push({
-      role: 'tool',
-      content: [{
-        type: 'tool-result',
-        toolCallId: normalizedToolCallId,
-        toolName,
-        result: continuationResult,
-      }] as any,
-    });
-    pruneContinuationToolMessages(history);
-  }
-
-  ledgerEntries.push(buildContinuationLedgerLine(toolName, toolArgs, toolResult, success));
-  if (ledgerEntries.length > MAX_CONTINUATION_LEDGER_ENTRIES) {
-    ledgerEntries.splice(0, ledgerEntries.length - MAX_CONTINUATION_LEDGER_ENTRIES);
-  }
-  upsertContinuationLedgerMessage(history, ledgerEntries);
-  debugLog(`[context] continuation tool-ledger updated tool=${toolName} rawChars=${rawResult.length} ledgerEntries=${ledgerEntries.length} ledgerOnly=${ledgerOnly}`);
+  applyToolResultToContinuationLedger(
+    history,
+    ledgerEntries,
+    toolName,
+    toolArgs,
+    toolResult,
+    success,
+    MAX_CONTINUATION_LEDGER_ENTRIES,
+  );
 }
 
 function extractPlanFromMessages(messages: Message[]): { steps: Array<{ step: string; status: string }> } | null {
@@ -561,7 +445,7 @@ export async function runAgentStream(
     responseModel = effectiveRun.model;
     if (responseModel && effectiveRun.reasoningEffort) {
       try {
-        responseReasoningEffort = await shouldEnableReasoning(responseProvider ?? '', responseModel)
+        responseReasoningEffort = await supportsReasoningEffort(responseProvider ?? '', responseModel)
           ? effectiveRun.reasoningEffort
           : undefined;
       } catch {
@@ -592,18 +476,10 @@ export async function runAgentStream(
 
         const currentMessageId = assistantMessageId;
         setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-          if (messageIndex === -1) {
-            newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
-          } else {
-            newMessages[messageIndex] = {
-              ...newMessages[messageIndex]!,
-              thinkingContent: thinkingChunk
-            };
-          }
-          return newMessages;
+          return upsertAssistantMessage(prev, currentMessageId, {
+            thinkingContent: thinkingChunk,
+            thinkingRunning: true,
+          });
         });
       } else if (event.type === 'text-delta') {
         if (event.content.trim()) {
@@ -659,22 +535,14 @@ export async function runAgentStream(
         }
 
         const displayContent = sanitizeAccumulatedText(cleanContent);
-        const currentMessageId = assistantMessageId;
-        setMessages((prev: Message[]) => {
-          const newMessages = [...prev];
-          const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-
-          if (messageIndex === -1) {
-            newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
-          } else {
-            newMessages[messageIndex] = {
-              ...newMessages[messageIndex]!,
+          const currentMessageId = assistantMessageId;
+          setMessages((prev: Message[]) => {
+            return upsertAssistantMessage(prev, currentMessageId, {
               content: displayContent,
-              thinkingContent: thinkingChunk
-            };
-          }
-          return newMessages;
-        });
+              thinkingContent: thinkingChunk,
+              thinkingRunning: false,
+            });
+          });
       } else if (event.type === 'step-start') {
         stepCount++;
       } else if (event.type === 'tool-call-end') {
@@ -728,6 +596,10 @@ export async function runAgentStream(
           messageId: runningMessageId
         });
 
+      } else if (event.type === 'fallback') {
+        responseProvider = event.provider;
+        responseModel = event.model;
+        debugLog(`[ui] stream fallback detected: switching to ${responseProvider}/${responseModel}`);
       } else if (event.type === 'tool-result') {
         const pending = pendingToolCalls.get(event.toolCallId);
         const toolName = pending?.toolName ?? event.toolName;
@@ -797,7 +669,6 @@ export async function runAgentStream(
         pushContinuationToolContext(
           continuationHistory,
           continuationToolLedger,
-          event.toolCallId,
           toolName,
           toolArgs,
           event.result,
@@ -880,32 +751,15 @@ export async function runAgentStream(
         lastFinishReason = event.finishReason || 'stop';
         if (event.usage && event.usage.totalTokens > 0) {
           recordPromptTokens(event.usage.promptTokens);
-          const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
-          const completionTokens = Math.max(
-            0,
-            (event.usage.completionTokens ?? 0) || (event.usage.totalTokens - promptTokens)
-          );
-          const allocatedTokens = allocateTokensByWeight(
-            completionTokens,
-            [reasoningChars, outputChars, toolChars]
-          );
-          const reasoningTokens = allocatedTokens[0] ?? 0;
-          const outputTokens = allocatedTokens[1] ?? 0;
-          const toolTokens = allocatedTokens[2] ?? 0;
+          
+          const honest = calculateHonestTokenBreakdown(event.usage);
+          totalTokens = honest;
+          lastPromptTokensRef.current = honest.prompt;
+          
+          // Requirement: Top-level displayed total must represent completion-side only.
+          setCurrentTokensMonotonic(honest.completion);
 
-          totalTokens = {
-            prompt: event.usage.promptTokens,
-            completion: event.usage.completionTokens,
-            total: event.usage.totalTokens
-          };
-          lastPromptTokensRef.current = event.usage.promptTokens;
-          setCurrentTokensMonotonic(event.usage.totalTokens);
-          setTokenBreakdown({
-            prompt: promptTokens,
-            reasoning: reasoningTokens,
-            output: outputTokens,
-            tools: toolTokens
-          });
+          setTokenBreakdown(honest.breakdown);
         }
       }
     }
@@ -1026,14 +880,9 @@ export async function runAgentStream(
 
           const currentMessageId = assistantMessageId;
           setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-            if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: '', thinkingContent: thinkingChunk });
-            } else {
-              newMessages[messageIndex] = { ...newMessages[messageIndex]!, thinkingContent: thinkingChunk };
-            }
-            return newMessages;
+            return upsertAssistantMessage(prev, currentMessageId, {
+              thinkingContent: thinkingChunk,
+            });
           });
         } else if (event.type === 'text-delta') {
           if (event.content.trim()) {
@@ -1055,14 +904,11 @@ export async function runAgentStream(
           const displayContent = sanitizeAccumulatedText(cleanContent);
           const currentMessageId = assistantMessageId;
           setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            const messageIndex = newMessages.findIndex(m => m.id === currentMessageId);
-            if (messageIndex === -1) {
-              newMessages.push({ id: currentMessageId, role: "assistant", content: displayContent, thinkingContent: thinkingChunk });
-            } else {
-              newMessages[messageIndex] = { ...newMessages[messageIndex]!, content: displayContent, thinkingContent: thinkingChunk };
-            }
-            return newMessages;
+            return upsertAssistantMessage(prev, currentMessageId, {
+              content: displayContent,
+              thinkingContent: thinkingChunk,
+              thinkingRunning: false,
+            });
           });
         } else if (event.type === 'step-start') {
           stepCount++;
@@ -1159,7 +1005,6 @@ export async function runAgentStream(
           pushContinuationToolContext(
             continuationHistory,
             continuationToolLedger,
-            event.toolCallId,
             toolName,
             toolArgs,
             event.result,
@@ -1235,24 +1080,16 @@ export async function runAgentStream(
         lastFinishReason = event.finishReason || 'stop';
         if (event.usage && event.usage.totalTokens > 0) {
           recordPromptTokens(event.usage.promptTokens);
-          const promptTokens = Math.max(0, event.usage.promptTokens ?? 0);
-            const completionTokens = Math.max(0, (event.usage.completionTokens ?? 0) || (event.usage.totalTokens - promptTokens));
-            const allocatedTokens = allocateTokensByWeight(completionTokens, [reasoningChars, outputChars, toolChars]);
-            totalTokens = { prompt: event.usage.promptTokens, completion: event.usage.completionTokens, total: event.usage.totalTokens };
-            lastPromptTokensRef.current = event.usage.promptTokens;
-            setCurrentTokensMonotonic(event.usage.totalTokens);
-            setTokenBreakdown({
-              prompt: promptTokens,
-              reasoning: allocatedTokens[0] ?? 0,
-              output: allocatedTokens[1] ?? 0,
-              tools: allocatedTokens[2] ?? 0
-            });
-          }
+          const honest = calculateHonestTokenBreakdown(event.usage);
+          totalTokens = honest;
+          lastPromptTokensRef.current = honest.prompt;
+          setCurrentTokensMonotonic(honest.completion);
+          setTokenBreakdown(honest.breakdown);
         }
       }
+    }
 
-      if (abortController.signal.aborted) { notifyAbort(); return; }
-
+    if (abortController.signal.aborted) { notifyAbort(); return; }
       if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
         const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
         conversationSteps.push({
