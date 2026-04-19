@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { __test__ as executorTest, executeTool } from '../executor';
+import { resolveToolPath } from '../../toolPathScope';
 
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
@@ -106,6 +107,28 @@ describe('executor discovery', () => {
 
     const parsed = JSON.parse(result.result || '[]') as string[];
     expect(parsed).toEqual(['nested/child.ts', 'root.ts']);
+  });
+
+  it('supports targeted reads outside the workspace when the path is explicit', async () => {
+    const workspace = createWorkspace();
+    const externalRoot = createWorkspace();
+    const externalFile = join(externalRoot, 'notes-config.json');
+    writeFileSync(externalFile, '{"enabled":true}\n', 'utf-8');
+
+    process.chdir(workspace);
+    const result = await executeTool('read', { path: externalFile }, { skipApproval: true });
+    expect(result.success).toBe(true);
+    expect(result.result).toContain('"enabled":true');
+  });
+
+  it('classifies absolute paths outside the workspace without treating them as repo-relative', async () => {
+    const workspace = createWorkspace();
+    const externalRoot = createWorkspace();
+    const pathInfo = await resolveToolPath(workspace, join(externalRoot, 'config.toml'));
+
+    expect(pathInfo.withinWorkspace).toBe(false);
+    expect(pathInfo.workspaceRelativePath).toBeNull();
+    expect(pathInfo.displayPath).toContain('config.toml');
   });
 
   it('returns a structured local summary for common git inspection commands', () => {
