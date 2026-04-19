@@ -4,11 +4,11 @@ import { executeTool } from './executor';
 import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const list: CoreTool = tool({
-  description: 'List files and directories in a directory with optional recursive listing and filtering',
+  description: 'List files and directories in a local directory with optional recursive listing and filtering. Relative paths resolve from the launch directory; absolute paths, ~, and environment-variable paths are also supported.',
   parameters: z.object({
     path: z
       .string()
-      .describe('The path to the directory relative to the workspace root. Use "." for the root directory.'),
+      .describe('Directory path. Relative paths resolve from the launch directory. Use "." for that root.'),
     recursive: z.boolean().nullable().optional().describe('If true, list files recursively in all subdirectories (use null for false)'),
     filter: z.string().nullable().optional().describe('Optional glob pattern to filter results (use null for no filter)'),
     include_hidden: z.boolean().nullable().optional().describe('If true, include hidden files (starting with .) (use null for false)'),
