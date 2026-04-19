@@ -1,0 +1,10 @@
+src/**/__tests__/
+src/app/electron/
+src/electron/
+benchmark/
+docs/
+OPENTUI.md
+AGENTS.md
+CLAUDE.md
+.claude/
+tests/
