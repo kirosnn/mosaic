@@ -1,10 +1,11 @@
 import { writeFile, mkdir, unlink } from 'fs/promises';
-import { resolve, dirname } from 'path';
+import { dirname } from 'path';
 import type { PendingChange } from './pendingChangesBridge';
+import { resolveReviewPath } from '../agent/toolPathScope';
 
 export async function revertChange(change: PendingChange): Promise<void> {
     const workspace = process.cwd();
-    const fullPath = resolve(workspace, change.path);
+    const fullPath = resolveReviewPath(workspace, change.path);
 
     const wasCreatedByChange = change.originalContent === '' && change.newContent !== '';
     if (wasCreatedByChange) {
