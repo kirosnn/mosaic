@@ -6,10 +6,13 @@ import type { ImageAttachment } from "../../utils/images";
 import type { QuestionRequest } from "../../utils/questionBridge";
 import type { ApprovalRequest } from "../../utils/approvalBridge";
 import { wrapText } from "./wrapText";
+import { buildReasoningRenderBlocks } from "./reasoningBlocks";
+import { getReasoningPanelVisualLines, type ReasoningRenderBlock } from "./reasoningPanelModel";
+import { getDefaultThinkingCollapsed } from "./assistantMessageState";
 
 export interface RenderItem {
   key: string;
-  type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact';
+  type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact' | 'reasoning';
   content?: string;
   role: "user" | "assistant" | "tool" | "slash";
   toolName?: string;
@@ -28,7 +31,9 @@ export interface RenderItem {
   blendWord?: string;
   isRunning?: boolean;
   runningStartTime?: number;
-  isThinking?: boolean;
+  thinkingCollapsed?: boolean;
+  thinkingRunning?: boolean;
+  reasoningBlocks?: ReasoningRenderBlock[];
   isCodeBlock?: boolean;
   codeLanguage?: string;
   codeContent?: string;
@@ -247,39 +252,18 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
 
     if (messageRole === 'assistant') {
       if (message.thinkingContent) {
-        const thinkingLines = message.thinkingContent.split('\n');
-        const thinkingItems: RenderItem[] = [];
-        for (let i = 0; i < thinkingLines.length; i++) {
-          const wrapped = wrapText(thinkingLines[i] || '', maxWidth - 2);
-          for (let j = 0; j < wrapped.length; j++) {
-            thinkingItems.push({
-              key: `${messageKey}-thinking-${i}-${j}`,
-              type: 'line',
-              content: wrapped[j] || '',
-              role: messageRole,
-              isFirst: false,
-              visualLines: 1,
-              isThinking: true
-            });
-          }
-        }
-
-        if (thinkingItems.length > 0) {
-          thinkingItems[0]!.content = '"' + (thinkingItems[0]!.content || '');
-          const last = thinkingItems[thinkingItems.length - 1]!;
-          last.content = (last.content || '') + '"';
-        }
-        allItems.push(...thinkingItems);
-
+        const thinkingCollapsed = message.thinkingCollapsed ?? getDefaultThinkingCollapsed();
+        const reasoningBlocks = buildReasoningRenderBlocks(message.thinkingContent, maxWidth - 2, messageKey);
         allItems.push({
-          key: `${messageKey}-thinking-spacer`,
-          type: 'line',
-          content: '',
+          key: `${messageKey}-thinking`,
+          type: 'reasoning',
           role: messageRole,
           isFirst: false,
-          isSpacer: true,
-          visualLines: 1,
-          isThinking: true
+          visualLines: getReasoningPanelVisualLines(reasoningBlocks, thinkingCollapsed),
+          thinkingCollapsed,
+          thinkingRunning: message.thinkingRunning,
+          reasoningBlocks,
+          messageId: message.id
         });
       }
 
@@ -653,9 +637,11 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       && !item.isCodeBlock
       && !item.isTableRow
       && !item.isHorizontalRule
+      && !item.isAssistantMeta
       && item.type !== 'question'
       && item.type !== 'approval'
       && item.type !== 'tool_compact'
+      && item.type !== 'reasoning'
       && item.type !== 'blend';
 
     if (isEmptyLine && deduplicated.length > 0) {
