@@ -24,6 +24,7 @@ export interface AssistantCapabilitySnapshot {
 const MODE_PURPOSES: Record<TaskMode, string> = {
   chat: 'Trivial greetings, thanks, and acknowledgements.',
   assistant_capabilities: 'Questions about Mosaic itself: tools, skills, permissions, and limits.',
+  environment_config: 'Local machine, app, editor, folder, and MCP configuration outside normal repo-centric work.',
   explore_readonly: 'Read-only repository and git inspection.',
   plan: 'Planning and approach design without implementation.',
   edit: 'Local code and file changes.',
@@ -69,7 +70,7 @@ export function getAssistantCapabilitySnapshot(): AssistantCapabilitySnapshot {
       ? { provider: lightweightRoute.providerId, model: lightweightRoute.modelId }
       : null,
     approvalsEnabled,
-    modes: (['chat', 'assistant_capabilities', 'explore_readonly', 'plan', 'edit', 'run', 'review'] as TaskMode[]).map((mode) => ({
+    modes: (['chat', 'assistant_capabilities', 'environment_config', 'explore_readonly', 'plan', 'edit', 'run', 'review'] as TaskMode[]).map((mode) => ({
       mode,
       label: getTaskModeLabel(mode),
       purpose: MODE_PURPOSES[mode],
@@ -112,6 +113,7 @@ export function buildAssistantCapabilitySummary(snapshotInput?: AssistantCapabil
   lines.push(`- Active workspace skills (${snapshot.activeSkills.length}): ${summarizeNames(snapshot.activeSkills, 8)}`);
   lines.push(`- One-shot queued skills (${snapshot.oneShotSkillIds.length}): ${summarizeNames(snapshot.oneShotSkillIds, 6)}`);
   lines.push(`- Repo inspection abilities: read, list, glob, grep, explore, plus read-only git or shell inspection through bash when allowed.`);
+  lines.push(`- Local machine abilities: inspect config files, connect tools to local folders or apps, and work outside the launch directory when approvals or review policy allow it.`);
   lines.push(`- Local change abilities: write and edit local files; run shell commands through bash; fetch remote content when explicitly needed.`);
   lines.push(`- Approval model: configurable approvals are currently ${snapshot.approvalsEnabled ? 'ON' : 'OFF'}.`);
   lines.push(`- Approval policy details: read-only file tools=${readOnlyApproval.policy}; read-only shell/git=${shellReadOnlyApproval.policy}; local edits=${editApproval.policy}; shell execution=${shellApproval.policy}; network/install/destructive=${networkApproval.policy}.`);
