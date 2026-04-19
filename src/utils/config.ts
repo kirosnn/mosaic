@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { VERSION } from './version';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import { VERSION } from "./version";
 
-const CONFIG_DIR = join(homedir(), '.mosaic');
-const CONFIG_FILE = join(CONFIG_DIR, 'mosaic.jsonc');
-const CODEX_CONFIG_FILE = join(homedir(), '.codex', 'config.toml');
+const CONFIG_DIR = join(homedir(), ".mosaic");
+const CONFIG_FILE = join(CONFIG_DIR, "mosaic.jsonc");
+const CODEX_CONFIG_FILE = join(homedir(), ".codex", "config.toml");
 
 export interface AIProvider {
   id: string;
@@ -32,7 +32,7 @@ export interface RecentProject {
   lastOpened: number;
 }
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 export interface MosaicConfig {
   firstRun: boolean;
@@ -57,6 +57,7 @@ export interface MosaicConfig {
   requireApprovals?: boolean;
   recentProjects?: RecentProject[];
   thinkingCollapsed?: boolean;
+  preferredSubsystem?: string;
 }
 
 export interface OAuthTokenState {
@@ -70,57 +71,66 @@ export interface OAuthTokenState {
 export interface LightweightRoute {
   providerId: string;
   modelId: string;
-  source: 'configured' | 'provider_default' | 'current_model' | 'provider_first';
+  source:
+    | "configured"
+    | "provider_default"
+    | "current_model"
+    | "provider_first";
 }
 
 const LIGHTWEIGHT_PROVIDER_MODELS: Partial<Record<string, string>> = {
-  openai: 'gpt-4.1-2025-04-14',
-  'openai-oauth': 'gpt-5.4-mini',
-  anthropic: 'claude-haiku-4-5',
-  mistral: 'mistral-medium-latest',
-  xai: 'grok-code-fast-1',
-  google: 'gemini-3-flash-preview',
-  'google-oauth': 'gemini-3-flash-preview',
-  groq: 'llama-3.1-8b-instant',
-  ollama: 'gpt-oss:120b',
-  openrouter: 'x-ai/grok-code-fast-1',
+  openai: "gpt-4.1-2025-04-14",
+  "openai-oauth": "gpt-5.4-mini",
+  anthropic: "claude-haiku-4-5",
+  mistral: "mistral-medium-latest",
+  xai: "grok-code-fast-1",
+  google: "gemini-3-flash-preview",
+  "google-oauth": "gemini-3-flash-preview",
+  groq: "llama-3.1-8b-instant",
+  ollama: "gpt-oss:120b",
+  openrouter: "x-ai/grok-code-fast-1",
 };
 
-const REASONING_EFFORTS: readonly ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
+const REASONING_EFFORTS: readonly ReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
 
 export const OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS = [
-  'codex-auto-review',
-  'gpt-5.2',
-  'gpt-5.3-codex',
-  'gpt-5.4',
-  'gpt-5.4-mini',
+  "codex-auto-review",
+  "gpt-5.2",
+  "gpt-5.3-codex",
+  "gpt-5.4",
+  "gpt-5.4-mini",
 ] as const;
 
 const OPENAI_CHATGPT_OAUTH_MODEL_DETAILS: Record<string, AIModel> = {
-  'codex-auto-review': {
-    id: 'codex-auto-review',
-    name: 'Codex Auto Review',
-    description: 'Automated Codex review model available with ChatGPT Plus',
+  "codex-auto-review": {
+    id: "codex-auto-review",
+    name: "Codex Auto Review",
+    description: "Automated Codex review model available with ChatGPT Plus",
   },
-  'gpt-5.4': {
-    id: 'gpt-5.4',
-    name: 'GPT-5.4',
-    description: 'Latest frontier agentic coding model',
+  "gpt-5.4": {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    description: "Latest frontier agentic coding model",
   },
-  'gpt-5.2': {
-    id: 'gpt-5.2',
-    name: 'GPT-5.2',
-    description: 'Optimized for professional work and long-running agents',
+  "gpt-5.2": {
+    id: "gpt-5.2",
+    name: "GPT-5.2",
+    description: "Optimized for professional work and long-running agents",
   },
-  'gpt-5.3-codex': {
-    id: 'gpt-5.3-codex',
-    name: 'GPT-5.3 Codex',
-    description: 'Frontier Codex-optimized agentic coding model',
+  "gpt-5.3-codex": {
+    id: "gpt-5.3-codex",
+    name: "GPT-5.3 Codex",
+    description: "Frontier Codex-optimized agentic coding model",
   },
-  'gpt-5.4-mini': {
-    id: 'gpt-5.4-mini',
-    name: 'GPT-5.4 Mini',
-    description: 'Smaller frontier agentic coding model',
+  "gpt-5.4-mini": {
+    id: "gpt-5.4-mini",
+    name: "GPT-5.4 Mini",
+    description: "Smaller frontier agentic coding model",
   },
 };
 
@@ -129,38 +139,61 @@ export function isSupportedOpenAIOAuthCatalogModelId(modelId: string): boolean {
   if (!normalized) {
     return false;
   }
-  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.some(id => id.toLowerCase() === normalized.toLowerCase());
+  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.some(
+    (id) => id.toLowerCase() === normalized.toLowerCase(),
+  );
 }
 
 export function sanitizeOpenAIOAuthCatalogModels(models: AIModel[]): AIModel[] {
   return models
-    .filter(model => typeof model?.id === 'string' && isSupportedOpenAIOAuthCatalogModelId(model.id))
-    .map(model => createOpenAIOAuthModel(model.id.trim()));
+    .filter(
+      (model) =>
+        typeof model?.id === "string" &&
+        isSupportedOpenAIOAuthCatalogModelId(model.id),
+    )
+    .map((model) => createOpenAIOAuthModel(model.id.trim()));
 }
 
 function createOpenAIOAuthModel(modelId: string): AIModel {
-  return OPENAI_CHATGPT_OAUTH_MODEL_DETAILS[modelId] || {
-    id: modelId,
-    name: modelId,
-    description: 'Supported Codex model for OpenAI OAuth with a ChatGPT account',
-  };
+  return (
+    OPENAI_CHATGPT_OAUTH_MODEL_DETAILS[modelId] || {
+      id: modelId,
+      name: modelId,
+      description:
+        "Supported Codex model for OpenAI OAuth with a ChatGPT account",
+    }
+  );
 }
 
 function getOpenAIOAuthFallbackModels(): AIModel[] {
-  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.map(modelId => createOpenAIOAuthModel(modelId));
+  return OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS.map((modelId) =>
+    createOpenAIOAuthModel(modelId),
+  );
 }
 
 function getConfiguredOpenAIOAuthModels(config: MosaicConfig): AIModel[] {
-  return sanitizeOpenAIOAuthCatalogModels(config.oauthModels?.['openai-oauth'] || []);
+  return sanitizeOpenAIOAuthCatalogModels(
+    config.oauthModels?.["openai-oauth"] || [],
+  );
 }
 
-function getSupportedOpenAIOAuthModelIdsFromConfig(config: MosaicConfig): string[] {
-  const configured = getConfiguredOpenAIOAuthModels(config).map(model => model.id);
-  return Array.from(new Set([...OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS, ...configured]));
+function getSupportedOpenAIOAuthModelIdsFromConfig(
+  config: MosaicConfig,
+): string[] {
+  const configured = getConfiguredOpenAIOAuthModels(config).map(
+    (model) => model.id,
+  );
+  return Array.from(
+    new Set([...OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS, ...configured]),
+  );
 }
 
-function getSupportedOpenAIOAuthModelsFromConfig(config: MosaicConfig): AIModel[] {
-  return getSupportedOpenAIOAuthModelIdsFromConfig(config).map(modelId => createOpenAIOAuthModel(modelId));
+function getSupportedOpenAIOAuthModelsFromConfig(
+  config: MosaicConfig,
+): AIModel[] {
+  return getSupportedOpenAIOAuthModelIdsFromConfig(config).map((modelId) =>
+    createOpenAIOAuthModel(modelId),
+  );
 }
 
 function isReasoningEffort(value: string): value is ReasoningEffort {
@@ -168,51 +201,58 @@ function isReasoningEffort(value: string): value is ReasoningEffort {
 }
 
 function sanitizeLoadedConfig(config: MosaicConfig): MosaicConfig {
-  if (config.modelReasoningEffort && !isReasoningEffort(config.modelReasoningEffort)) {
+  if (
+    config.modelReasoningEffort &&
+    !isReasoningEffort(config.modelReasoningEffort)
+  ) {
     delete config.modelReasoningEffort;
   }
 
-  // Migration: Move legacy oauthTokens to new provider IDs
   if (config.oauthTokens) {
-    if (config.oauthTokens.openai && !config.oauthTokens['openai-oauth']) {
-      config.oauthTokens['openai-oauth'] = config.oauthTokens.openai;
+    if (config.oauthTokens.openai && !config.oauthTokens["openai-oauth"]) {
+      config.oauthTokens["openai-oauth"] = config.oauthTokens.openai;
       delete config.oauthTokens.openai;
     }
-    if (config.oauthTokens.google && !config.oauthTokens['google-oauth']) {
-      config.oauthTokens['google-oauth'] = config.oauthTokens.google;
+    if (config.oauthTokens.google && !config.oauthTokens["google-oauth"]) {
+      config.oauthTokens["google-oauth"] = config.oauthTokens.google;
       delete config.oauthTokens.google;
     }
   }
 
-  // Migration: Move legacy oauthModels to new provider IDs
   if (config.oauthModels) {
-    if (config.oauthModels.openai && !config.oauthModels['openai-oauth']) {
-      config.oauthModels['openai-oauth'] = config.oauthModels.openai;
+    if (config.oauthModels.openai && !config.oauthModels["openai-oauth"]) {
+      config.oauthModels["openai-oauth"] = config.oauthModels.openai;
       delete config.oauthModels.openai;
     }
-    if (config.oauthModels.google && !config.oauthModels['google-oauth']) {
-      config.oauthModels['google-oauth'] = config.oauthModels.google;
+    if (config.oauthModels.google && !config.oauthModels["google-oauth"]) {
+      config.oauthModels["google-oauth"] = config.oauthModels.google;
       delete config.oauthModels.google;
     }
   }
 
-  // Migration: Update active provider if it was using OAuth under legacy ID
-  if (config.provider === 'openai' && config.oauthTokens?.['openai-oauth']?.accessToken) {
-    config.provider = 'openai-oauth';
-  } else if (config.provider === 'google' && config.oauthTokens?.['google-oauth']?.accessToken) {
-    config.provider = 'google-oauth';
+  if (
+    config.provider === "openai" &&
+    config.oauthTokens?.["openai-oauth"]?.accessToken
+  ) {
+    config.provider = "openai-oauth";
+  } else if (
+    config.provider === "google" &&
+    config.oauthTokens?.["google-oauth"]?.accessToken
+  ) {
+    config.provider = "google-oauth";
   }
 
-  // Ensure openai-oauth has models populated
-  if (config.oauthTokens?.['openai-oauth']?.accessToken) {
+  if (config.oauthTokens?.["openai-oauth"]?.accessToken) {
     if (!config.oauthModels) {
       config.oauthModels = {};
     }
     const supportedIds = getSupportedOpenAIOAuthModelIdsFromConfig(config);
-    config.oauthModels['openai-oauth'] = supportedIds.map(modelId => createOpenAIOAuthModel(modelId));
+    config.oauthModels["openai-oauth"] = supportedIds.map((modelId) =>
+      createOpenAIOAuthModel(modelId),
+    );
 
-    if (config.provider === 'openai-oauth') {
-      const supported = new Set(supportedIds.map(id => id.toLowerCase()));
+    if (config.provider === "openai-oauth") {
+      const supported = new Set(supportedIds.map((id) => id.toLowerCase()));
       const current = normalizeOpenAIOAuthModelId(config.model, supportedIds);
       if (!current || !supported.has(current.toLowerCase())) {
         config.model = supportedIds[0];
@@ -227,139 +267,290 @@ function sanitizeLoadedConfig(config: MosaicConfig): MosaicConfig {
 
 export const AI_PROVIDERS: AIProvider[] = [
   {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'GPT models from OpenAI (API Key)',
+    id: "openai",
+    name: "OpenAI",
+    description: "GPT models from OpenAI (API Key)",
     requiresApiKey: true,
     models: [
-      { id: 'gpt-5.4-2026-03-25', name: 'GPT-5.4', description: 'Latest GPT-5.4 model from OpenAI for coding and agentic tasks' },
-      { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', description: 'The best model for coding and agentic tasks across industries' },
-      { id: 'gpt-5.1-2025-11-13', name: 'GPT-5.1', description: 'The best model for coding and agentic tasks with configurable reasoning effort' },
-      { id: 'gpt-5-2025-08-07', name: 'GPT-5', description: 'The first model GPT 5 series from OpenAI' },
-      { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', description: 'Smartest non-reasoning model from OpenAI' },
-    ]
+      {
+        id: "gpt-5.4-2026-03-25",
+        name: "GPT-5.4",
+        description:
+          "Latest GPT-5.4 model from OpenAI for coding and agentic tasks",
+      },
+      {
+        id: "gpt-5.2-2025-12-11",
+        name: "GPT-5.2",
+        description:
+          "The best model for coding and agentic tasks across industries",
+      },
+      {
+        id: "gpt-5.1-2025-11-13",
+        name: "GPT-5.1",
+        description:
+          "The best model for coding and agentic tasks with configurable reasoning effort",
+      },
+      {
+        id: "gpt-5-2025-08-07",
+        name: "GPT-5",
+        description: "The first model GPT 5 series from OpenAI",
+      },
+      {
+        id: "gpt-4.1-2025-04-14",
+        name: "GPT-4.1",
+        description: "Smartest non-reasoning model from OpenAI",
+      },
+    ],
   },
   {
-    id: 'openai-oauth',
-    name: 'OpenAI (OAuth)',
-    description: 'ChatGPT Plus models from OpenAI (OAuth)',
+    id: "openai-oauth",
+    name: "OpenAI (OAuth)",
+    description: "ChatGPT Plus models from OpenAI (OAuth)",
     requiresApiKey: false,
-    models: [] // Dynamically populated from ChatGPT account
+    models: [],
   },
   {
-    id: 'anthropic',
-    name: 'Anthropic',
-    description: 'Claude models with extended context windows',
+    id: "anthropic",
+    name: "Anthropic",
+    description: "Claude models with extended context windows",
     requiresApiKey: true,
     models: [
-      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', description: 'Most capable Claude model' },
-      { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', description: 'Balanced performance and speed' },
-      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: 'Previous Sonnet model' },
-      { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', description: 'Fastest Claude model' },
-    ]
+      {
+        id: "claude-opus-4-5",
+        name: "Claude Opus 4.5",
+        description: "Most capable Claude model",
+      },
+      {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        description: "Balanced performance and speed",
+      },
+      {
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        description: "Previous Sonnet model",
+      },
+      {
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        description: "Fastest Claude model",
+      },
+    ],
   },
   {
-    id: 'mistral',
-    name: 'Mistral',
-    description: 'Mistral AI is a French company that develops open and efficient artificial intelligence models for various applications',
+    id: "mistral",
+    name: "Mistral",
+    description:
+      "Mistral AI is a French company that develops open and efficient artificial intelligence models for various applications",
     requiresApiKey: true,
     models: [
-      { id: 'mistral-large-latest', name: 'Mistral Large 3', description: 'Mistral Large 3, is a state-of-the-art, open-weight, general-purpose multimodal model' },
-      { id: 'devstral-medium-latest', name: 'Devstral 2', description: 'Frontier code agents model for solving software engineering tasks' },
-      { id: 'mistral-medium-latest', name: 'Mistral Medium 3.1', description: 'Frontier-class multimodal model' },
-    ]
+      {
+        id: "mistral-large-latest",
+        name: "Mistral Large 3",
+        description:
+          "Mistral Large 3, is a state-of-the-art, open-weight, general-purpose multimodal model",
+      },
+      {
+        id: "devstral-medium-latest",
+        name: "Devstral 2",
+        description:
+          "Frontier code agents model for solving software engineering tasks",
+      },
+      {
+        id: "mistral-medium-latest",
+        name: "Mistral Medium 3.1",
+        description: "Frontier-class multimodal model",
+      },
+    ],
   },
   {
-    id: 'xai',
-    name: 'xAI',
-    description: 'xAI is an AI company focused on creating AI for understanding the universe',
+    id: "xai",
+    name: "xAI",
+    description:
+      "xAI is an AI company focused on creating AI for understanding the universe",
     requiresApiKey: true,
     models: [
-      { id: 'grok-4-1-fast-reasoning', name: 'Grok 4.1 Fast Reasoning', description: 'A frontier multimodal model optimized specifically for high-performance agentic tool calling' },
-      { id: 'grok-4-fast-reasoning', name: 'Grok 4 Fast Reasoning', description: 'Advancement in cost-efficient reasoning models.' },
-      { id: 'grok-code-fast-1', name: 'Grok Code Fast 1', description: 'Optimized model for coding, programming, and software development tasks' },
-    ]
+      {
+        id: "grok-4-1-fast-reasoning",
+        name: "Grok 4.1 Fast Reasoning",
+        description:
+          "A frontier multimodal model optimized specifically for high-performance agentic tool calling",
+      },
+      {
+        id: "grok-4-fast-reasoning",
+        name: "Grok 4 Fast Reasoning",
+        description: "Advancement in cost-efficient reasoning models.",
+      },
+      {
+        id: "grok-code-fast-1",
+        name: "Grok Code Fast 1",
+        description:
+          "Optimized model for coding, programming, and software development tasks",
+      },
+    ],
   },
   {
-    id: 'google',
-    name: 'Google',
-    description: 'Google Vertex AI / AI Studio (API Key)',
+    id: "google",
+    name: "Google",
+    description: "Google Vertex AI / AI Studio (API Key)",
     requiresApiKey: true,
     models: [
-      { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', description: 'The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities' },
-      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash' },
-      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'A versatile, cutting-edge model that excels in complex coding and reasoning tasks' },
-    ]
+      {
+        id: "gemini-3-pro-preview",
+        name: "Gemini 3 Pro Preview",
+        description:
+          "The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities",
+      },
+      {
+        id: "gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview",
+        description:
+          "Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash",
+      },
+      {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        description:
+          "A versatile, cutting-edge model that excels in complex coding and reasoning tasks",
+      },
+    ],
   },
   {
-    id: 'google-oauth',
-    name: 'Google (OAuth)',
-    description: 'Google Gemini Code Assist (OAuth)',
+    id: "google-oauth",
+    name: "Google (OAuth)",
+    description: "Google Gemini Code Assist (OAuth)",
     requiresApiKey: false,
     models: [
-      { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', description: 'The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities' },
-      { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', description: 'Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash' },
-      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'A versatile, cutting-edge model that excels in complex coding and reasoning tasks' },
-    ]
+      {
+        id: "gemini-3-pro-preview",
+        name: "Gemini 3 Pro Preview",
+        description:
+          "The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities",
+      },
+      {
+        id: "gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview",
+        description:
+          "Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash",
+      },
+      {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        description:
+          "A versatile, cutting-edge model that excels in complex coding and reasoning tasks",
+      },
+    ],
   },
   {
-    id: 'ollama',
-    name: 'Ollama',
-    description: 'Run models locally on your machine',
+    id: "ollama",
+    name: "Ollama",
+    description: "Run models locally on your machine",
     requiresApiKey: false,
     models: [
-      { id: 'gpt-oss:120b', name: 'GPT OSS 120b', description: 'Best OSS reasoning model (and only one) OpenAI created' },
-      { id: 'glm-5:cloud', name: 'GLM 5 Cloud', description: 'Advancing the coding capability, from zAI', requiresApiKey: true },
-      { id: 'devstral-2:123b-cloud', name: 'Devstral 2 Cloud', description: 'Devstral is an agentic LLM for software engineering tasks, from Mistral', requiresApiKey: true },
-    ]
+      {
+        id: "gpt-oss:120b",
+        name: "GPT OSS 120b",
+        description: "Best OSS reasoning model (and only one) OpenAI created",
+      },
+      {
+        id: "glm-5:cloud",
+        name: "GLM 5 Cloud",
+        description: "Advancing the coding capability, from zAI",
+        requiresApiKey: true,
+      },
+      {
+        id: "devstral-2:123b-cloud",
+        name: "Devstral 2 Cloud",
+        description:
+          "Devstral is an agentic LLM for software engineering tasks, from Mistral",
+        requiresApiKey: true,
+      },
+    ],
   },
   {
-    id: 'groq',
-    name: 'Groq',
-    description: 'GroqCloud hosted models and systems',
+    id: "groq",
+    name: "Groq",
+    description: "GroqCloud hosted models and systems",
     requiresApiKey: true,
     models: [
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', description: 'Fast general model with 131k context window' },
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', description: 'High quality general model with 131k context window' },
-      { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', description: 'OpenAI open-weight model hosted on GroqCloud' },
-    ]
+      {
+        id: "llama-3.1-8b-instant",
+        name: "Llama 3.1 8B Instant",
+        description: "Fast general model with 131k context window",
+      },
+      {
+        id: "llama-3.3-70b-versatile",
+        name: "Llama 3.3 70B Versatile",
+        description: "High quality general model with 131k context window",
+      },
+      {
+        id: "openai/gpt-oss-120b",
+        name: "GPT OSS 120B",
+        description: "OpenAI open-weight model hosted on GroqCloud",
+      },
+    ],
   },
   {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    description: 'Access to various AI models through a unified API',
+    id: "openrouter",
+    name: "OpenRouter",
+    description: "Access to various AI models through a unified API",
     requiresApiKey: true,
     models: [
-      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: 'Most capable Claude model' },
-      { id: 'x-ai/grok-code-fast-1', name: 'Grok Code Fast 1', description: 'Grok Code Fast 1 is a speedy and economical reasoning model that excels at agentic coding.' },
-      { id: 'anthropic/claude-opus-4.5', name: 'Claude 3', description: 'Most capable Claude model' },
-    ]
-  }
+      {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        description: "Most capable Claude model",
+      },
+      {
+        id: "x-ai/grok-code-fast-1",
+        name: "Grok Code Fast 1",
+        description:
+          "Grok Code Fast 1 is a speedy and economical reasoning model that excels at agentic coding.",
+      },
+      {
+        id: "anthropic/claude-opus-4.5",
+        name: "Claude 3",
+        description: "Most capable Claude model",
+      },
+    ],
+  },
 ];
 
-function getAllProvidersFromConfig(config: MosaicConfig, options?: { includeOAuthModels?: boolean }): AIProvider[] {
+function getAllProvidersFromConfig(
+  config: MosaicConfig,
+  options?: { includeOAuthModels?: boolean },
+): AIProvider[] {
   const customProviders = config.customProviders || [];
   const customModels = config.customModels || {};
-  const oauthModelsMap = options?.includeOAuthModels === false ? {} : (config.oauthModels || {});
+  const oauthModelsMap =
+    options?.includeOAuthModels === false ? {} : config.oauthModels || {};
 
-  const mergedProviders = AI_PROVIDERS.map(provider => {
+  const mergedProviders = AI_PROVIDERS.map((provider) => {
     const customModelsForProvider = customModels[provider.id] || [];
     const oauthModelsForProvider = oauthModelsMap[provider.id] || [];
-    
-    // For openai-oauth, if no models are stored yet, use fallbacks
+
     let baseModels = provider.models;
-    if (provider.id === 'openai-oauth' && oauthModelsForProvider.length === 0) {
+    if (provider.id === "openai-oauth" && oauthModelsForProvider.length === 0) {
       baseModels = getOpenAIOAuthFallbackModels();
     }
 
-    const mergedModels = [...baseModels, ...oauthModelsForProvider, ...customModelsForProvider].filter((model, index, list) =>
-      list.findIndex(m => m.id === model.id) === index
+    const mergedModels = [
+      ...baseModels,
+      ...oauthModelsForProvider,
+      ...customModelsForProvider,
+    ].filter(
+      (model, index, list) =>
+        list.findIndex((m) => m.id === model.id) === index,
     );
 
-    if (customModelsForProvider.length > 0 || oauthModelsForProvider.length > 0 || provider.id === 'openai-oauth') {
+    if (
+      customModelsForProvider.length > 0 ||
+      oauthModelsForProvider.length > 0 ||
+      provider.id === "openai-oauth"
+    ) {
       return {
         ...provider,
-        models: mergedModels
+        models: mergedModels,
       };
     }
     return provider;
@@ -368,8 +559,11 @@ function getAllProvidersFromConfig(config: MosaicConfig, options?: { includeOAut
   return [...mergedProviders, ...customProviders];
 }
 
-function getProviderByIdFromConfig(id: string, config: MosaicConfig): AIProvider | undefined {
-  return getAllProvidersFromConfig(config).find(p => p.id === id);
+function getProviderByIdFromConfig(
+  id: string,
+  config: MosaicConfig,
+): AIProvider | undefined {
+  return getAllProvidersFromConfig(config).find((p) => p.id === id);
 }
 
 function hasAuthForProvider(providerId: string, config: MosaicConfig): boolean {
@@ -389,7 +583,9 @@ function hasAuthForProvider(providerId: string, config: MosaicConfig): boolean {
   return false;
 }
 
-function getConfiguredLightweightRoute(config: MosaicConfig): LightweightRoute | undefined {
+function getConfiguredLightweightRoute(
+  config: MosaicConfig,
+): LightweightRoute | undefined {
   const configuredProviderId = config.lightweightRoute?.provider?.trim();
   const configuredModelId = config.lightweightRoute?.model?.trim();
   if (!configuredProviderId || !configuredModelId) {
@@ -401,14 +597,14 @@ function getConfiguredLightweightRoute(config: MosaicConfig): LightweightRoute |
     return undefined;
   }
 
-  if (!provider.models.some(model => model.id === configuredModelId)) {
+  if (!provider.models.some((model) => model.id === configuredModelId)) {
     return undefined;
   }
 
   return {
     providerId: configuredProviderId,
     modelId: configuredModelId,
-    source: 'configured',
+    source: "configured",
   };
 }
 
@@ -438,12 +634,12 @@ export function readConfig(): MosaicConfig {
     return {
       firstRun: true,
       version: VERSION,
-      requireApprovals: true
+      requireApprovals: true,
     };
   }
 
   try {
-    const content = readFileSync(CONFIG_FILE, 'utf-8');
+    const content = readFileSync(CONFIG_FILE, "utf-8");
     const config = sanitizeLoadedConfig(JSON.parse(content));
 
     if (config.requireApprovals === undefined) {
@@ -453,41 +649,48 @@ export function readConfig(): MosaicConfig {
     return config;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      console.warn('Config file is corrupted. Resetting to default.');
+      console.warn("Config file is corrupted. Resetting to default.");
       try {
-        const { renameSync } = require('fs');
+        const { renameSync } = require("fs");
         renameSync(CONFIG_FILE, `${CONFIG_FILE}.bak`);
-      } catch { }
+      } catch {}
     }
     return {
       firstRun: true,
       version: VERSION,
-      requireApprovals: true
+      requireApprovals: true,
     };
   }
 }
 
 export function writeConfig(config: MosaicConfig): void {
   ensureConfigDir();
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
 }
 
 function readCodexModelReasoningEffort(): ReasoningEffort | undefined {
   try {
-    const content = readFileSync(CODEX_CONFIG_FILE, 'utf-8');
+    const content = readFileSync(CODEX_CONFIG_FILE, "utf-8");
     const match = content.match(/^\s*model_reasoning_effort\s*=\s*"([^"]+)"/m);
     const value = match?.[1]?.trim().toLowerCase();
     if (value && isReasoningEffort(value)) {
       return value;
     }
-  } catch {
-  }
+  } catch {}
   return undefined;
 }
 
-export function getAvailableReasoningEfforts(providerId?: string, modelId?: string): readonly ReasoningEffort[] {
-  if (providerId === 'openai' || providerId === 'openai-oauth' || providerId === 'xai' || providerId === 'openrouter') {
-    return ['low', 'medium', 'high'];
+export function getAvailableReasoningEfforts(
+  providerId?: string,
+  modelId?: string,
+): readonly ReasoningEffort[] {
+  if (
+    providerId === "openai" ||
+    providerId === "openai-oauth" ||
+    providerId === "xai" ||
+    providerId === "openrouter"
+  ) {
+    return ["low", "medium", "high"];
   }
   return REASONING_EFFORTS;
 }
@@ -497,7 +700,7 @@ export function getCodexModelReasoningEffort(): ReasoningEffort | undefined {
 }
 
 export function getDefaultModelReasoningEffort(): ReasoningEffort {
-  return readCodexModelReasoningEffort() ?? 'medium';
+  return readCodexModelReasoningEffort() ?? "medium";
 }
 
 export function getModelReasoningEffort(): ReasoningEffort {
@@ -508,12 +711,15 @@ export function getModelReasoningEffort(): ReasoningEffort {
   return getDefaultModelReasoningEffort();
 }
 
-export function getModelReasoningEffortSource(): 'mosaic' | 'codex' | 'default' {
+export function getModelReasoningEffortSource():
+  | "mosaic"
+  | "codex"
+  | "default" {
   const configured = readConfig().modelReasoningEffort;
   if (configured && isReasoningEffort(configured)) {
-    return 'mosaic';
+    return "mosaic";
   }
-  return readCodexModelReasoningEffort() ? 'codex' : 'default';
+  return readCodexModelReasoningEffort() ? "codex" : "default";
 }
 
 export function setModelReasoningEffort(effort: ReasoningEffort): void {
@@ -528,7 +734,11 @@ export function clearModelReasoningEffort(): void {
   writeConfig(config);
 }
 
-export function markFirstRunComplete(provider: string, model: string, apiKey?: string): void {
+export function markFirstRunComplete(
+  provider: string,
+  model: string,
+  apiKey?: string,
+): void {
   const config = readConfig();
   config.firstRun = false;
   config.provider = provider;
@@ -561,7 +771,9 @@ export function getConfigDir(): string {
   return CONFIG_DIR;
 }
 
-export function getAllProviders(options?: { includeOAuthModels?: boolean }): AIProvider[] {
+export function getAllProviders(options?: {
+  includeOAuthModels?: boolean;
+}): AIProvider[] {
   const config = readConfig();
   return getAllProvidersFromConfig(config, options);
 }
@@ -570,7 +782,9 @@ export function getProviderById(id: string): AIProvider | undefined {
   return getProviderByIdFromConfig(id, readConfig());
 }
 
-export function getPreferredModelForProvider(providerId: string): string | undefined {
+export function getPreferredModelForProvider(
+  providerId: string,
+): string | undefined {
   const config = readConfig();
   if (config.apiModels?.[providerId]) {
     return config.apiModels[providerId];
@@ -603,69 +817,84 @@ export function getLightweightRoute(
     return {
       providerId,
       modelId: currentModelId ?? providerId,
-      source: 'current_model',
+      source: "current_model",
     };
   }
 
   const preferred = LIGHTWEIGHT_PROVIDER_MODELS[providerId];
-  if (preferred && provider.models.some(model => model.id === preferred)) {
+  if (preferred && provider.models.some((model) => model.id === preferred)) {
     return {
       providerId,
       modelId: preferred,
-      source: 'provider_default',
+      source: "provider_default",
     };
   }
 
-  const normalizedCurrent = currentModelId && provider.models.some(model => model.id === currentModelId)
-    ? currentModelId
-    : undefined;
-  if (normalizedCurrent && provider.models.some(model => model.id === normalizedCurrent)) {
+  const normalizedCurrent =
+    currentModelId &&
+    provider.models.some((model) => model.id === currentModelId)
+      ? currentModelId
+      : undefined;
+  if (
+    normalizedCurrent &&
+    provider.models.some((model) => model.id === normalizedCurrent)
+  ) {
     return {
       providerId,
       modelId: normalizedCurrent,
-      source: 'current_model',
+      source: "current_model",
     };
   }
 
   return {
     providerId,
-    modelId: provider.models[0]?.id ?? normalizedCurrent ?? currentModelId ?? providerId,
-    source: 'provider_first',
+    modelId:
+      provider.models[0]?.id ??
+      normalizedCurrent ??
+      currentModelId ??
+      providerId,
+    source: "provider_first",
   };
 }
 
-export function normalizeModelForProvider(providerId: string, modelId?: string): string | undefined {
+export function normalizeModelForProvider(
+  providerId: string,
+  modelId?: string,
+): string | undefined {
   const provider = getProviderById(providerId);
   if (!provider) return modelId;
-  
+
   const config = readConfig();
 
-  // If a specific modelId is requested and it's valid for this provider, use it.
   if (modelId) {
-    if (provider.models.some(model => model.id === modelId)) {
+    if (provider.models.some((model) => model.id === modelId)) {
       return modelId;
     }
   }
 
-  // Fallback to preferred model for this provider if it exists and is valid.
   const preferred = config.apiModels?.[providerId];
-  if (preferred && provider.models.some(m => m.id === preferred)) {
+  if (preferred && provider.models.some((m) => m.id === preferred)) {
     return preferred;
   }
 
-  // Final fallback to the provider's first model.
   return provider.models[0]?.id ?? modelId;
 }
 
-export function getModelById(providerId: string, modelId: string): AIModel | undefined {
+export function getModelById(
+  providerId: string,
+  modelId: string,
+): AIModel | undefined {
   const provider = getProviderById(providerId);
-  return provider?.models.find(m => m.id === modelId);
+  return provider?.models.find((m) => m.id === modelId);
 }
 
-export function modelRequiresApiKey(providerId: string, modelId: string): boolean {
+export function modelRequiresApiKey(
+  providerId: string,
+  modelId: string,
+): boolean {
   const provider = getProviderById(providerId);
   const model = getModelById(providerId, modelId);
-  
+
   if (model?.requiresApiKey !== undefined) {
     return model.requiresApiKey === true;
   }
@@ -685,17 +914,23 @@ export function addCustomProvider(provider: CustomProvider): void {
 export function removeCustomProvider(id: string): void {
   const config = readConfig();
   if (config.customProviders) {
-    config.customProviders = config.customProviders.filter(p => p.id !== id);
+    config.customProviders = config.customProviders.filter((p) => p.id !== id);
     writeConfig(config);
   }
 }
 
-export function updateCustomProvider(id: string, updates: Partial<CustomProvider>): void {
+export function updateCustomProvider(
+  id: string,
+  updates: Partial<CustomProvider>,
+): void {
   const config = readConfig();
   if (config.customProviders) {
-    const index = config.customProviders.findIndex(p => p.id === id);
+    const index = config.customProviders.findIndex((p) => p.id === id);
     if (index !== -1) {
-      config.customProviders[index] = { ...config.customProviders[index]!, ...updates };
+      config.customProviders[index] = {
+        ...config.customProviders[index]!,
+        ...updates,
+      };
       writeConfig(config);
     }
   }
@@ -713,14 +948,18 @@ export function addCustomModel(providerId: string, model: AIModel): void {
   writeConfig(config);
 }
 
-export function setOAuthModelsForProvider(providerId: string, models: AIModel[]): void {
+export function setOAuthModelsForProvider(
+  providerId: string,
+  models: AIModel[],
+): void {
   const config = readConfig();
   if (!config.oauthModels) {
     config.oauthModels = {};
   }
-  config.oauthModels[providerId] = providerId === 'openai-oauth'
-    ? sanitizeOpenAIOAuthCatalogModels(models)
-    : models;
+  config.oauthModels[providerId] =
+    providerId === "openai-oauth"
+      ? sanitizeOpenAIOAuthCatalogModels(models)
+      : models;
   writeConfig(config);
 }
 
@@ -732,7 +971,9 @@ export function getOAuthModelsForProvider(providerId: string): AIModel[] {
 export function removeCustomModel(providerId: string, modelId: string): void {
   const config = readConfig();
   if (config.customModels && config.customModels[providerId]) {
-    config.customModels[providerId] = config.customModels[providerId].filter(m => m.id !== modelId);
+    config.customModels[providerId] = config.customModels[providerId].filter(
+      (m) => m.id !== modelId,
+    );
     writeConfig(config);
   }
 }
@@ -775,14 +1016,14 @@ export function addRecentProject(projectPath: string): void {
   const config = readConfig();
   const recentProjects = config.recentProjects || [];
 
-  const existingIndex = recentProjects.findIndex(p => p.path === projectPath);
+  const existingIndex = recentProjects.findIndex((p) => p.path === projectPath);
   if (existingIndex !== -1) {
     recentProjects.splice(existingIndex, 1);
   }
 
   recentProjects.unshift({
     path: projectPath,
-    lastOpened: Date.now()
+    lastOpened: Date.now(),
   });
 
   if (recentProjects.length > MAX_RECENT_PROJECTS) {
@@ -796,7 +1037,9 @@ export function addRecentProject(projectPath: string): void {
 export function removeRecentProject(projectPath: string): void {
   const config = readConfig();
   if (config.recentProjects) {
-    config.recentProjects = config.recentProjects.filter(p => p.path !== projectPath);
+    config.recentProjects = config.recentProjects.filter(
+      (p) => p.path !== projectPath,
+    );
     writeConfig(config);
   }
 }
@@ -809,15 +1052,23 @@ export function clearRecentProjects(): void {
 
 export function getApiKeyForProvider(providerId: string): string | undefined {
   const config = readConfig();
-  return config.apiKeys?.[providerId] ?? (config.provider === providerId ? config.apiKey : undefined);
+  return (
+    config.apiKeys?.[providerId] ??
+    (config.provider === providerId ? config.apiKey : undefined)
+  );
 }
 
-export function getOAuthTokenForProvider(providerId: string): OAuthTokenState | undefined {
+export function getOAuthTokenForProvider(
+  providerId: string,
+): OAuthTokenState | undefined {
   const config = readConfig();
   return config.oauthTokens?.[providerId];
 }
 
-export function setOAuthTokenForProvider(providerId: string, token: OAuthTokenState): void {
+export function setOAuthTokenForProvider(
+  providerId: string,
+  token: OAuthTokenState,
+): void {
   const config = readConfig();
   if (!config.oauthTokens) config.oauthTokens = {};
   config.oauthTokens[providerId] = token;
@@ -832,14 +1083,23 @@ export function removeOAuthTokenForProvider(providerId: string): void {
   writeConfig(config);
 }
 
-export function getAuthForProvider(providerId: string):
-  | { type: 'api_key'; apiKey: string }
-  | { type: 'oauth'; accessToken: string; refreshToken?: string; expiresAt?: number; tokenType?: string; scope?: string }
+export function getAuthForProvider(
+  providerId: string,
+):
+  | { type: "api_key"; apiKey: string }
+  | {
+      type: "oauth";
+      accessToken: string;
+      refreshToken?: string;
+      expiresAt?: number;
+      tokenType?: string;
+      scope?: string;
+    }
   | undefined {
   const oauth = getOAuthTokenForProvider(providerId);
   if (oauth?.accessToken) {
     return {
-      type: 'oauth',
+      type: "oauth",
       accessToken: oauth.accessToken,
       refreshToken: oauth.refreshToken,
       expiresAt: oauth.expiresAt,
@@ -848,12 +1108,12 @@ export function getAuthForProvider(providerId: string):
     };
   }
   const apiKey = getApiKeyForProvider(providerId);
-  if (apiKey) return { type: 'api_key', apiKey };
+  if (apiKey) return { type: "api_key", apiKey };
   return undefined;
 }
 
 export function mapModelForOAuth(modelId: string): string {
-  return modelId; // Handled by provider classes now
+  return modelId;
 }
 
 export function getSupportedOpenAIOAuthModels(): readonly string[] {
@@ -862,13 +1122,20 @@ export function getSupportedOpenAIOAuthModels(): readonly string[] {
 
 export function isSupportedOpenAIOAuthModel(modelId: string): boolean {
   const id = modelId.toLowerCase().trim();
-  return getSupportedOpenAIOAuthModels().some(model => model.toLowerCase() === id);
+  return getSupportedOpenAIOAuthModels().some(
+    (model) => model.toLowerCase() === id,
+  );
 }
 
-function normalizeOpenAIOAuthModelId(modelId: string | undefined, supportedModels: readonly string[]): string | undefined {
+function normalizeOpenAIOAuthModelId(
+  modelId: string | undefined,
+  supportedModels: readonly string[],
+): string | undefined {
   const raw = modelId?.trim();
   if (!raw) return undefined;
-  const supported = new Set(supportedModels.map(model => model.toLowerCase()));
+  const supported = new Set(
+    supportedModels.map((model) => model.toLowerCase()),
+  );
 
   if (supported.has(raw.toLowerCase())) {
     return raw;
@@ -881,8 +1148,8 @@ function normalizeOpenAIOAuthModelId(modelId: string | undefined, supportedModel
 
   const lowered = raw.toLowerCase();
   const aliases: Record<string, string> = {
-    'gpt-5.4-2026-03-25': 'gpt-5.4',
-    'gpt-5.2-2025-12-11': 'gpt-5.2',
+    "gpt-5.4-2026-03-25": "gpt-5.4",
+    "gpt-5.2-2025-12-11": "gpt-5.2",
   };
   const mapped = aliases[lowered];
   if (mapped && supported.has(mapped.toLowerCase())) {
@@ -936,12 +1203,12 @@ export function setActiveProvider(providerId: string): void {
   const config = readConfig();
   config.provider = providerId;
   config.apiKey = config.apiKeys?.[providerId];
-  
+
   const preferredModel = config.apiModels?.[providerId];
   if (preferredModel) {
     config.model = preferredModel;
   }
-  
+
   writeConfig(config);
 }
 
@@ -961,11 +1228,13 @@ export function setLightweightRoute(providerId: string, modelId: string): void {
   if (!provider) {
     throw new Error(`Unknown provider: ${providerId}`);
   }
-  if (!provider.models.some(model => model.id === modelId)) {
+  if (!provider.models.some((model) => model.id === modelId)) {
     throw new Error(`Unknown model "${modelId}" for provider "${providerId}"`);
   }
   if (!hasAuthForProvider(providerId, config)) {
-    throw new Error(`Provider "${providerId}" is not available for lightweight routing.`);
+    throw new Error(
+      `Provider "${providerId}" is not available for lightweight routing.`,
+    );
   }
   config.lightweightRoute = {
     provider: providerId,
@@ -991,8 +1260,18 @@ export function setThinkingCollapsed(collapsed: boolean): void {
   writeConfig(config);
 }
 
-export function getConfiguredLightweightRouteSelection(
-  options?: { config?: MosaicConfig },
-): LightweightRoute | undefined {
+export function getConfiguredLightweightRouteSelection(options?: {
+  config?: MosaicConfig;
+}): LightweightRoute | undefined {
   return getConfiguredLightweightRoute(options?.config ?? readConfig());
+}
+
+export function getPreferredSubsystem(): string {
+  return readConfig().preferredSubsystem || "auto";
+}
+
+export function setPreferredSubsystem(subsystem: string): void {
+  const config = readConfig();
+  config.preferredSubsystem = subsystem;
+  writeConfig(config);
 }
