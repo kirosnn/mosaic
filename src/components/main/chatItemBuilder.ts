@@ -180,6 +180,10 @@ export interface BuildChatItemsParams {
   approvalRequest: ApprovalRequest | null;
 }
 
+function isCommandMessage(_message: Message, messageRole: Message['role'] | Message['displayRole']): boolean {
+  return messageRole === 'slash';
+}
+
 function wrapToolDiffLine(line: string, maxWidth: number): string[] {
   const match = line.match(/^([+-])\s*(\d+)\s*\|?\s*(.*)$/);
   if (!match) return wrapText(line, maxWidth);
@@ -228,8 +232,10 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       ? { messageId: message.id, messageIndex, userMessageText, userMessageImages }
       : null;
     const compactTool = messageRole === 'tool' && isCompactTool(message.toolName);
+    const commandMessage = isCommandMessage(message, messageRole);
     const shouldPadMessage = (messageRole === 'user' || messageRole === 'slash')
       && Boolean((message.displayContent ?? message.content) || (message.images && message.images.length > 0))
+      && !commandMessage
       && !compactTool;
 
     if (shouldPadMessage) {
