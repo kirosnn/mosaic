@@ -28,6 +28,11 @@ export interface ConversationHistory {
     prompt: number;
     completion: number;
     total: number;
+    breakdown?: {
+      reasoning?: number;
+      tools?: number;
+      output?: number;
+    };
   };
   model?: string;
   provider?: string;
