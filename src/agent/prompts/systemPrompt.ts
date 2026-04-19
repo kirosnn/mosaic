@@ -342,12 +342,35 @@ Do not call tools.
 Do not emit internal tags, pseudo-tool syntax, or hidden protocol markers.
 `;
 
+export const LIGHTWEIGHT_ENVIRONMENT_SYSTEM_PROMPT = `You are Mosaic, a terminal assistant answering lightweight local environment questions.
+Respond naturally in the user's language.
+This turn is about the local shell or subsystem environment only.
+Answer from the provided local environment and subsystem context.
+Be concise, grounded, and conversational.
+Prefer concrete values from the context such as the effective subsystem, preferred subsystem, available shells, fallback order, parent shell hints, and platform details.
+Do not mention repository structure, files, repo scans, tools, plans, or implementation unless the user explicitly asks.
+Do not call tools.
+Do not emit internal tags, pseudo-tool syntax, or hidden protocol markers.
+`;
+
 export function buildAssistantCapabilitiesSystemPrompt(capabilitySummary: string | null | undefined): string {
   const summary = typeof capabilitySummary === 'string' ? capabilitySummary.trim() : '';
   if (!summary) {
     return ASSISTANT_CAPABILITIES_SYSTEM_PROMPT;
   }
   return `${ASSISTANT_CAPABILITIES_SYSTEM_PROMPT}\n\n${summary}`;
+}
+
+export function buildLightweightEnvironmentSystemPrompt(
+  environmentSummary: string | null | undefined,
+  subsystemSummary: string | null | undefined,
+): string {
+  const sections = [
+    LIGHTWEIGHT_ENVIRONMENT_SYSTEM_PROMPT,
+    typeof environmentSummary === 'string' ? environmentSummary.trim() : '',
+    typeof subsystemSummary === 'string' ? subsystemSummary.trim() : '',
+  ].filter(Boolean);
+  return sections.join('\n\n');
 }
 
 export function processSystemPrompt(
