@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { classifyShellCapability } from '../capabilities';
+import { classifyShellCapability, resolveCapabilityApproval } from '../capabilities';
 
 describe('shell capability classification', () => {
   it('auto-allows safe compound read-only git chains', () => {
@@ -27,5 +27,19 @@ describe('shell capability classification', () => {
     );
 
     expect(capability).toBe('shell_read_only');
+  });
+
+  it('keeps read-only shell inspection auto-allowed while execution stays configurable', () => {
+    expect(resolveCapabilityApproval('shell_read_only', true)).toEqual({
+      capability: 'shell_read_only',
+      requiresApproval: false,
+      policy: 'auto_allow',
+    });
+
+    expect(resolveCapabilityApproval('shell_execute', true)).toEqual({
+      capability: 'shell_execute',
+      requiresApproval: true,
+      policy: 'configurable',
+    });
   });
 });
