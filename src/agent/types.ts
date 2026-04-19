@@ -17,6 +17,7 @@ export type AgentEventType =
   | 'tool-result'
   | 'step-start'
   | 'step-finish'
+  | 'fallback'
   | 'finish'
   | 'error';
 
@@ -97,12 +98,22 @@ export interface FinishEvent extends BaseEvent {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    // Normalized breakdown for honest accounting
+    reasoningTokens?: number;
+    toolTokens?: number;
   };
 }
 
 export interface ErrorEvent extends BaseEvent {
   type: 'error';
   error: string;
+}
+
+export interface FallbackEvent extends BaseEvent {
+  type: 'fallback';
+  provider: string;
+  model: string;
+  reason: string;
 }
 
 export type AgentEvent =
@@ -118,6 +129,7 @@ export type AgentEvent =
   | ToolResultEvent
   | StepStartEvent
   | StepFinishEvent
+  | FallbackEvent
   | FinishEvent
   | ErrorEvent;
 
@@ -132,6 +144,7 @@ export interface ProviderConfig {
   maxSteps?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
+  isLightweight?: boolean;
 }
 
 export type ProviderAuth =
@@ -174,6 +187,7 @@ export interface AgentRuntimeContext {
   gitWorkspaceState?: GitWorkspaceState;
   taskModeDecision?: TaskModeDecision;
   assistantCapabilitySummary?: string;
+  environmentContextSummary?: string;
   contextMetrics?: {
     compiledContextChars: number;
     compactedContextSize: number;
