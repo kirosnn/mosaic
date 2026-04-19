@@ -47,7 +47,7 @@ Examples:
     query: z.string().describe('Regular expression pattern to search for'),
     file_type: z.string().optional().describe('File type or extension (e.g. ts, tsx, js, txt, .env). Unknown types are treated as extensions.'),
     pattern: z.string().optional().describe('Glob pattern for files (e.g., "**/*.config.ts"). Usually file_type is easier.'),
-    path: z.string().optional().describe('Directory to search (defaults to workspace root)'),
+    path: z.string().optional().describe('Directory to search. Relative paths resolve from the launch directory; absolute and home-directory paths are allowed.'),
     case_sensitive: z.boolean().optional().describe('Case-sensitive (default: false)'),
     whole_word: z.boolean().optional().describe('Match whole words only (default: false)'),
     context: z.number().optional().describe('Lines of context around matches (default: 0)'),
