@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useKeyboard } from "@opentui/react";
 import { addInputToHistory } from "../utils/history";
-import { readConfig } from "../utils/config";
+import { readConfig, setThinkingCollapsed } from "../utils/config";
 
 import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, parseToolHeader, getExploreToolInfo } from '../utils/toolFormatting';
 import { initializeCommands, isCommand, executeCommand } from '../utils/commands';
 import type { InputSubmitMeta } from './CustomInput';
 
-import { subscribeQuestion, type QuestionRequest } from "../utils/questionBridge";
+import { subscribeQuestion, answerQuestion, type QuestionRequest } from "../utils/questionBridge";
 import { subscribeApprovalAccepted } from "../utils/approvalBridge";
 import { setExploreToolCallback } from "../utils/exploreBridge";
 import { getCurrentQuestion, cancelQuestion } from "../utils/questionBridge";
@@ -38,11 +38,12 @@ import { ReviewPanel } from "./main/ReviewPanel";
 import { revertChange } from "../utils/revertChanges";
 import { CommandSelectMenu } from "./main/CommandSelectMenu";
 import type { CommandExecutionContext, SelectMenuConfig, SelectOption } from "../utils/commands/types";
+import { normalizeAssistantMessage } from "./main/assistantMessageState";
 
 export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsOpen = false, commandsOpen = false, initialMessage, initialMessages, initialTitle }: MainProps) {
   const hasRestoredSession = Boolean(initialMessages && initialMessages.length > 0);
   const [currentPage, setCurrentPage] = useState<"home" | "chat">(initialMessage || hasRestoredSession ? "chat" : "home");
-  const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
+  const [messages, setMessages] = useState<Message[]>(() => (initialMessages ?? []).map(normalizeAssistantMessage));
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [currentTokens, setCurrentTokens] = useState(0);
@@ -902,6 +903,10 @@ Analyze the output and continue. Do not run the same command again unless I expl
       shortcutsOpen={shortcutsOpen}
       onSelect={(value) => {
         const option = selectMenu.options.find(opt => opt.value === value);
+        if (option) {
+          addInputToHistory(option.name || String(option.value));
+          setHistoryVersion(v => v + 1);
+        }
         const selectionResult = selectMenu.onSelect(value);
         const nextMenu = selectionResult && typeof selectionResult === "object" ? selectionResult.nextMenu : undefined;
         const closeMenu = !(selectionResult && typeof selectionResult === "object" && selectionResult.closeMenu === false);
@@ -932,6 +937,32 @@ Analyze the output and continue. Do not run the same command again unless I expl
     />
   ) : undefined;
 
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const handleToggleThinking = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id === messageId) {
+        const nextCollapsed = !m.thinkingCollapsed;
+        setThinkingCollapsed(nextCollapsed);
+        return { ...m, thinkingCollapsed: nextCollapsed };
+      }
+      return m;
+    }));
+  }, []);
+
+  const handleAnswerQuestion = useCallback((index: number, customText?: string) => {
+    const question = getCurrentQuestion();
+    if (question) {
+      const option = question.options[index];
+      const textToAdd = customText || option?.label;
+      if (textToAdd) {
+        addInputToHistory(textToAdd);
+        setHistoryVersion(v => v + 1);
+      }
+    }
+    answerQuestion(index, customText);
+  }, []);
+
   return (
     <ChatPage
       messages={messages}
@@ -948,6 +979,9 @@ Analyze the output and continue. Do not run the same command again unless I expl
       onSubmit={handleSubmit}
       onCopyMessage={onCopy}
       onResubmitUserMessage={handleResubmitUserMessage}
+      onToggleThinking={handleToggleThinking}
+      onAnswer={handleAnswerQuestion}
+      historyVersion={historyVersion}
       pendingImages={pendingImages}
       chatError={chatError}
       reviewPanel={reviewPanelElement}
