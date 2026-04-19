@@ -21,6 +21,8 @@ import { buildChatItems, getPlanProgress, type RenderItem } from "./chatItemBuil
 import { UserMessageModal, type UserMessageModalState } from "./UserMessageModal";
 import { wrapText } from "./wrapText";
 import { getAllProviders } from "../../utils/config";
+import { ReasoningPanel } from "./ReasoningPanel";
+import { getDefaultThinkingCollapsed } from "./assistantMessageState";
 
 const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
   keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
@@ -334,6 +336,9 @@ interface ChatPageProps {
   reviewMenu?: React.ReactNode;
   selectMenu?: React.ReactNode;
   onModalOpenChange?: (open: boolean) => void;
+  onToggleThinking?: (messageId: string) => void;
+  onAnswer?: (index: number, customText?: string) => void;
+  historyVersion?: number;
 }
 
 export function ChatPage({
@@ -356,6 +361,9 @@ export function ChatPage({
   reviewMenu,
   selectMenu,
   onModalOpenChange,
+  onToggleThinking,
+  onAnswer,
+  historyVersion,
 }: ChatPageProps) {
   const maxWidth = Math.max(20, terminalWidth - 6);
   const renderer = useRenderer();
@@ -571,7 +579,7 @@ export function ChatPage({
                 <QuestionPanel
                   request={req}
                   disabled={shortcutsOpen}
-                  onAnswer={(index, customText) => answerQuestion(index, customText)}
+                  onAnswer={(index, customText) => onAnswer ? onAnswer(index, customText) : answerQuestion(index, customText)}
                   maxWidth={Math.max(10, terminalWidth - 4)}
                 />
               </box>
@@ -600,6 +608,17 @@ export function ChatPage({
 
           if (item.type === 'blend') {
             return null;
+          }
+
+          if (item.type === 'reasoning') {
+            return (
+              <ReasoningPanel
+                key={item.key}
+                blocks={item.reasoningBlocks ?? []}
+                collapsed={item.thinkingCollapsed ?? getDefaultThinkingCollapsed()}
+                onToggle={() => item.messageId && onToggleThinking?.(item.messageId)}
+                isStreaming={item.thinkingRunning}
+              />            );
           }
 
           const showErrorBar = item.role === "assistant" && item.isError && item.isFirst && item.content;
@@ -689,8 +708,6 @@ export function ChatPage({
                 })()
               ) : item.isHorizontalRule ? (
                 <text fg="#3a3a3a">{'─'.repeat(Math.max(0, terminalWidth - 4))}</text>
-              ) : item.isThinking ? (
-                <text fg="#9a9a9a" attributes={TextAttributes.DIM | TextAttributes.ITALIC}>{`${' '.repeat(item.indent || 0)}${item.content || ' '}`}</text>
               ) : item.isCodeBlock ? (
                 <box flexDirection="column" paddingTop={1} paddingBottom={1} paddingLeft={1}>
                   <code
@@ -819,6 +836,7 @@ export function ChatPage({
               pasteRequestId={(shortcutsOpen || isUserModalOpen) ? 0 : pasteRequestId}
               submitDisabled={isProcessing || shortcutsOpen || Boolean(questionRequest) || Boolean(approvalRequest) || Boolean(reviewPanel) || isUserModalOpen || Boolean(selectMenu)}
               maxWidth={Math.max(10, terminalWidth - 6)}
+              historyVersion={historyVersion}
             />
           </box>
         </box>
