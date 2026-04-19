@@ -1,21 +1,60 @@
 import { Agent, type AgentMessage } from "../../agent";
 import type { AgentRuntimeContext } from "../../agent/types";
-import { saveConversation, type ConversationHistory, type ConversationStep } from "../../utils/history";
+import {
+  saveConversation,
+  type ConversationHistory,
+  type ConversationStep,
+} from "../../utils/history";
 import { readConfig } from "../../utils/config";
-import { DEFAULT_MAX_TOOL_LINES, formatToolMessage, formatErrorMessage, parseToolHeader, normalizeToolCall } from "../../utils/toolFormatting";
+import {
+  DEFAULT_MAX_TOOL_LINES,
+  formatToolMessage,
+  formatErrorMessage,
+  parseToolHeader,
+  normalizeToolCall,
+} from "../../utils/toolFormatting";
 import { setExploreAbortController } from "../../utils/exploreBridge";
 import { BLEND_WORDS, type Message, type TokenBreakdown } from "./types";
-import { extractTitle, extractTitleFromToolResult, setTerminalTitle } from "./titleUtils";
-import { buildCompactionDisplay, compactMessagesForUi, estimateTotalTokens, shouldAutoCompact } from "./compaction";
-import { buildAssistantCapabilitiesSystemPrompt, DEFAULT_SYSTEM_PROMPT, LIGHTWEIGHT_CHAT_SYSTEM_PROMPT, processSystemPrompt } from "../../agent/prompts/systemPrompt";
+import {
+  extractTitle,
+  extractTitleFromToolResult,
+  setTerminalTitle,
+} from "./titleUtils";
+import {
+  buildCompactionDisplay,
+  compactMessagesForUi,
+  estimateTotalTokens,
+  shouldAutoCompact,
+} from "./compaction";
+import {
+  buildAssistantCapabilitiesSystemPrompt,
+  buildLightweightEnvironmentSystemPrompt,
+  DEFAULT_SYSTEM_PROMPT,
+  LIGHTWEIGHT_CHAT_SYSTEM_PROMPT,
+  processSystemPrompt,
+} from "../../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../../utils/tokenEstimator";
 import { getModelsDevContextLimit } from "../../utils/models";
 import { sanitizeAccumulatedText } from "../../agent/provider/streamSanitizer";
 import { debugLog } from "../../utils/debug";
-import { hasPendingChanges, cancelReview, isInReviewMode, startReview } from "../../utils/pendingChangesBridge";
+import {
+  hasPendingChanges,
+  cancelReview,
+  isInReviewMode,
+  startReview,
+} from "../../utils/pendingChangesBridge";
 import type { ImageAttachment } from "../../utils/images";
-import { shouldEnableReasoning, supportsReasoningEffort } from "../../agent/provider/reasoning";
-import { finishRuntimeMetrics, markFirstUsefulAnswer, recordPromptTokens, recordToolMetrics, startRuntimeMetrics } from "../../agent/runtimeMetrics";
+import {
+  shouldEnableReasoning,
+  supportsReasoningEffort,
+} from "../../agent/provider/reasoning";
+import {
+  finishRuntimeMetrics,
+  markFirstUsefulAnswer,
+  recordPromptTokens,
+  recordToolMetrics,
+  startRuntimeMetrics,
+} from "../../agent/runtimeMetrics";
 import { runTaskLifecycleStage } from "../../agent/lifecycle";
 import { isLightweightTaskMode } from "../../agent/taskMode";
 import { applyToolResultToContinuationLedger } from "../../agent/continuationLedger";
@@ -27,9 +66,9 @@ const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
 
 function toLogPreview(value: string, maxChars: number): string {
   const normalized = value
-    .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n')
-    .replace(/\t/g, '\\t')
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")
     .replace(/"/g, "'");
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, Math.max(0, maxChars - 3))}...`;
@@ -41,9 +80,9 @@ function summarizeContinuationHistory(history: AgentMessage[]): string {
   let tool = 0;
   let other = 0;
   for (const entry of history) {
-    if (entry.role === 'user') user++;
-    else if (entry.role === 'assistant') assistant++;
-    else if (entry.role === 'tool') tool++;
+    if (entry.role === "user") user++;
+    else if (entry.role === "assistant") assistant++;
+    else if (entry.role === "tool") tool++;
     else other++;
   }
   return `len=${history.length} roles={user:${user},assistant:${assistant},tool:${tool},other:${other}}`;
@@ -51,10 +90,14 @@ function summarizeContinuationHistory(history: AgentMessage[]): string {
 
 function countDiscoveredFiles(result: unknown): number {
   try {
-    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    const parsed = typeof result === "string" ? JSON.parse(result) : result;
     if (Array.isArray(parsed)) return parsed.length;
-    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { files?: unknown[] }).files)) {
-      return ((parsed as { files: unknown[] }).files).length;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { files?: unknown[] }).files)
+    ) {
+      return (parsed as { files: unknown[] }).files.length;
     }
   } catch {}
   return 0;
@@ -66,7 +109,7 @@ function pushContinuationToolContext(
   toolName: string,
   toolArgs: Record<string, unknown>,
   toolResult: unknown,
-  success: boolean
+  success: boolean,
 ): void {
   applyToolResultToContinuationLedger(
     history,
@@ -79,17 +122,23 @@ function pushContinuationToolContext(
   );
 }
 
-function extractPlanFromMessages(messages: Message[]): { steps: Array<{ step: string; status: string }> } | null {
+function extractPlanFromMessages(
+  messages: Message[],
+): { steps: Array<{ step: string; status: string }> } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.role !== 'tool' || m.toolName !== 'plan') continue;
+    if (m.role !== "tool" || m.toolName !== "plan") continue;
     const result = m.toolResult;
-    if (result && typeof result === 'object' && Array.isArray((result as any).plan)) {
+    if (
+      result &&
+      typeof result === "object" &&
+      Array.isArray((result as any).plan)
+    ) {
       const plan = (result as any).plan;
       const steps = plan
         .map((s: any) => ({
-          step: typeof s.step === 'string' ? s.step : '',
-          status: typeof s.status === 'string' ? s.status : 'pending',
+          step: typeof s.step === "string" ? s.step : "",
+          status: typeof s.status === "string" ? s.status : "pending",
         }))
         .filter((s: any) => s.step.trim());
       if (steps.length > 0) return { steps };
@@ -101,18 +150,27 @@ function extractPlanFromMessages(messages: Message[]): { steps: Array<{ step: st
 function hasPendingPlanSteps(messages: Message[]): boolean {
   const plan = extractPlanFromMessages(messages);
   if (!plan) return false;
-  return plan.steps.some(s => s.status !== 'completed');
+  return plan.steps.some((s) => s.status !== "completed");
 }
 
-function extractPlanFromSteps(steps: ConversationStep[]): { steps: Array<{ step: string; status: string }> } | null {
+function extractPlanFromSteps(
+  steps: ConversationStep[],
+): { steps: Array<{ step: string; status: string }> } | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     const s = steps[i]!;
-    if (s.type !== 'tool' || s.toolName !== 'plan') continue;
+    if (s.type !== "tool" || s.toolName !== "plan") continue;
     const result = s.toolResult;
-    if (result && typeof result === 'object' && Array.isArray((result as any).plan)) {
+    if (
+      result &&
+      typeof result === "object" &&
+      Array.isArray((result as any).plan)
+    ) {
       const plan = (result as any).plan;
       const parsed = plan
-        .map((p: any) => ({ step: typeof p.step === 'string' ? p.step : '', status: typeof p.status === 'string' ? p.status : 'pending' }))
+        .map((p: any) => ({
+          step: typeof p.step === "string" ? p.step : "",
+          status: typeof p.status === "string" ? p.status : "pending",
+        }))
         .filter((p: any) => p.step.trim());
       if (parsed.length > 0) return { steps: parsed };
     }
@@ -123,31 +181,31 @@ function extractPlanFromSteps(steps: ConversationStep[]): { steps: Array<{ step:
 function hasPendingStepsInConversation(steps: ConversationStep[]): boolean {
   const plan = extractPlanFromSteps(steps);
   if (!plan) return false;
-  return plan.steps.some(s => s.status !== 'completed');
+  return plan.steps.some((s) => s.status !== "completed");
 }
 
 function buildContinuationPromptFromSteps(steps: ConversationStep[]): string {
   const plan = extractPlanFromSteps(steps);
-  if (!plan) return '';
-  const pending = plan.steps.filter(s => s.status !== 'completed');
-  const completed = plan.steps.filter(s => s.status === 'completed');
-  const lines = pending.map(s => {
-    const marker = s.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
+  if (!plan) return "";
+  const pending = plan.steps.filter((s) => s.status !== "completed");
+  const completed = plan.steps.filter((s) => s.status === "completed");
+  const lines = pending.map((s) => {
+    const marker = s.status === "in_progress" ? "[IN PROGRESS]" : "[PENDING]";
     return `${marker} ${s.step}`;
   });
-  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join('\n')}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
+  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join("\n")}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
 }
 
 function buildContinuationPrompt(messages: Message[]): string {
   const plan = extractPlanFromMessages(messages);
-  if (!plan) return '';
-  const pending = plan.steps.filter(s => s.status !== 'completed');
-  const completed = plan.steps.filter(s => s.status === 'completed');
-  const lines = pending.map(s => {
-    const marker = s.status === 'in_progress' ? '[IN PROGRESS]' : '[PENDING]';
+  if (!plan) return "";
+  const pending = plan.steps.filter((s) => s.status !== "completed");
+  const completed = plan.steps.filter((s) => s.status === "completed");
+  const lines = pending.map((s) => {
+    const marker = s.status === "in_progress" ? "[IN PROGRESS]" : "[PENDING]";
     return `${marker} ${s.step}`;
   });
-  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join('\n')}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
+  return `You stopped before completing the task. ${completed.length}/${plan.steps.length} steps done.\n\nRemaining steps:\n${lines.join("\n")}\n\nContinue working. Do NOT re-explain what was already done. Pick up from the current in-progress or next pending step and keep going until everything is completed.`;
 }
 
 export interface AgentStreamCallbacks {
@@ -155,14 +213,18 @@ export interface AgentStreamCallbacks {
   setMessages: (updater: (prev: Message[]) => Message[]) => void;
   setChatError: (value: string | null) => void;
   setCurrentTokens: (updater: number | ((prev: number) => number)) => void;
-  setTokenBreakdown: (updater: TokenBreakdown | ((prev: TokenBreakdown) => TokenBreakdown)) => void;
+  setTokenBreakdown: (
+    updater: TokenBreakdown | ((prev: TokenBreakdown) => TokenBreakdown),
+  ) => void;
   setIsProcessing: (value: boolean) => void;
   setProcessingStartTime: (value: number | null) => void;
   setCurrentTitle: (title: string) => void;
   titleExtractedRef: React.MutableRefObject<boolean>;
   currentTitleRef: React.MutableRefObject<string | null>;
   lastPromptTokensRef: React.MutableRefObject<number>;
-  exploreToolsRef: React.MutableRefObject<Array<{ tool: string; info: string; success: boolean }>>;
+  exploreToolsRef: React.MutableRefObject<
+    Array<{ tool: string; info: string; success: boolean }>
+  >;
   explorePurposeRef: React.MutableRefObject<string>;
   exploreMessageIdRef: React.MutableRefObject<string | null>;
   disposedRef: React.MutableRefObject<boolean>;
@@ -185,7 +247,7 @@ export interface AgentStreamParams {
 
 export async function runAgentStream(
   params: AgentStreamParams,
-  callbacks: AgentStreamCallbacks
+  callbacks: AgentStreamCallbacks,
 ) {
   const {
     baseMessages,
@@ -228,12 +290,16 @@ export async function runAgentStream(
   let maxTokensSeen = 0;
 
   const conversationId = createId();
-  debugLog(`[agent] stream start conversationId=${conversationId} baseMessages=${baseMessages.length} historyLen=${conversationHistory.length} autoCompact=${autoCompact} userChars=${userStepContent.length} userImages=${userStepImages?.length ?? 0} preview="${toLogPreview(userStepContent, 1600)}"`);
+  debugLog(
+    `[agent] stream start conversationId=${conversationId} baseMessages=${baseMessages.length} historyLen=${conversationHistory.length} autoCompact=${autoCompact} userChars=${userStepContent.length} userImages=${userStepImages?.length ?? 0} preview="${toLogPreview(userStepContent, 1600)}"`,
+  );
   const conversationSteps: ConversationStep[] = [];
-  const continuationHistory: AgentMessage[] = conversationHistory.map((entry) => ({
-    role: entry.role,
-    content: entry.content,
-  }));
+  const continuationHistory: AgentMessage[] = conversationHistory.map(
+    (entry) => ({
+      role: entry.role,
+      content: entry.content,
+    }),
+  );
   const continuationToolLedger: string[] = [];
   let totalTokens = { prompt: 0, completion: 0, total: 0 };
   let stepCount = 0;
@@ -242,32 +308,38 @@ export async function runAgentStream(
   let outputChars = 0;
   let toolChars = 0;
   for (const m of baseMessages) {
-    if (m.role === 'assistant') {
+    if (m.role === "assistant") {
       totalChars += m.content.length;
       if (m.thinkingContent) totalChars += m.thinkingContent.length;
-    } else if (m.role === 'tool') {
+    } else if (m.role === "tool") {
       totalChars += m.content.length;
     }
   }
 
   const estimateTokens = () => Math.ceil(totalChars / 4);
-  const setCurrentTokensMonotonic = (updater: number | ((prev: number) => number)) => {
+  const setCurrentTokensMonotonic = (
+    updater: number | ((prev: number) => number),
+  ) => {
     setCurrentTokens((prev) => {
       const prevValue = typeof prev === "number" ? prev : 0;
-      const candidate = typeof updater === "function" ? updater(prevValue) : updater;
+      const candidate =
+        typeof updater === "function" ? updater(prevValue) : updater;
       const safeCandidate = Number.isFinite(candidate) ? candidate : prevValue;
       const next = Math.max(prevValue, safeCandidate, maxTokensSeen);
       maxTokensSeen = next;
       return next;
     });
   };
-  const allocateTokensByWeight = (total: number, weights: number[]): number[] => {
+  const allocateTokensByWeight = (
+    total: number,
+    weights: number[],
+  ): number[] => {
     if (total <= 0) return weights.map(() => 0);
     const cleaned = weights.map((w) => Math.max(0, w));
     const sum = cleaned.reduce((acc, w) => acc + w, 0);
     if (sum <= 0) {
       const base = Math.floor(total / cleaned.length);
-      const remainder = total - (base * cleaned.length);
+      const remainder = total - base * cleaned.length;
       return cleaned.map((_, i) => base + (i < remainder ? 1 : 0));
     }
 
@@ -295,14 +367,19 @@ export async function runAgentStream(
   };
   setCurrentTokensMonotonic(estimateTokens());
   const config = readConfig();
-  const isLightweightChat = isLightweightTaskMode(runtimeContext?.taskModeDecision?.mode);
+  const isLightweightHandling =
+    isLightweightTaskMode(runtimeContext?.taskModeDecision?.mode)
+    || runtimeContext?.environmentHandlingMode === "lightweight";
   let responseProvider = config.provider;
   let responseModel = config.model;
   let responseReasoningEffort: string | undefined;
 
-  const applyAssistantRunMetadataToSteps = (duration: number, blendWord?: string) => {
+  const applyAssistantRunMetadataToSteps = (
+    duration: number,
+    blendWord?: string,
+  ) => {
     for (let i = conversationSteps.length - 1; i >= 0; i--) {
-      if (conversationSteps[i]?.type === 'assistant') {
+      if (conversationSteps[i]?.type === "assistant") {
         conversationSteps[i] = {
           ...conversationSteps[i]!,
           responseDuration: duration,
@@ -315,11 +392,14 @@ export async function runAgentStream(
     }
   };
 
-  const applyAssistantRunMetadataToMessages = (duration: number, blendWord?: string) => {
+  const applyAssistantRunMetadataToMessages = (
+    duration: number,
+    blendWord?: string,
+  ) => {
     setMessages((prev: Message[]) => {
       const newMessages = [...prev];
       for (let i = newMessages.length - 1; i >= 0; i--) {
-        if (newMessages[i]?.role === 'assistant') {
+        if (newMessages[i]?.role === "assistant") {
           newMessages[i] = {
             ...newMessages[i]!,
             responseDuration: duration,
@@ -337,17 +417,29 @@ export async function runAgentStream(
   const resolveMaxContextTokens = async () => {
     if (config.maxContextTokens) return config.maxContextTokens;
     if (responseProvider && responseModel) {
-      const resolved = await getModelsDevContextLimit(responseProvider, responseModel);
+      const resolved = await getModelsDevContextLimit(
+        responseProvider,
+        responseModel,
+      );
       if (typeof resolved === "number") return resolved;
     }
     return undefined;
   };
 
   const buildSystemPrompt = () => {
-    if (runtimeContext?.taskModeDecision?.mode === 'assistant_capabilities') {
-      return buildAssistantCapabilitiesSystemPrompt(runtimeContext.assistantCapabilitySummary);
+    if (runtimeContext?.taskModeDecision?.mode === "assistant_capabilities") {
+      return buildAssistantCapabilitiesSystemPrompt(
+        runtimeContext.assistantCapabilitySummary,
+      );
     }
-    if (isLightweightChat) {
+    if (runtimeContext?.taskModeDecision?.mode === "environment_config"
+      && runtimeContext.environmentHandlingMode === "lightweight") {
+      return buildLightweightEnvironmentSystemPrompt(
+        runtimeContext.environmentContextSummary,
+        runtimeContext.subsystemContextSummary,
+      );
+    }
+    if (isLightweightHandling) {
       return LIGHTWEIGHT_CHAT_SYSTEM_PROMPT;
     }
     const rawSystemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
@@ -375,7 +467,9 @@ export async function runAgentStream(
     const cancelOnAbort = () => {
       cancelReview();
     };
-    abortController.signal.addEventListener('abort', cancelOnAbort, { once: true });
+    abortController.signal.addEventListener("abort", cancelOnAbort, {
+      once: true,
+    });
 
     try {
       const results = await startReview();
@@ -398,39 +492,45 @@ export async function runAgentStream(
 
       if (keptCount > 0 || revertedCount > 0) {
         const reviewSuccess = revertedCount === 0;
-        setMessages((prev: Message[]) => [...prev, {
-          id: createId(),
-          role: "tool",
-          toolName: "review",
-          content: reviewSuccess
-            ? `Review complete: ${keptCount} kept, ${revertedCount} denied`
-            : `Review rejected: ${keptCount} kept, ${revertedCount} denied`,
-          success: reviewSuccess,
-        }]);
+        setMessages((prev: Message[]) => [
+          ...prev,
+          {
+            id: createId(),
+            role: "tool",
+            toolName: "review",
+            content: reviewSuccess
+              ? `Review complete: ${keptCount} kept, ${revertedCount} denied`
+              : `Review rejected: ${keptCount} kept, ${revertedCount} denied`,
+            success: reviewSuccess,
+          },
+        ]);
       }
     } finally {
-      abortController.signal.removeEventListener('abort', cancelOnAbort);
+      abortController.signal.removeEventListener("abort", cancelOnAbort);
     }
   };
 
   conversationSteps.push({
-    type: 'user',
+    type: "user",
     content: userStepContent,
     timestamp: Date.now(),
     images: userStepImages,
   });
 
   let responseDuration: number | null = null;
-  let responseBlendWord: string | undefined = BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+  let responseBlendWord: string | undefined =
+    BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
 
   try {
     startRuntimeMetrics(runtimeContext);
-    await runTaskLifecycleStage('pre_run', { runtimeContext });
+    await runTaskLifecycleStage("pre_run", { runtimeContext });
     const providerStatus = await Agent.ensureProviderReady();
     if (!providerStatus.ready) {
-      const providerError = providerStatus.error || 'Provider is not ready. Check your local runtime and credentials.';
-      const errorContent = formatErrorMessage('API', providerError, {
-        source: 'provider',
+      const providerError =
+        providerStatus.error ||
+        "Provider is not ready. Check your local runtime and credentials.";
+      const errorContent = formatErrorMessage("API", providerError, {
+        source: "provider",
         provider: config.provider,
         model: config.model,
       });
@@ -445,7 +545,10 @@ export async function runAgentStream(
     responseModel = effectiveRun.model;
     if (responseModel && effectiveRun.reasoningEffort) {
       try {
-        responseReasoningEffort = await supportsReasoningEffort(responseProvider ?? '', responseModel)
+        responseReasoningEffort = (await supportsReasoningEffort(
+          responseProvider ?? "",
+          responseModel,
+        ))
           ? effectiveRun.reasoningEffort
           : undefined;
       } catch {
@@ -454,16 +557,22 @@ export async function runAgentStream(
     } else {
       responseReasoningEffort = undefined;
     }
-    let assistantChunk = '';
-    let thinkingChunk = '';
-    const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown>; messageId?: string }>();
+    let assistantChunk = "";
+    let thinkingChunk = "";
+    const pendingToolCalls = new Map<
+      string,
+      { toolName: string; args: Record<string, unknown>; messageId?: string }
+    >();
     let assistantMessageId: string | null = null;
     let streamHadError = false;
-    let lastFinishReason = 'stop';
+    let lastFinishReason = "stop";
     titleExtractedRef.current = false;
 
-    for await (const event of agent.streamMessages(conversationHistory, { abortSignal: abortController.signal, alreadyCompacted: true })) {
-      if (event.type === 'reasoning-delta') {
+    for await (const event of agent.streamMessages(conversationHistory, {
+      abortSignal: abortController.signal,
+      alreadyCompacted: true,
+    })) {
+      if (event.type === "reasoning-delta") {
         thinkingChunk += event.content;
         totalChars += event.content.length;
         reasoningChars += event.content.length;
@@ -481,7 +590,7 @@ export async function runAgentStream(
             thinkingRunning: true,
           });
         });
-      } else if (event.type === 'text-delta') {
+      } else if (event.type === "text-delta") {
         if (event.content.trim()) {
           markFirstUsefulAnswer();
         }
@@ -491,7 +600,8 @@ export async function runAgentStream(
         setCurrentTokensMonotonic(estimateTokens());
         updateBreakdown();
 
-        const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } = extractTitle(assistantChunk, titleExtractedRef.current);
+        const { title, cleanContent, isPending, noTitle, isTitlePseudoCall } =
+          extractTitle(assistantChunk, titleExtractedRef.current);
 
         if (title) {
           titleExtractedRef.current = true;
@@ -501,28 +611,33 @@ export async function runAgentStream(
           if (isTitlePseudoCall) {
             const toolArgs = { title } as Record<string, unknown>;
             const toolResult = { title } as Record<string, unknown>;
-            const { content: toolContent, success } = formatToolMessage('title', toolArgs, toolResult, { maxLines: DEFAULT_MAX_TOOL_LINES });
+            const { content: toolContent, success } = formatToolMessage(
+              "title",
+              toolArgs,
+              toolResult,
+              { maxLines: DEFAULT_MAX_TOOL_LINES },
+            );
             conversationSteps.push({
-              type: 'tool',
+              type: "tool",
               content: toolContent,
-              toolName: 'title',
+              toolName: "title",
               toolArgs,
               toolResult,
               timestamp: Date.now(),
             });
-            setMessages((prev: Message[]) => ([
+            setMessages((prev: Message[]) => [
               ...prev,
               {
                 id: createId(),
-                role: 'tool',
+                role: "tool",
                 content: toolContent,
-                toolName: 'title',
+                toolName: "title",
                 toolArgs,
                 toolResult,
                 success,
                 timestamp: Date.now(),
               },
-            ]));
+            ]);
           }
         } else if (noTitle) {
           titleExtractedRef.current = true;
@@ -535,17 +650,17 @@ export async function runAgentStream(
         }
 
         const displayContent = sanitizeAccumulatedText(cleanContent);
-          const currentMessageId = assistantMessageId;
-          setMessages((prev: Message[]) => {
-            return upsertAssistantMessage(prev, currentMessageId, {
-              content: displayContent,
-              thinkingContent: thinkingChunk,
-              thinkingRunning: false,
-            });
+        const currentMessageId = assistantMessageId;
+        setMessages((prev: Message[]) => {
+          return upsertAssistantMessage(prev, currentMessageId, {
+            content: displayContent,
+            thinkingContent: thinkingChunk,
+            thinkingRunning: false,
           });
-      } else if (event.type === 'step-start') {
+        });
+      } else if (event.type === "step-start") {
         stepCount++;
-      } else if (event.type === 'tool-call-end') {
+      } else if (event.type === "tool-call-end") {
         const argsLen = JSON.stringify(event.args).length;
         totalChars += argsLen;
         toolChars += argsLen;
@@ -555,14 +670,14 @@ export async function runAgentStream(
         const normalized = normalizeToolCall(event.toolName, event.args ?? {});
         const toolName = normalized.toolName;
         const toolArgs = normalized.args;
-        const isExploreTool = toolName === 'explore';
-        const isMcpTool = toolName.startsWith('mcp__');
+        const isExploreTool = toolName === "explore";
+        const isMcpTool = toolName.startsWith("mcp__");
         let runningMessageId: string | undefined;
 
         if (isExploreTool) {
           setExploreAbortController(abortController);
           exploreToolsRef.current = [];
-          const purpose = (toolArgs.purpose as string) || 'exploring...';
+          const purpose = (toolArgs.purpose as string) || "exploring...";
           explorePurposeRef.current = purpose;
         }
 
@@ -571,8 +686,13 @@ export async function runAgentStream(
           if (isExploreTool) {
             exploreMessageIdRef.current = runningMessageId;
           }
-          const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, toolArgs);
-          const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
+          const { name: toolDisplayName, info: toolInfo } = parseToolHeader(
+            toolName,
+            toolArgs,
+          );
+          const runningContent = toolInfo
+            ? `${toolDisplayName} (${toolInfo})`
+            : toolDisplayName;
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
@@ -584,7 +704,7 @@ export async function runAgentStream(
               toolArgs,
               success: true,
               isRunning: true,
-              runningStartTime: Date.now()
+              runningStartTime: Date.now(),
             });
             return newMessages;
           });
@@ -593,21 +713,22 @@ export async function runAgentStream(
         pendingToolCalls.set(event.toolCallId, {
           toolName,
           args: toolArgs,
-          messageId: runningMessageId
+          messageId: runningMessageId,
         });
-
-      } else if (event.type === 'fallback') {
+      } else if (event.type === "fallback") {
         responseProvider = event.provider;
         responseModel = event.model;
-        debugLog(`[ui] stream fallback detected: switching to ${responseProvider}/${responseModel}`);
-      } else if (event.type === 'tool-result') {
+        debugLog(
+          `[ui] stream fallback detected: switching to ${responseProvider}/${responseModel}`,
+        );
+      } else if (event.type === "tool-result") {
         const pending = pendingToolCalls.get(event.toolCallId);
         const toolName = pending?.toolName ?? event.toolName;
         const toolArgs = pending?.args ?? {};
         const runningMessageId = pending?.messageId;
         pendingToolCalls.delete(event.toolCallId);
 
-        if (toolName === 'title') {
+        if (toolName === "title") {
           const nextTitle = extractTitleFromToolResult(event.result);
           if (nextTitle) {
             currentTitleRef.current = nextTitle;
@@ -616,7 +737,7 @@ export async function runAgentStream(
           }
         }
 
-        if (toolName === 'explore') {
+        if (toolName === "explore") {
           exploreMessageIdRef.current = null;
           setExploreAbortController(null);
         }
@@ -625,15 +746,19 @@ export async function runAgentStream(
           toolName,
           toolArgs,
           event.result,
-          { maxLines: DEFAULT_MAX_TOOL_LINES }
+          { maxLines: DEFAULT_MAX_TOOL_LINES },
         );
         recordToolMetrics(toolName, success, {
-          filesDiscovered: toolName === 'glob' || toolName === 'list'
-            ? countDiscoveredFiles(event.result)
-            : undefined,
+          filesDiscovered:
+            toolName === "glob" || toolName === "list"
+              ? countDiscoveredFiles(event.result)
+              : undefined,
         });
 
-        const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+        const toolResultStr =
+          typeof event.result === "string"
+            ? event.result
+            : JSON.stringify(event.result);
         totalChars += toolResultStr.length;
         toolChars += toolResultStr.length;
         setCurrentTokensMonotonic(estimateTokens());
@@ -642,28 +767,32 @@ export async function runAgentStream(
         if (assistantChunk.trim() || thinkingChunk.trim()) {
           const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
           conversationSteps.push({
-            type: 'assistant',
+            type: "assistant",
             content: cleanedAssistant,
             thinkingContent: thinkingChunk || undefined,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
           if (cleanedAssistant) {
-            continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+            continuationHistory.push({
+              role: "assistant",
+              content: cleanedAssistant,
+            });
           }
         }
 
         conversationSteps.push({
-          type: 'tool',
+          type: "tool",
           content: toolContent,
           toolName,
           toolArgs,
           toolResult: event.result,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
-        if ((toolName === 'write' || toolName === 'edit') && success) {
-          await runTaskLifecycleStage('post_edit', {
+        if ((toolName === "write" || toolName === "edit") && success) {
+          await runTaskLifecycleStage("post_edit", {
             runtimeContext,
-            changedPaths: typeof toolArgs.path === 'string' ? [toolArgs.path] : undefined,
+            changedPaths:
+              typeof toolArgs.path === "string" ? [toolArgs.path] : undefined,
           });
         }
         pushContinuationToolContext(
@@ -672,7 +801,7 @@ export async function runAgentStream(
           toolName,
           toolArgs,
           event.result,
-          success
+          success,
         );
 
         setMessages((prev: Message[]) => {
@@ -680,9 +809,17 @@ export async function runAgentStream(
 
           let runningIndex = -1;
           if (runningMessageId) {
-            runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-          } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
-            runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+            runningIndex = newMessages.findIndex(
+              (m) => m.id === runningMessageId,
+            );
+          } else if (
+            toolName === "bash" ||
+            toolName === "explore" ||
+            toolName.startsWith("mcp__")
+          ) {
+            runningIndex = newMessages.findIndex(
+              (m) => m.isRunning && m.toolName === toolName,
+            );
           }
 
           if (runningIndex !== -1) {
@@ -693,7 +830,7 @@ export async function runAgentStream(
               toolResult: event.result,
               success,
               isRunning: false,
-              runningStartTime: undefined
+              runningStartTime: undefined,
             };
             return newMessages;
           }
@@ -705,17 +842,17 @@ export async function runAgentStream(
             toolName,
             toolArgs: toolArgs,
             toolResult: event.result,
-            success: success
+            success: success,
           });
           return newMessages;
         });
 
         await processPendingReviews();
 
-        assistantChunk = '';
-        thinkingChunk = '';
+        assistantChunk = "";
+        thinkingChunk = "";
         assistantMessageId = null;
-      } else if (event.type === 'error') {
+      } else if (event.type === "error") {
         if (abortController.signal.aborted) {
           notifyAbort();
           streamHadError = true;
@@ -723,40 +860,39 @@ export async function runAgentStream(
         }
         if (assistantChunk.trim() || thinkingChunk.trim()) {
           conversationSteps.push({
-            type: 'assistant',
+            type: "assistant",
             content: sanitizeAccumulatedText(assistantChunk),
             thinkingContent: thinkingChunk || undefined,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         }
 
-        const errorContent = formatErrorMessage('API', event.error, {
-          source: 'provider',
+        const errorContent = formatErrorMessage("API", event.error, {
+          source: "provider",
           provider: config.provider,
           model: config.model,
         });
         conversationSteps.push({
-          type: 'assistant',
+          type: "assistant",
           content: errorContent,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
         setChatError(errorContent);
 
-        assistantChunk = '';
-        thinkingChunk = '';
+        assistantChunk = "";
+        thinkingChunk = "";
         assistantMessageId = null;
         streamHadError = true;
         break;
-      } else if (event.type === 'finish') {
-        lastFinishReason = event.finishReason || 'stop';
+      } else if (event.type === "finish") {
+        lastFinishReason = event.finishReason || "stop";
         if (event.usage && event.usage.totalTokens > 0) {
           recordPromptTokens(event.usage.promptTokens);
-          
+
           const honest = calculateHonestTokenBreakdown(event.usage);
           totalTokens = honest;
           lastPromptTokensRef.current = honest.prompt;
-          
-          // Requirement: Top-level displayed total must represent completion-side only.
+
           setCurrentTokensMonotonic(honest.completion);
 
           setTokenBreakdown(honest.breakdown);
@@ -772,31 +908,44 @@ export async function runAgentStream(
     if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
       const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
       conversationSteps.push({
-        type: 'assistant',
+        type: "assistant",
         content: cleanedAssistant,
         thinkingContent: thinkingChunk || undefined,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
       if (cleanedAssistant) {
-        continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+        continuationHistory.push({
+          role: "assistant",
+          content: cleanedAssistant,
+        });
       }
     }
 
-    const hasForcedSkillInvocation = /FORCED SKILL INVOCATION/i.test(userStepContent);
+    const hasForcedSkillInvocation = /FORCED SKILL INVOCATION/i.test(
+      userStepContent,
+    );
     let continuationCount = 0;
     let lastActionSignature: string | null = null;
 
     const countPendingSteps = (): number => {
       const plan = extractPlanFromSteps(conversationSteps);
-      return plan ? plan.steps.filter(s => s.status !== 'completed').length : 0;
+      return plan
+        ? plan.steps.filter((s) => s.status !== "completed").length
+        : 0;
     };
 
     const needsContinuation = (): boolean => {
-      if (isLightweightChat) return false;
-      if (lastFinishReason === 'length') return true;
-      if (runtimeContext?.taskModeDecision?.mode !== 'explore_readonly' && hasPendingStepsInConversation(conversationSteps)) return true;
-      if (hasForcedSkillInvocation && lastFinishReason === 'stop') {
-        const hasToolStep = conversationSteps.some((step) => step.type === 'tool');
+      if (isLightweightHandling) return false;
+      if (lastFinishReason === "length") return true;
+      if (
+        runtimeContext?.taskModeDecision?.mode !== "explore_readonly" &&
+        hasPendingStepsInConversation(conversationSteps)
+      )
+        return true;
+      if (hasForcedSkillInvocation && lastFinishReason === "stop") {
+        const hasToolStep = conversationSteps.some(
+          (step) => step.type === "tool",
+        );
         if (!hasToolStep) return true;
       }
       return false;
@@ -805,20 +954,30 @@ export async function runAgentStream(
     const computeActionSignature = (): string => {
       const recentSteps = conversationSteps.slice(-5);
       return recentSteps
-        .filter(s => s.type === 'tool')
-        .map(s => `${s.toolName}:${JSON.stringify(s.toolArgs)}`)
-        .join('|');
+        .filter((s) => s.type === "tool")
+        .map((s) => `${s.toolName}:${JSON.stringify(s.toolArgs)}`)
+        .join("|");
     };
 
     const planCheck = extractPlanFromSteps(conversationSteps);
-    const pendingSteps = planCheck ? planCheck.steps.filter(s => s.status !== 'completed') : [];
-    if (isLightweightChat) {
-      debugLog(`[continuation] skipped mode=${runtimeContext?.taskModeDecision?.mode ?? 'default'} lastFinishReason=${lastFinishReason} conversationSteps=${conversationSteps.length}`);
+    const pendingSteps = planCheck
+      ? planCheck.steps.filter((s) => s.status !== "completed")
+      : [];
+    if (isLightweightHandling) {
+      debugLog(
+        `[continuation] skipped mode=${runtimeContext?.taskModeDecision?.mode ?? "default"} lastFinishReason=${lastFinishReason} conversationSteps=${conversationSteps.length}`,
+      );
     } else {
-      debugLog(`[continuation] check: lastFinishReason=${lastFinishReason} streamHadError=${streamHadError} planFound=${!!planCheck} pendingSteps=${pendingSteps.length} conversationSteps=${conversationSteps.length}`);
-      debugLog(`[context] continuation history ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`);
+      debugLog(
+        `[continuation] check: lastFinishReason=${lastFinishReason} streamHadError=${streamHadError} planFound=${!!planCheck} pendingSteps=${pendingSteps.length} conversationSteps=${conversationSteps.length}`,
+      );
+      debugLog(
+        `[context] continuation history ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`,
+      );
       if (planCheck) {
-        debugLog(`[continuation] plan steps: ${planCheck.steps.map(s => `[${s.status}] ${s.step.slice(0, 40)}`).join(' | ')}`);
+        debugLog(
+          `[continuation] plan steps: ${planCheck.steps.map((s) => `[${s.status}] ${s.step.slice(0, 40)}`).join(" | ")}`,
+        );
       }
     }
 
@@ -830,44 +989,57 @@ export async function runAgentStream(
       needsContinuation()
     ) {
       continuationCount++;
-      const isLengthTruncation = lastFinishReason === 'length';
-      const isForcedSkillStall = hasForcedSkillInvocation && conversationSteps.every((step) => step.type !== 'tool');
+      const isLengthTruncation = lastFinishReason === "length";
+      const isForcedSkillStall =
+        hasForcedSkillInvocation &&
+        conversationSteps.every((step) => step.type !== "tool");
       const continuationPrompt = isLengthTruncation
-        ? 'Your previous response was cut off due to length limits. Continue exactly where you left off.'
+        ? "Your previous response was cut off due to length limits. Continue exactly where you left off."
         : isForcedSkillStall
-          ? 'You were given a FORCED SKILL INVOCATION. Execute the requested workflow now. Start by using plan for concrete steps, then run the required tools. Do not stop before completion unless blocked by an explicit error.'
-        : buildContinuationPromptFromSteps(conversationSteps);
+          ? "You were given a FORCED SKILL INVOCATION. Execute the requested workflow now. Start by using plan for concrete steps, then run the required tools. Do not stop before completion unless blocked by an explicit error."
+          : buildContinuationPromptFromSteps(conversationSteps);
       if (!continuationPrompt) break;
 
       const pendingBefore = countPendingSteps();
       let continuationToolCalls = 0;
 
       const continuationReason = isLengthTruncation
-        ? 'length_truncation'
-        : isForcedSkillStall ? 'forced_skill_no_progress' : 'pending_plan_steps';
-      debugLog(`[continuation] auto-continue #${continuationCount} - reason=${continuationReason} pendingBefore=${pendingBefore}`);
-      debugLog(`[context] continuation before-prompt ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`);
+        ? "length_truncation"
+        : isForcedSkillStall
+          ? "forced_skill_no_progress"
+          : "pending_plan_steps";
+      debugLog(
+        `[continuation] auto-continue #${continuationCount} - reason=${continuationReason} pendingBefore=${pendingBefore}`,
+      );
+      debugLog(
+        `[context] continuation before-prompt ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length}`,
+      );
 
       conversationSteps.push({
-        type: 'user',
+        type: "user",
         content: continuationPrompt,
         timestamp: Date.now(),
       });
-      continuationHistory.push({ role: 'user', content: continuationPrompt });
+      continuationHistory.push({ role: "user", content: continuationPrompt });
       if (continuationHistory.length === 0) {
-        debugLog('[continuation] skipped auto-continue because history is empty');
+        debugLog(
+          "[continuation] skipped auto-continue because history is empty",
+        );
         break;
       }
 
       const continuationAgent = new Agent(runtimeContext);
-      assistantChunk = '';
-      thinkingChunk = '';
+      assistantChunk = "";
+      thinkingChunk = "";
       assistantMessageId = null;
-      lastFinishReason = 'stop';
+      lastFinishReason = "stop";
       pendingToolCalls.clear();
 
-      for await (const event of continuationAgent.streamMessages(continuationHistory, { abortSignal: abortController.signal, alreadyCompacted: true })) {
-        if (event.type === 'reasoning-delta') {
+      for await (const event of continuationAgent.streamMessages(
+        continuationHistory,
+        { abortSignal: abortController.signal, alreadyCompacted: true },
+      )) {
+        if (event.type === "reasoning-delta") {
           thinkingChunk += event.content;
           totalChars += event.content.length;
           reasoningChars += event.content.length;
@@ -884,7 +1056,7 @@ export async function runAgentStream(
               thinkingContent: thinkingChunk,
             });
           });
-        } else if (event.type === 'text-delta') {
+        } else if (event.type === "text-delta") {
           if (event.content.trim()) {
             markFirstUsefulAnswer();
           }
@@ -894,7 +1066,10 @@ export async function runAgentStream(
           setCurrentTokensMonotonic(estimateTokens());
           updateBreakdown();
 
-          const { cleanContent, isPending } = extractTitle(assistantChunk, true);
+          const { cleanContent, isPending } = extractTitle(
+            assistantChunk,
+            true,
+          );
           if (isPending) continue;
 
           if (assistantMessageId === null) {
@@ -910,66 +1085,91 @@ export async function runAgentStream(
               thinkingRunning: false,
             });
           });
-        } else if (event.type === 'step-start') {
+        } else if (event.type === "step-start") {
           stepCount++;
-        } else if (event.type === 'tool-call-end') {
+        } else if (event.type === "tool-call-end") {
           const argsLen = JSON.stringify(event.args).length;
           totalChars += argsLen;
           toolChars += argsLen;
           setCurrentTokensMonotonic(estimateTokens());
           updateBreakdown();
 
-          const normalized = normalizeToolCall(event.toolName, event.args ?? {});
+          const normalized = normalizeToolCall(
+            event.toolName,
+            event.args ?? {},
+          );
           const toolName = normalized.toolName;
           const toolArgs = normalized.args;
-          const isExploreTool = toolName === 'explore';
-          const isMcpTool = toolName.startsWith('mcp__');
+          const isExploreTool = toolName === "explore";
+          const isMcpTool = toolName.startsWith("mcp__");
           let runningMessageId: string | undefined;
 
           if (isExploreTool) {
             setExploreAbortController(abortController);
             exploreToolsRef.current = [];
-            explorePurposeRef.current = (toolArgs.purpose as string) || 'exploring...';
+            explorePurposeRef.current =
+              (toolArgs.purpose as string) || "exploring...";
           }
 
           if (isExploreTool || isMcpTool) {
             runningMessageId = createId();
             if (isExploreTool) exploreMessageIdRef.current = runningMessageId;
-            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(toolName, toolArgs);
-            const runningContent = toolInfo ? `${toolDisplayName} (${toolInfo})` : toolDisplayName;
-            setMessages((prev: Message[]) => [...prev, {
-              id: runningMessageId!,
-              role: "tool",
-              content: runningContent,
+            const { name: toolDisplayName, info: toolInfo } = parseToolHeader(
               toolName,
               toolArgs,
-              success: true,
-              isRunning: true,
-              runningStartTime: Date.now()
-            }]);
+            );
+            const runningContent = toolInfo
+              ? `${toolDisplayName} (${toolInfo})`
+              : toolDisplayName;
+            setMessages((prev: Message[]) => [
+              ...prev,
+              {
+                id: runningMessageId!,
+                role: "tool",
+                content: runningContent,
+                toolName,
+                toolArgs,
+                success: true,
+                isRunning: true,
+                runningStartTime: Date.now(),
+              },
+            ]);
           }
 
-          pendingToolCalls.set(event.toolCallId, { toolName, args: toolArgs, messageId: runningMessageId });
+          pendingToolCalls.set(event.toolCallId, {
+            toolName,
+            args: toolArgs,
+            messageId: runningMessageId,
+          });
           continuationToolCalls++;
-        } else if (event.type === 'tool-result') {
+        } else if (event.type === "tool-result") {
           const pending = pendingToolCalls.get(event.toolCallId);
           const toolName = pending?.toolName ?? event.toolName;
           const toolArgs = pending?.args ?? {};
           const runningMessageId = pending?.messageId;
           pendingToolCalls.delete(event.toolCallId);
 
-          if (toolName === 'explore') {
+          if (toolName === "explore") {
             exploreMessageIdRef.current = null;
             setExploreAbortController(null);
           }
 
-          const { content: toolContent, success } = formatToolMessage(toolName, toolArgs, event.result, { maxLines: DEFAULT_MAX_TOOL_LINES });
+          const { content: toolContent, success } = formatToolMessage(
+            toolName,
+            toolArgs,
+            event.result,
+            { maxLines: DEFAULT_MAX_TOOL_LINES },
+          );
           recordToolMetrics(toolName, success, {
-            filesDiscovered: toolName === 'glob' || toolName === 'list'
-              ? countDiscoveredFiles(event.result)
-              : undefined,
+            filesDiscovered:
+              toolName === "glob" || toolName === "list"
+                ? countDiscoveredFiles(event.result)
+                : undefined,
           });
-          const toolResultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+          const toolResultStr =
+            typeof event.result === "string"
+              ? event.result
+              : JSON.stringify(event.result);
           totalChars += toolResultStr.length;
           toolChars += toolResultStr.length;
           setCurrentTokensMonotonic(estimateTokens());
@@ -978,28 +1178,32 @@ export async function runAgentStream(
           if (assistantChunk.trim() || thinkingChunk.trim()) {
             const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
             conversationSteps.push({
-              type: 'assistant',
+              type: "assistant",
               content: cleanedAssistant,
               thinkingContent: thinkingChunk || undefined,
-              timestamp: Date.now()
+              timestamp: Date.now(),
             });
             if (cleanedAssistant) {
-              continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+              continuationHistory.push({
+                role: "assistant",
+                content: cleanedAssistant,
+              });
             }
           }
 
           conversationSteps.push({
-            type: 'tool',
+            type: "tool",
             content: toolContent,
             toolName,
             toolArgs,
             toolResult: event.result,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
-          if ((toolName === 'write' || toolName === 'edit') && success) {
-            await runTaskLifecycleStage('post_edit', {
+          if ((toolName === "write" || toolName === "edit") && success) {
+            await runTaskLifecycleStage("post_edit", {
               runtimeContext,
-              changedPaths: typeof toolArgs.path === 'string' ? [toolArgs.path] : undefined,
+              changedPaths:
+                typeof toolArgs.path === "string" ? [toolArgs.path] : undefined,
             });
           }
           pushContinuationToolContext(
@@ -1008,16 +1212,24 @@ export async function runAgentStream(
             toolName,
             toolArgs,
             event.result,
-            success
+            success,
           );
 
           setMessages((prev: Message[]) => {
             const newMessages = [...prev];
             let runningIndex = -1;
             if (runningMessageId) {
-              runningIndex = newMessages.findIndex(m => m.id === runningMessageId);
-            } else if (toolName === 'bash' || toolName === 'explore' || toolName.startsWith('mcp__')) {
-              runningIndex = newMessages.findIndex(m => m.isRunning && m.toolName === toolName);
+              runningIndex = newMessages.findIndex(
+                (m) => m.id === runningMessageId,
+              );
+            } else if (
+              toolName === "bash" ||
+              toolName === "explore" ||
+              toolName.startsWith("mcp__")
+            ) {
+              runningIndex = newMessages.findIndex(
+                (m) => m.isRunning && m.toolName === toolName,
+              );
             }
 
             if (runningIndex !== -1) {
@@ -1028,7 +1240,7 @@ export async function runAgentStream(
                 toolResult: event.result,
                 success,
                 isRunning: false,
-                runningStartTime: undefined
+                runningStartTime: undefined,
               };
               return newMessages;
             }
@@ -1040,17 +1252,17 @@ export async function runAgentStream(
               toolName,
               toolArgs,
               toolResult: event.result,
-              success
+              success,
             });
             return newMessages;
           });
 
           await processPendingReviews();
 
-          assistantChunk = '';
-          thinkingChunk = '';
+          assistantChunk = "";
+          thinkingChunk = "";
           assistantMessageId = null;
-        } else if (event.type === 'error') {
+        } else if (event.type === "error") {
           if (abortController.signal.aborted) {
             notifyAbort();
             streamHadError = true;
@@ -1058,48 +1270,58 @@ export async function runAgentStream(
           }
           if (assistantChunk.trim() || thinkingChunk.trim()) {
             conversationSteps.push({
-              type: 'assistant',
+              type: "assistant",
               content: sanitizeAccumulatedText(assistantChunk),
               thinkingContent: thinkingChunk || undefined,
-              timestamp: Date.now()
+              timestamp: Date.now(),
             });
           }
-          const errorContent = formatErrorMessage('API', event.error, {
-            source: 'provider',
+          const errorContent = formatErrorMessage("API", event.error, {
+            source: "provider",
             provider: config.provider,
             model: config.model,
           });
-          conversationSteps.push({ type: 'assistant', content: errorContent, timestamp: Date.now() });
+          conversationSteps.push({
+            type: "assistant",
+            content: errorContent,
+            timestamp: Date.now(),
+          });
           setChatError(errorContent);
-          assistantChunk = '';
-          thinkingChunk = '';
+          assistantChunk = "";
+          thinkingChunk = "";
           assistantMessageId = null;
           streamHadError = true;
           break;
-      } else if (event.type === 'finish') {
-        lastFinishReason = event.finishReason || 'stop';
-        if (event.usage && event.usage.totalTokens > 0) {
-          recordPromptTokens(event.usage.promptTokens);
-          const honest = calculateHonestTokenBreakdown(event.usage);
-          totalTokens = honest;
-          lastPromptTokensRef.current = honest.prompt;
-          setCurrentTokensMonotonic(honest.completion);
-          setTokenBreakdown(honest.breakdown);
+        } else if (event.type === "finish") {
+          lastFinishReason = event.finishReason || "stop";
+          if (event.usage && event.usage.totalTokens > 0) {
+            recordPromptTokens(event.usage.promptTokens);
+            const honest = calculateHonestTokenBreakdown(event.usage);
+            totalTokens = honest;
+            lastPromptTokensRef.current = honest.prompt;
+            setCurrentTokensMonotonic(honest.completion);
+            setTokenBreakdown(honest.breakdown);
+          }
         }
       }
-    }
 
-    if (abortController.signal.aborted) { notifyAbort(); return; }
+      if (abortController.signal.aborted) {
+        notifyAbort();
+        return;
+      }
       if (!streamHadError && (assistantChunk.trim() || thinkingChunk.trim())) {
         const cleanedAssistant = sanitizeAccumulatedText(assistantChunk);
         conversationSteps.push({
-          type: 'assistant',
+          type: "assistant",
           content: cleanedAssistant,
           thinkingContent: thinkingChunk || undefined,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
         if (cleanedAssistant) {
-          continuationHistory.push({ role: 'assistant', content: cleanedAssistant });
+          continuationHistory.push({
+            role: "assistant",
+            content: cleanedAssistant,
+          });
         }
       }
 
@@ -1107,20 +1329,28 @@ export async function runAgentStream(
 
       const pendingAfter = countPendingSteps();
       const currentSignature = computeActionSignature();
-      debugLog(`[context] continuation after-pass ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length} pendingAfter=${pendingAfter} toolCalls=${continuationToolCalls}`);
+      debugLog(
+        `[context] continuation after-pass ${summarizeContinuationHistory(continuationHistory)} toolLedgerEntries=${continuationToolLedger.length} pendingAfter=${pendingAfter} toolCalls=${continuationToolCalls}`,
+      );
 
       if (continuationToolCalls === 0 && pendingAfter >= pendingBefore) {
-        debugLog(`[continuation] no progress detected (toolCalls=${continuationToolCalls} pendingBefore=${pendingBefore} pendingAfter=${pendingAfter}), stopping`);
+        debugLog(
+          `[continuation] no progress detected (toolCalls=${continuationToolCalls} pendingBefore=${pendingBefore} pendingAfter=${pendingAfter}), stopping`,
+        );
         break;
       }
 
       if (lastActionSignature && currentSignature === lastActionSignature) {
-        debugLog(`[continuation] loop detected (same actions repeated), stopping`);
+        debugLog(
+          `[continuation] loop detected (same actions repeated), stopping`,
+        );
         break;
       }
 
       if (continuationToolCalls === 0) {
-        debugLog(`[continuation] no tool calls in continuation, agent likely finished`);
+        debugLog(
+          `[continuation] no tool calls in continuation, agent likely finished`,
+        );
         break;
       }
 
@@ -1129,7 +1359,7 @@ export async function runAgentStream(
 
     responseDuration = Date.now() - localStartTime;
     applyAssistantRunMetadataToSteps(responseDuration, responseBlendWord);
-    await runTaskLifecycleStage('post_verify', { runtimeContext });
+    await runTaskLifecycleStage("post_verify", { runtimeContext });
 
     const conversationData: ConversationHistory = {
       id: conversationId,
@@ -1140,64 +1370,89 @@ export async function runAgentStream(
       workspace: process.cwd(),
       totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
       model: responseModel,
-      provider: responseProvider
+      provider: responseProvider,
     };
 
     saveConversation(conversationData);
-    debugLog(`[agent] stream saved conversationId=${conversationId} steps=${conversationSteps.length} totalSteps=${stepCount} tokens=${totalTokens.total}`);
+    debugLog(
+      `[agent] stream saved conversationId=${conversationId} steps=${conversationSteps.length} totalSteps=${stepCount} tokens=${totalTokens.total}`,
+    );
 
     if (autoCompact) {
       const resolvedMax = await resolveMaxContextTokens();
-      const maxContextTokens = resolvedMax ?? getDefaultContextBudget(responseProvider);
+      const maxContextTokens =
+        resolvedMax ?? getDefaultContextBudget(responseProvider);
       if (!abortController.signal.aborted && !disposedRef.current) {
         const realPromptTokens = lastPromptTokensRef.current;
         const systemPrompt = buildSystemPrompt();
         pendingCompactTokensRef.current = null;
-        setMessages(prev => {
-          const usedTokens = realPromptTokens > 0
-            ? realPromptTokens
-            : estimateTotalTokens(prev, systemPrompt);
+        setMessages((prev) => {
+          const usedTokens =
+            realPromptTokens > 0
+              ? realPromptTokens
+              : estimateTotalTokens(prev, systemPrompt);
           if (!shouldAutoCompact(usedTokens, maxContextTokens)) return prev;
-          const compacted = compactMessagesForUi(prev, systemPrompt, maxContextTokens, createId, true);
+          const compacted = compactMessagesForUi(
+            prev,
+            systemPrompt,
+            maxContextTokens,
+            createId,
+            true,
+          );
           if (!compacted.didCompact) return prev;
           pendingCompactTokensRef.current = compacted.estimatedTokens;
-          const autoCompactDisplay = buildCompactionDisplay('auto', usedTokens, maxContextTokens, compacted.estimatedTokens);
+          const autoCompactDisplay = buildCompactionDisplay(
+            "auto",
+            usedTokens,
+            maxContextTokens,
+            compacted.estimatedTokens,
+          );
           const compactNotice: Message = {
             id: createId(),
             role: "slash",
             content: autoCompactDisplay,
-            success: true
+            success: true,
           };
           return [compactNotice, ...prev];
         });
-        setCurrentTokensMonotonic(prev => pendingCompactTokensRef.current !== null ? pendingCompactTokensRef.current : prev);
+        setCurrentTokensMonotonic((prev) =>
+          pendingCompactTokensRef.current !== null
+            ? pendingCompactTokensRef.current
+            : prev,
+        );
       }
     }
-
   } catch (error) {
     if (abortController.signal.aborted) {
       notifyAbort();
       return;
     }
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-    debugLog(`[agent] stream ERROR conversationId=${conversationId} message="${toLogPreview(errorMessage, 600)}"`);
-    const errorContent = formatErrorMessage('Mosaic', errorMessage, {
-      source: 'runtime',
+    const errorMessage =
+      error instanceof Error ? error.message : "An unknown error occurred";
+    debugLog(
+      `[agent] stream ERROR conversationId=${conversationId} message="${toLogPreview(errorMessage, 600)}"`,
+    );
+    const errorContent = formatErrorMessage("Mosaic", errorMessage, {
+      source: "runtime",
       provider: config.provider,
       model: config.model,
     });
     setChatError(errorContent);
   } finally {
-    await runTaskLifecycleStage('end_task', { runtimeContext });
+    await runTaskLifecycleStage("end_task", { runtimeContext });
     finishRuntimeMetrics();
     if (abortControllerRef.current === abortController) {
       abortControllerRef.current = null;
     }
-    const finalDuration = responseDuration ?? (Date.now() - localStartTime);
-    debugLog(`[agent] stream end conversationId=${conversationId} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`);
+    const finalDuration = responseDuration ?? Date.now() - localStartTime;
+    debugLog(
+      `[agent] stream end conversationId=${conversationId} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`,
+    );
     if (!disposedRef.current) {
       const duration = finalDuration;
-      const blendWord = responseBlendWord ?? BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
+      const blendWord =
+        responseBlendWord ??
+        BLEND_WORDS[Math.floor(Math.random() * BLEND_WORDS.length)];
       applyAssistantRunMetadataToMessages(duration, blendWord);
 
       if (hasPendingChanges()) {
@@ -1205,7 +1460,9 @@ export async function runAgentStream(
       }
 
       if (totalReviewedKept > 0 || totalReviewedReverted > 0) {
-        debugLog(`[review] stream summary kept=${totalReviewedKept} reverted=${totalReviewedReverted}`);
+        debugLog(
+          `[review] stream summary kept=${totalReviewedKept} reverted=${totalReviewedReverted}`,
+        );
       }
 
       setIsProcessing(false);
