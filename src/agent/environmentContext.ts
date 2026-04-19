@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { homedir } from 'os';
+import { homedir, hostname, platform, release } from 'os';
 import { basename, dirname, join, resolve } from 'path';
 
 const MACHINE_ACTION_PATTERNS = [
@@ -54,6 +54,17 @@ const STRONG_MACHINE_PATTERNS = [
   /\b~[\\/]/,
   /\b[a-z]:\\/i,
   /\/(?:users|home|applications|etc|var)\//i,
+  /\bsubsystem\b/i,
+  /\bcurrent\s+shell\b/i,
+  /\bactive\s+shell\b/i,
+  /\bpwsh\b/i,
+  /\bpowershell\b/i,
+  /\bcmd\.exe\b/i,
+  /\bwsl\b/i,
+  /\bgit\s+bash\b/i,
+  /\bbash\s+environment\b/i,
+  /\bexecution\s+environment\b/i,
+  /\bwhat\s+shell\b/i,
 ];
 
 const REPO_REFERENCE_PATTERNS = [
@@ -266,6 +277,44 @@ function inferEarlyQuestions(text: string, targets: string[]): string[] {
   return uniqueLimited(questions, 3);
 }
 
+function detectParentShell(): string {
+  if (process.platform === 'win32') {
+    return process.env.PSModulePath
+      ? 'powershell'
+      : process.env.ComSpec
+        ? basename(process.env.ComSpec)
+        : 'unknown';
+  }
+
+  const shell = process.env.SHELL;
+  return shell ? basename(shell) : 'unknown';
+}
+
+function getShellHints(): string[] {
+  const hints: string[] = [];
+
+  if (process.platform === 'win32') {
+    if (process.env.ComSpec) {
+      hints.push(`ComSpec=${process.env.ComSpec}`);
+    }
+    if (process.env.PSModulePath) {
+      hints.push('PowerShell modules available');
+    }
+    if (process.env.WSL_DISTRO_NAME) {
+      hints.push(`WSL distro=${process.env.WSL_DISTRO_NAME}`);
+    }
+  } else {
+    if (process.env.SHELL) {
+      hints.push(`SHELL=${process.env.SHELL}`);
+    }
+    if (process.env.TERM) {
+      hints.push(`TERM=${process.env.TERM}`);
+    }
+  }
+
+  return uniqueLimited(hints, 4);
+}
+
 export function isEnvironmentConfigIntent(text: string): boolean {
   const normalized = normalizeWhitespace(text);
   if (!normalized) return false;
@@ -293,14 +342,21 @@ export function buildEnvironmentContextSummary(request: string, cwd: string = pr
   const candidatePaths = inferCandidatePaths(targets);
   const candidateFiles = inferCandidateFileNames(request);
   const earlyQuestions = inferEarlyQuestions(request, targets);
+  const shellHints = getShellHints();
 
   const lines: string[] = [
     'LOCAL MACHINE TASK SUMMARY',
+    `- Platform: ${platform()} ${release()} on ${hostname()}`,
+    `- Home directory: ${homedir()}`,
+    `- Parent shell hint: ${detectParentShell()}`,
     `- Launch directory: ${cwd} (${launchScope.label}${launchScope.broad ? ', broad scope' : ''})`,
     '- Repo scan: skipped for this task mode unless the user later makes the repository explicitly relevant.',
     `- Preferred config roots: ${getPlatformConfigRoots().join(' | ')}`,
   ];
 
+  if (shellHints.length > 0) {
+    lines.push(`- Shell environment hints: ${shellHints.join(' | ')}`);
+  }
   if (targets.length > 0) {
     lines.push(`- Inferred targets: ${targets.join(', ')}`);
   }
