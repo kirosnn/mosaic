@@ -10,8 +10,8 @@ export const write: CoreTool = tool({
     content: z.string().nullable().optional().transform((v) => v ?? '').describe('The content to write to the file (use null for empty string)'),
     append: z.boolean().nullable().optional().transform((v) => v ?? false).describe('If true, append to the file instead of overwriting (use null for false)'),
   }),
-  execute: async (args) => {
-    const result = await executeTool('write', args);
+  execute: async (args, { abortSignal }) => {
+    const result = await executeTool('write', args, { abortSignal });
     if (!result.success) {
       return result.userMessage
         ? { error: result.error, userMessage: result.userMessage }

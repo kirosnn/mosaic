@@ -10,10 +10,10 @@ export const read: CoreTool = tool({
     start_line: z.number().optional().describe('The line number to start reading from (1-based)'),
     end_line: z.number().optional().describe('The line number to end reading at (1-based)'),
   }),
-  execute: async (args) => {
+  execute: async (args, { abortSignal }) => {
     const cached = checkDuplicate('read', args);
     if (cached) return cached.result;
-    const result = await executeTool('read', args);
+    const result = await executeTool('read', args, { abortSignal });
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     const lines = (result.result || '').split('\n').length;
     recordCall('read', args, result.result!, `${lines} lines`);

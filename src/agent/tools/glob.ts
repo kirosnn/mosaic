@@ -21,14 +21,14 @@ Examples:
     pattern: z.string().describe('Glob pattern (use **/ for recursive search, e.g., "**/*.ts")'),
     path: z.string().optional().describe('Directory to search in. Relative paths resolve from the launch directory; absolute and home-directory paths are allowed.'),
   }),
-  execute: async (args) => {
+  execute: async (args, { abortSignal }) => {
     const cleanArgs = {
       pattern: args.pattern,
       path: args.path && args.path !== 'null' ? args.path : undefined,
     };
     const cached = checkDuplicate('glob', cleanArgs);
     if (cached) return cached.result;
-    const result = await executeTool('glob', cleanArgs);
+    const result = await executeTool('glob', cleanArgs, { abortSignal });
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     let count = 0;
     try { count = JSON.parse(result.result!).length; } catch {}

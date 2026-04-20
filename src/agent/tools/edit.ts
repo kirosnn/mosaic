@@ -11,8 +11,8 @@ export const edit: CoreTool = tool({
     new_content: z.string().describe('The new text content to replace with'),
     occurrence: z.number().nullable().optional().describe('Which occurrence to replace (1 for first, 2 for second, etc. Use null for 1)'),
   }),
-  execute: async (args) => {
-    const result = await executeTool('edit', args);
+  execute: async (args, { abortSignal }) => {
+    const result = await executeTool('edit', args, { abortSignal });
     if (!result.success) {
       const errorMessage = result.error || 'Unknown error occurred';
       return result.userMessage

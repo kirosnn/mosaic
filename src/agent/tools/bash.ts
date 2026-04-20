@@ -8,8 +8,8 @@ export const bash: CoreTool = tool({
   parameters: z.object({
     command: z.string().describe('The shell command to execute. Add --timeout <ms> at the end (max 90000ms) for: dev servers (--timeout 5000), builds (--timeout 90000), tests (--timeout 60000), installs (--timeout 90000), interactive CLIs with menus/options (--timeout 5000). You will receive the command output and must analyze it to determine if it succeeded or failed.'),
   }),
-  execute: async (args) => {
-    const result = await executeTool('bash', args);
+  execute: async (args, { abortSignal }) => {
+    const result = await executeTool('bash', args, { abortSignal });
     if (!result.success) {
       const errorMessage = result.error || result.result || 'Unknown error occurred';
       return result.userMessage

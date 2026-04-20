@@ -962,7 +962,7 @@ export function ChatPage({
                     item.runningStartTime &&
                     item.paragraphIndex === 1 ? (
                     <text fg="#ffffff" attributes={TextAttributes.DIM}>
-                      Running...{" "}
+                      {"  "}In progress for{" "}
                       {Math.floor((Date.now() - item.runningStartTime) / 1000)}s
                     </text>
                   ) : (

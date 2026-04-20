@@ -569,6 +569,7 @@ async function fetchUrlContent(
     raw?: boolean;
     timeout?: number;
     userAgent?: string;
+    abortSignal?: AbortSignal;
   } = {},
 ): Promise<{
   content: string;
@@ -582,10 +583,19 @@ async function fetchUrlContent(
     raw = false,
     timeout = DEFAULT_FETCH_TIMEOUT,
     userAgent = DEFAULT_USER_AGENT,
+    abortSignal,
   } = options;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  const abortHandler = () => {
+    controller.abort();
+  };
+
+  if (abortSignal) {
+    abortSignal.addEventListener("abort", abortHandler, { once: true });
+  }
 
   try {
     const response = await globalThis.fetch(url, {
@@ -622,6 +632,9 @@ async function fetchUrlContent(
     return { content: text, contentType, title: null, status, statusText };
   } finally {
     clearTimeout(timeoutId);
+    if (abortSignal) {
+      abortSignal.removeEventListener("abort", abortHandler);
+    }
   }
 }
 
@@ -737,6 +750,7 @@ async function enforceSingleReviewDecision(
 
 export interface ExecuteToolOptions {
   skipApproval?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 async function requestOutsideWorkspaceApproval(
@@ -1990,8 +2004,8 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                   cwd: workspace,
                   timeout: Math.floor(timeout / segments.length),
                   env,
+                  abortSignal: options.abortSignal,
                 });
-
                 captures.push({
                   command: segment,
                   output: stepResult.output,
@@ -2010,6 +2024,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                 cwd: workspace,
                 timeout,
                 env,
+                abortSignal: options.abortSignal,
               });
               output = runResult.output;
               success = runResult.success;

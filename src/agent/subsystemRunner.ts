@@ -15,6 +15,7 @@ export interface SubsystemOptions {
   cwd?: string;
   timeout?: number;
   env?: Record<string, string>;
+  abortSignal?: AbortSignal;
 }
 
 export function isCompatibilityFailure(
@@ -55,7 +56,17 @@ export async function runCommand(
   command: string,
   options: SubsystemOptions = {},
 ): Promise<SubsystemResult> {
-  const { cwd = process.cwd(), timeout = 30000, env = {} } = options;
+  const { cwd = process.cwd(), timeout = 30000, env = {}, abortSignal } = options;
+
+  if (abortSignal?.aborted) {
+    return {
+      success: false,
+      output: "",
+      error: "Command aborted before execution",
+      subsystemUsed: subsystem.id,
+      isCompatibilityFailure: false,
+    };
+  }
 
   let executable = "";
   let args: string[] = [];
@@ -114,6 +125,22 @@ export async function runCommand(
       });
     }, timeout);
 
+    const abortHandler = () => {
+      clearTimeout(timer);
+      proc.kill();
+      resolve({
+        success: false,
+        output: stdout + stderr,
+        error: "Command aborted by user",
+        subsystemUsed: subsystem.id,
+        isCompatibilityFailure: false,
+      });
+    };
+
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }
+
     proc.stdout.on("data", (data) => {
       stdout += data.toString();
     });
@@ -124,6 +151,9 @@ export async function runCommand(
 
     proc.on("close", (code) => {
       clearTimeout(timer);
+      if (abortSignal) {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
       const success = code === 0;
       const combinedOutput = (stdout + stderr).trim();
 
@@ -141,6 +171,9 @@ export async function runCommand(
 
     proc.on("error", (err) => {
       clearTimeout(timer);
+      if (abortSignal) {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
       resolve({
         success: false,
         output: stdout + stderr,

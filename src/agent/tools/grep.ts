@@ -55,7 +55,7 @@ Examples:
     output_mode: z.enum(['matches', 'files', 'count']).optional().describe('"matches" (default), "files", or "count"'),
     exclude_pattern: z.string().optional().describe('Glob pattern to exclude'),
   }),
-  execute: async (args) => {
+  execute: async (args, { abortSignal }) => {
     const cleanArgs: Record<string, unknown> = { query: args.query, regex: true };
 
     if (args.file_type && args.file_type !== 'null') cleanArgs.file_type = args.file_type;
@@ -70,7 +70,7 @@ Examples:
 
     const cached = checkDuplicate('grep', cleanArgs);
     if (cached) return cached.result;
-    const result = await executeTool('grep', cleanArgs);
+    const result = await executeTool('grep', cleanArgs, { abortSignal });
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     let count = 0;
     try { count = JSON.parse(result.result!).length; } catch {}

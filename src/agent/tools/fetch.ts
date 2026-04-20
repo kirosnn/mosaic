@@ -51,10 +51,10 @@ Use cases:
       .optional()
       .describe('Request timeout in milliseconds (default: 30000, max: 60000)'),
   }),
-  execute: async (args) => {
+  execute: async (args, { abortSignal }) => {
     const cached = checkDuplicate('fetch', args);
     if (cached) return cached.result;
-    const result = await executeTool('fetch', args);
+    const result = await executeTool('fetch', args, { abortSignal });
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     const len = (result.result || '').length;
     recordCall('fetch', args, result.result!, `${len} chars`);

@@ -595,16 +595,26 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       const toolMessageId = createId();
-      setMessages((prev: Message[]) => [...prev, {
-        id: toolMessageId,
-        role: "tool",
-        content: `Running: ${shellCommand}`,
-        toolName: "bash",
-        toolArgs: { command: shellCommand },
-        success: true,
-        isRunning: true,
-        runningStartTime: Date.now()
-      }]);
+      const { name: toolDisplayName, info: toolInfo } = parseToolHeader("bash", {
+        command: shellCommand,
+      });
+      const runningContent = toolInfo
+        ? `• ${toolDisplayName} (${toolInfo})`
+        : `• ${toolDisplayName}`;
+
+      setMessages((prev: Message[]) => [
+        ...prev,
+        {
+          id: toolMessageId,
+          role: "tool",
+          content: runningContent,
+          toolName: "bash",
+          toolArgs: { command: shellCommand },
+          success: true,
+          isRunning: true,
+          runningStartTime: Date.now(),
+        },
+      ]);
 
       let shellResult: string;
       let shellSuccess: boolean;

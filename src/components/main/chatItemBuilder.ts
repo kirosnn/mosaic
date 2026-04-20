@@ -86,7 +86,7 @@ export function getFirstBodyLine(content: string): string {
 }
 
 export function getCompactResult(message: Message): string {
-  if (message.isRunning) return 'running...';
+  if (message.isRunning) return 'in progress...';
   const toolName = message.toolName;
   if (toolName === 'title') {
     const argsTitle = message.toolArgs && typeof (message.toolArgs as any).title === 'string'

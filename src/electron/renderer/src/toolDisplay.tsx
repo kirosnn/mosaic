@@ -120,7 +120,7 @@ export function getToolStateClassName(message: ChatMessage): string {
 
 export function getCompactToolResult(message: ChatMessage): string {
   const name = normalizeToolName(message.toolName);
-  if (message.running) return "running...";
+  if (message.running) return "in progress...";
   if (name === "title") return getTitleFromToolData(message);
   if (name === "read") {
     if (typeof message.toolResult === "string") {

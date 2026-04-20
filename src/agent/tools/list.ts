@@ -13,10 +13,10 @@ export const list: CoreTool = tool({
     filter: z.string().nullable().optional().describe('Optional glob pattern to filter results (use null for no filter)'),
     include_hidden: z.boolean().nullable().optional().describe('If true, include hidden files (starting with .) (use null for false)'),
   }),
-  execute: async (args) => {
+  execute: async (args, { abortSignal }) => {
     const cached = checkDuplicate('list', args);
     if (cached) return cached.result;
-    const result = await executeTool('list', args);
+    const result = await executeTool('list', args, { abortSignal });
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
     let count = 0;
     try {

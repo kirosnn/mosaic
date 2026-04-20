@@ -1119,8 +1119,8 @@ export async function runAgentStream(
               toolArgs,
             );
             const runningContent = toolInfo
-              ? `${toolDisplayName} (${toolInfo})`
-              : toolDisplayName;
+              ? `• ${toolDisplayName} (${toolInfo})`
+              : `• ${toolDisplayName}`;
             setMessages((prev: Message[]) => [
               ...prev,
               {
