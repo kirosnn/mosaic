@@ -115,6 +115,17 @@ export interface FallbackEvent extends BaseEvent {
   reason: string;
 }
 
+export interface RunMetadata {
+  configuredProvider: string;
+  configuredModel: string;
+  effectiveProvider: string;
+  effectiveModel: string;
+  authType?: "api_key" | "oauth" | "codestral-only";
+  lightweightRoutingUsed: boolean;
+  fallbackOccurred: boolean;
+  routeReason?: string;
+}
+
 export type AgentEvent =
   | TextDeltaEvent
   | ReasoningStartEvent
@@ -138,6 +149,7 @@ export interface ProviderConfig {
   modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   auth?: ProviderAuth;
+  authMode?: "generic" | "codestral-only";
   systemPrompt: string;
   tools?: Record<string, CoreTool>;
   maxSteps?: number;

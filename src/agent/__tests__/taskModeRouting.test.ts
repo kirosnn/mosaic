@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { detectTaskModeWithModel } from '../taskModeModel';
 
 describe('taskMode routing', () => {
-  it('should route subsystem questions to environment_config', async () => {
+  it('should route subsystem questions through environment_config detection', async () => {
     process.env.MOSAIC_DISABLE_MODEL_TASK_ROUTER = '1';
     const questions = [
       'What subsystem am I using?',

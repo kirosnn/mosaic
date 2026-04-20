@@ -3,6 +3,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
+import { resolveMistralBackendForKey, isCodestralModel } from "../provider/mistralAuth";
 import { createXai } from "@ai-sdk/xai";
 import { stat } from "fs/promises";
 import { resolve } from "path";
@@ -1183,12 +1184,32 @@ const fetchWithGoogleOAuth = async (
 
 type ExploreEndpoint = "responses" | "chat";
 
-function createModelProvider(
+async function createModelProvider(
   config: { provider: string; model: string; apiKey?: string },
   endpoint?: ExploreEndpoint,
 ) {
   const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, "");
   let cleanModel = config.model.trim().replace(/[\r\n]+/g, "");
+  let mistralBaseURL: string | undefined;
+
+  if (config.provider === "mistral" && cleanApiKey) {
+    const userConfig = readConfig();
+    const resolvedBackend = await resolveMistralBackendForKey(
+      userConfig,
+      cleanApiKey,
+    );
+    if (resolvedBackend === "codestral-domain") {
+      mistralBaseURL = "https://codestral.mistral.ai/v1";
+      if (!isCodestralModel(cleanModel)) {
+        debugLog(
+          `[mistral][explore] substituting model=${cleanModel} with codestral-latest`,
+        );
+        cleanModel = "codestral-latest";
+      }
+    } else {
+      mistralBaseURL = "https://api.mistral.ai/v1";
+    }
+  }
 
   const auth = getAuthForProvider(config.provider);
   const isOAuth = auth?.type === "oauth";
@@ -1282,7 +1303,10 @@ function createModelProvider(
       return google(cleanModel);
     }
     case "mistral": {
-      const mistral = createMistral({ apiKey: cleanApiKey });
+      const mistral = createMistral({
+        apiKey: cleanApiKey,
+        baseURL: mistralBaseURL,
+      });
       return mistral(cleanModel);
     }
     case "xai": {
@@ -2124,7 +2148,7 @@ export async function executeExploreTool(
       if (abortSignal?.aborted || isExploreAborted()) break;
       if (exploreDoneResult !== null) break;
 
-      const model = createModelProvider(
+      const model = await createModelProvider(
         {
           provider: userConfig.provider,
           model: userConfig.model,
@@ -2261,9 +2285,14 @@ export async function executeExploreTool(
 
     if (isExploreAborted()) {
       debugLog(`[explore] logs:\n${formatExploreLogs()}`);
+      const contextualSummary = buildContextualExploreSummary(
+        purpose,
+        exploreDoneResult || "[Exploration interrupted]",
+      );
+      addExploreSummary(contextualSummary);
       return {
-        success: false,
-        error: `Exploration interrupted (${duration})`,
+        success: true,
+        result: `Exploration interrupted (${duration}).\n\n${contextualSummary}`,
       };
     }
 
@@ -2318,9 +2347,14 @@ export async function executeExploreTool(
     debugLog(`[explore] logs:\n${formatExploreLogs()}`);
 
     if (isExploreAborted()) {
+      const contextualSummary = buildContextualExploreSummary(
+        purpose,
+        exploreDoneResult || "[Exploration interrupted]",
+      );
+      addExploreSummary(contextualSummary);
       return {
-        success: false,
-        error: `Exploration interrupted (${duration})`,
+        success: true,
+        result: `Exploration interrupted (${duration}).\n\n${contextualSummary}`,
       };
     }
 
@@ -2328,9 +2362,16 @@ export async function executeExploreTool(
     debugLog(
       `[explore] ERROR ${errorMsg.slice(0, 150)} duration=${duration} toolsUsed=${exploreLogs.length}`,
     );
+
+    const contextualSummary = buildContextualExploreSummary(
+      purpose,
+      `[Exploration failed: ${errorMsg}]`,
+    );
+    addExploreSummary(contextualSummary);
+
     return {
-      success: false,
-      error: `${errorMsg} (${duration})`,
+      success: true,
+      result: `Exploration failed: ${errorMsg} (${duration}).\n\n${contextualSummary}`,
     };
   }
 }

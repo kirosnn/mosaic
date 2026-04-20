@@ -36,6 +36,16 @@ export interface ConversationHistory {
   };
   model?: string;
   provider?: string;
+  runMetadata?: {
+    configuredProvider: string;
+    configuredModel: string;
+    effectiveProvider: string;
+    effectiveModel: string;
+    authType?: "api_key" | "oauth" | "codestral-only";
+    lightweightRoutingUsed: boolean;
+    fallbackOccurred: boolean;
+    routeReason?: string;
+  };
 }
 
 export function getHistoryDir(): string {

@@ -120,7 +120,7 @@ function renderToolText(
       const isInProgress = resolvedStatus === "in_progress";
       const isCompleted = resolvedStatus === "completed";
       const markerColor = isInProgress ? "#ffca38" : "#9a9a9a";
-      const markerChar = isInProgress ? "●" : isCompleted ? "✓" : " ";
+      const markerChar = isInProgress ? "~" : isCompleted ? "✓" : " ";
       return (
         <box flexDirection="row">
           <text attributes={TextAttributes.DIM}>{padText}</text>
@@ -809,7 +809,9 @@ export function ChatPage({
             !isInlineDiff &&
             item.type !== "tool_compact" &&
             item.isFirst &&
-            !isRunningTool;
+            !isRunningTool &&
+            item.toolName !== "plan" &&
+            item.toolName !== "todo";
           const handleUserMouseOver = isUserMessageLine
             ? () => {
                 if (!isUserModalOpen) {
@@ -958,9 +960,36 @@ export function ChatPage({
                         )}
                       </box>
                     </box>
+                  ) : isRunningTool && item.paragraphIndex === 0 ? (
+                    (() => {
+                      const blinkOn = timerTick % 2 === 0;
+                      const header = item.content || " ";
+                      const bulletColor = blinkOn ? "#ffffff" : "#808080";
+                      const parenIndex = header.indexOf("(");
+                      const name =
+                        parenIndex >= 0
+                          ? header.slice(0, parenIndex).trimEnd()
+                          : header;
+                      const suffix =
+                        parenIndex >= 0 ? header.slice(parenIndex) : "";
+                      return (
+                        <box flexDirection="row">
+                          {item.toolName !== "plan" &&
+                            item.toolName !== "todo" && (
+                              <text fg={bulletColor}>• </text>
+                            )}
+                          <text fg="#ffffff">{name} </text>
+                          {suffix ? (
+                            <text attributes={TextAttributes.DIM}>
+                              {suffix}
+                            </text>
+                          ) : null}
+                        </box>
+                      );
+                    })()
                   ) : isRunningTool &&
                     item.runningStartTime &&
-                    item.paragraphIndex === 1 ? (
+                    item.isProgressLine ? (
                     <text fg="#ffffff" attributes={TextAttributes.DIM}>
                       {"  "}In progress for{" "}
                       {Math.floor((Date.now() - item.runningStartTime) / 1000)}s

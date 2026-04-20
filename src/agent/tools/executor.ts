@@ -13,7 +13,7 @@ import {
   getEffectiveSubsystem,
   type SubsystemInfo,
 } from "../../utils/subsystemDiscovery";
-import { runCommand } from "../subsystemRunner";
+import { runCommand, type SubsystemOptions, type SubsystemResult } from "../subsystemRunner";
 import { generateDiff, formatDiffForDisplay } from "../../utils/diff";
 import {
   trackFileChange,
@@ -146,6 +146,21 @@ const SAFE_BASH_COMMANDS = new Set([
   "bat",
   "curl",
   "wget",
+  "get-command",
+  "get-childitem",
+  "select-string",
+  "resolve-path",
+  "test-path",
+  "get-content",
+  "gcm",
+  "gci",
+  "dir",
+  "ls",
+  "sls",
+  "gc",
+  "cat",
+  "pwd",
+  "gl",
 ]);
 
 const DANGEROUS_BASH_PATTERNS = [
@@ -218,7 +233,6 @@ const DANGEROUS_BASH_PATTERNS = [
   /\|\|/,
   /&&/,
   /;/,
-  /\|/,
   /\$\(/,
   /`/,
 
@@ -252,6 +266,27 @@ function isGitReadOnlyCommand(command: string): boolean {
   return GIT_READONLY_PATTERN.test(normalized);
 }
 
+function isUnixLikeCommand(command: string): boolean {
+  const unixCommands = [
+    "grep",
+    "ls",
+    "cat",
+    "find",
+    "sed",
+    "awk",
+    "head",
+    "tail",
+    "pwd",
+    "which",
+    "xargs",
+    "sort",
+    "uniq",
+    "wc",
+  ];
+  const firstToken = command.trim().split(/\s+/)[0]?.toLowerCase();
+  return firstToken ? unixCommands.includes(firstToken) : false;
+}
+
 function isSafeBashCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed) return false;
@@ -261,6 +296,11 @@ function isSafeBashCommand(command: string): boolean {
 
   if (lower.includes("\n") || lower.includes("\r") || lower.includes("\0"))
     return false;
+
+  if (normalized.includes("|")) {
+    const parts = normalized.split("|");
+    return parts.every((p) => isSafeBashCommand(p));
+  }
 
   if (isGitReadOnlyCommand(normalized)) return true;
 
@@ -290,9 +330,11 @@ function isSafeBashCommand(command: string): boolean {
 
 function splitTopLevelBashSegments(command: string): {
   segments: string[];
+  operators: Array<";" | "|" | "&&" | "&">;
   hasUnsupportedSyntax: boolean;
 } {
   const segments: string[] = [];
+  const operators: Array<";" | "|" | "&&" | "&"> = [];
   let current = "";
   let quote: '"' | "'" | null = null;
   let escaped = false;
@@ -328,19 +370,28 @@ function splitTopLevelBashSegments(command: string): {
     }
 
     if (ch === "`" || (ch === "$" && next === "(")) {
-      return { segments: [], hasUnsupportedSyntax: true };
+      return { segments: [], operators: [], hasUnsupportedSyntax: true };
     }
 
     if (ch === "&" && next !== "&") {
-      return { segments: [], hasUnsupportedSyntax: true };
+      return { segments: [], operators: [], hasUnsupportedSyntax: true };
     }
 
     if (ch === ";" || ch === "|" || ch === "&") {
       const currentSegment = current.trim();
       if (!currentSegment) {
-        return { segments: [], hasUnsupportedSyntax: true };
+        return { segments: [], operators: [], hasUnsupportedSyntax: true };
       }
       segments.push(currentSegment);
+      if (ch === "&" && next === "&") {
+        operators.push("&&");
+      } else if (ch === "&") {
+        operators.push("&");
+      } else if (ch === "|") {
+        operators.push("|");
+      } else {
+        operators.push(";");
+      }
       current = "";
 
       if ((ch === "|" && next === "|") || (ch === "&" && next === "&")) {
@@ -353,7 +404,7 @@ function splitTopLevelBashSegments(command: string): {
   }
 
   if (escaped || quote) {
-    return { segments: [], hasUnsupportedSyntax: true };
+    return { segments: [], operators: [], hasUnsupportedSyntax: true };
   }
 
   const tail = current.trim();
@@ -361,12 +412,16 @@ function splitTopLevelBashSegments(command: string): {
     segments.push(tail);
   }
 
-  return { segments, hasUnsupportedSyntax: false };
+  return { segments, operators, hasUnsupportedSyntax: false };
 }
 
 function isReadOnlyBashCommandChain(command: string): boolean {
   const parsed = splitTopLevelBashSegments(command);
   if (parsed.hasUnsupportedSyntax || parsed.segments.length <= 1) {
+    return false;
+  }
+
+  if (parsed.operators.some((operator) => operator !== ";")) {
     return false;
   }
 
@@ -377,6 +432,46 @@ function isReadOnlyBashCommandChain(command: string): boolean {
   }
 
   return true;
+}
+
+async function executeReadOnlyBashChain(
+  subsystem: SubsystemInfo,
+  command: string,
+  options: SubsystemOptions,
+): Promise<SubsystemResult> {
+  const parsed = splitTopLevelBashSegments(command);
+  const segments = parsed.segments.length > 0 ? parsed.segments : [command.trim()];
+  const timeout = options.timeout ?? 30000;
+  const env = options.env ?? {};
+  const perSegmentTimeout = Math.max(1000, Math.floor(timeout / Math.max(1, segments.length)));
+  const results = await Promise.all(
+    segments.map((segment) =>
+      runCommand(subsystem, segment, {
+        cwd: options.cwd,
+        timeout: perSegmentTimeout,
+        env,
+        abortSignal: options.abortSignal,
+      }).then((result) => ({ segment, result })),
+    ),
+  );
+
+  const outputs = results.map(({ segment, result }) => {
+    const header = `[$ ${segment}]`;
+    const body = result.output || result.error || "Command executed with no output";
+    return `${header}\n${body}`;
+  });
+
+  const success = results.every(({ result }) => result.success);
+  return {
+    success,
+    output: outputs.join("\n\n"),
+    exitCode: success ? 0 : results.find(({ result }) => !result.success)?.result.exitCode,
+    error: success
+      ? undefined
+      : results.find(({ result }) => !result.success)?.result.error || "One or more commands failed",
+    subsystemUsed: subsystem.id,
+    isCompatibilityFailure: results.some(({ result }) => result.isCompatibilityFailure),
+  };
 }
 
 function normalizeCommandOutput(text: string): string {
@@ -682,7 +777,8 @@ function buildReviewRejectionResult(
 
 Review summary: ${summary}
 
-REQUIRED ACTION: You MUST use the question tool immediately to ask what to do next.
+The user declined this specific action.
+Choose a safer alternative path or ask for clarification if you are stuck.
 DO NOT proceed as if this change was accepted.`;
 
   return {
@@ -1961,10 +2057,28 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         const allSubsystems = await discoverSubsystems();
 
         const fallbacks: SubsystemInfo[] = [initialSubsystem];
+
+        // If it's a Unix-like command on Windows, prioritize WSL or Git Bash
+        if (process.platform === "win32" && isUnixLikeCommand(command)) {
+          const unixSubsystems = allSubsystems
+            .filter((s) => s.id === "wsl" || s.id === "git-bash" || s.id === "bash")
+            .filter((s) => s.available && s.id !== initialSubsystem.id)
+            .sort((a, b) => b.priority - a.priority);
+
+          if (unixSubsystems.length > 0) {
+            debugLog(
+              `[tool] bash unix-like command detected, prioritizing unix subsystems: ${unixSubsystems.map((s) => s.id).join(", ")}`,
+            );
+            fallbacks.unshift(...unixSubsystems);
+          }
+        }
+
         const others = allSubsystems
           .filter(
             (s) =>
-              s.id !== "auto" && s.id !== initialSubsystem.id && s.available,
+              s.id !== "auto" &&
+              !fallbacks.some((f) => f.id === s.id) &&
+              s.available,
           )
           .sort((a, b) => b.priority - a.priority);
         fallbacks.push(...others);
@@ -1993,7 +2107,26 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             let output = "";
             let success = true;
 
-            if (shouldUseStructuredGitInspection(command)) {
+            if (isReadOnlyBashCommandChain(command)) {
+              const runResult = await executeReadOnlyBashChain(subsystem, command, {
+                cwd: workspace,
+                timeout,
+                env,
+                abortSignal: options.abortSignal,
+              });
+              output = runResult.output;
+              success = runResult.success;
+              if (!success) {
+                if (runResult.isCompatibilityFailure) {
+                  throw new Error(runResult.error || "Compatibility failure");
+                }
+                lastResult = {
+                  success: false,
+                  result: output || runResult.error || "Command failed",
+                };
+                break;
+              }
+            } else if (shouldUseStructuredGitInspection(command)) {
               const captures: GitCommandCapture[] = [];
               const parsed = splitTopLevelBashSegments(command);
               const segments =

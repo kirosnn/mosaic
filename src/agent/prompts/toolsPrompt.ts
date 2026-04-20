@@ -207,6 +207,10 @@ Timeouts (add --timeout <ms> to long commands):
 - Builds: 120000
 - Tests: 60000
 - Package installs: 120000
+
+When you need several independent non-interactive review commands, prefer separate bash tool calls in the same response instead of chaining them serially.
+Safe examples include read-only checks such as git status, bun test, bunx tsc --noEmit, git diff, and git log.
+Do not batch commands that depend on each other, mutate state, or require a terminal UI.
 </tool>
 </command_execution>
 

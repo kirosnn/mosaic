@@ -599,8 +599,8 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
         command: shellCommand,
       });
       const runningContent = toolInfo
-        ? `• ${toolDisplayName} (${toolInfo})`
-        : `• ${toolDisplayName}`;
+        ? `${toolDisplayName} (${toolInfo})`
+        : toolDisplayName;
 
       setMessages((prev: Message[]) => [
         ...prev,

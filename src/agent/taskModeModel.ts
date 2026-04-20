@@ -1,5 +1,6 @@
 import type { CoreMessage } from 'ai';
-import { getAuthForProvider, getLightweightRoute, getModelReasoningEffort, readConfig } from '../utils/config';
+import { getAuthForProvider, getLightweightRoute, getModelReasoningEffort, getMistralAuthMode, readConfig } from '../utils/config';
+import { resolveMistralBackendForKey, isCodestralModel } from './provider/mistralAuth';
 import { debugLog } from '../utils/debug';
 import type { SmartContextMessage } from './context';
 import type { Provider } from './types';
@@ -153,6 +154,23 @@ export async function detectTaskModeWithModel(messages: SmartContextMessage[]): 
     return detectTaskMode(messages);
   }
 
+  let authMode = lightweightRoute.providerId === 'mistral' ? getMistralAuthMode(config) : undefined;
+  if (lightweightRoute.providerId === 'mistral' && auth.type === 'api_key') {
+    try {
+      const resolvedBackend = await resolveMistralBackendForKey(config, auth.apiKey);
+      authMode = resolvedBackend === 'codestral-domain' ? 'codestral-only' : 'generic';
+    } catch (e) {
+      debugLog(`[task-mode] mistral auth resolution failed: ${e instanceof Error ? e.message : String(e)}`);
+      return detectTaskMode(messages);
+    }
+  }
+
+  let effectiveModelId = lightweightRoute.modelId;
+  if (lightweightRoute.providerId === 'mistral' && authMode === 'codestral-only' && !isCodestralModel(effectiveModelId)) {
+    effectiveModelId = 'codestral-latest';
+    debugLog(`[task-mode] mistral codestral-only resolution, switching model to ${effectiveModelId}`);
+  }
+
   try {
     const provider = await createProvider(lightweightRoute.providerId);
     const transcript = buildClassificationTranscript(messages);
@@ -187,10 +205,11 @@ export async function detectTaskModeWithModel(messages: SmartContextMessage[]): 
         [{ role: 'user', content: userPrompt } as CoreMessage],
         {
           provider: lightweightRoute.providerId,
-          model: lightweightRoute.modelId,
+          model: effectiveModelId,
           modelReasoningEffort: getModelReasoningEffort(),
           apiKey: auth.type === 'api_key' ? auth.apiKey : undefined,
           auth,
+          authMode: authMode,
           systemPrompt,
           tools: {},
           maxSteps: 1,

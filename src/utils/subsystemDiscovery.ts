@@ -5,6 +5,14 @@ import { join } from "path";
 import { debugLog } from "./debug";
 
 const execAsync = promisify(exec);
+const DISCOVERY_CACHE_TTL_MS = 30_000;
+
+type DiscoveryCacheEntry = {
+  timestamp: number;
+  promise: Promise<SubsystemInfo[]>;
+};
+
+const discoveryCache: Map<string, DiscoveryCacheEntry> = new Map();
 
 export type SubsystemId =
   | "auto"
@@ -110,88 +118,105 @@ async function checkGitBash(): Promise<{
 }
 
 export async function discoverSubsystems(): Promise<SubsystemInfo[]> {
-  const isWindows = process.platform === "win32";
-  const results: SubsystemInfo[] = [];
-
-  results.push({
-    id: "auto",
-    label: "Auto (Recommended)",
-    available: true,
-    priority: 100,
-    details: "Automatically chooses the best available subsystem",
-  });
-
-  if (!isWindows) {
-    const bashPath = await checkExecutable("bash");
-    results.push({
-      id: "bash",
-      label: "Bash",
-      available: !!bashPath,
-      executable: bashPath,
-      priority: SUBSYSTEM_METADATA.bash.priority,
-    });
-    return results;
+  const cacheKey = process.platform;
+  const cached = discoveryCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < DISCOVERY_CACHE_TTL_MS) {
+    return cached.promise;
   }
 
-  const [pwsh, powershell, cmd, wsl, gitBash, bash] = await Promise.all([
-    checkExecutable("pwsh.exe"),
-    checkExecutable("powershell.exe"),
-    checkExecutable("cmd.exe"),
-    checkWsl(),
-    checkGitBash(),
-    checkExecutable("bash.exe"),
-  ]);
+  const promise = (async () => {
+    const isWindows = process.platform === "win32";
+    const results: SubsystemInfo[] = [];
 
-  results.push({
-    id: "pwsh",
-    label: SUBSYSTEM_METADATA.pwsh.label,
-    available: !!pwsh,
-    executable: pwsh,
-    priority: SUBSYSTEM_METADATA.pwsh.priority,
+    results.push({
+      id: "auto",
+      label: "Auto (Recommended)",
+      available: true,
+      priority: 100,
+      details: "Automatically chooses the best available subsystem",
+    });
+
+    if (!isWindows) {
+      const bashPath = await checkExecutable("bash");
+      results.push({
+        id: "bash",
+        label: "Bash",
+        available: !!bashPath,
+        executable: bashPath,
+        priority: SUBSYSTEM_METADATA.bash.priority,
+      });
+      return results;
+    }
+
+    const [pwsh, powershell, cmd, wsl, gitBash, bash] = await Promise.all([
+      checkExecutable("pwsh.exe"),
+      checkExecutable("powershell.exe"),
+      checkExecutable("cmd.exe"),
+      checkWsl(),
+      checkGitBash(),
+      checkExecutable("bash.exe"),
+    ]);
+
+    results.push({
+      id: "pwsh",
+      label: SUBSYSTEM_METADATA.pwsh.label,
+      available: !!pwsh,
+      executable: pwsh,
+      priority: SUBSYSTEM_METADATA.pwsh.priority,
+    });
+
+    results.push({
+      id: "powershell",
+      label: SUBSYSTEM_METADATA.powershell.label,
+      available: !!powershell,
+      executable: powershell,
+      priority: SUBSYSTEM_METADATA.powershell.priority,
+    });
+
+    results.push({
+      id: "wsl",
+      label: SUBSYSTEM_METADATA.wsl.label,
+      available: wsl.available,
+      executable: wsl.executable,
+      details: wsl.details,
+      priority: SUBSYSTEM_METADATA.wsl.priority,
+    });
+
+    results.push({
+      id: "git-bash",
+      label: SUBSYSTEM_METADATA["git-bash"].label,
+      available: gitBash.available,
+      executable: gitBash.executable,
+      priority: SUBSYSTEM_METADATA["git-bash"].priority,
+    });
+
+    results.push({
+      id: "bash",
+      label: SUBSYSTEM_METADATA.bash.label,
+      available: !!bash,
+      executable: bash,
+      priority: SUBSYSTEM_METADATA.bash.priority,
+    });
+
+    results.push({
+      id: "cmd",
+      label: SUBSYSTEM_METADATA.cmd.label,
+      available: !!cmd,
+      executable: cmd,
+      priority: SUBSYSTEM_METADATA.cmd.priority,
+    });
+
+    return results.sort((a, b) => b.priority - a.priority);
+  })();
+
+  discoveryCache.set(cacheKey, { timestamp: Date.now(), promise });
+  promise.catch(() => {
+    const current = discoveryCache.get(cacheKey);
+    if (current?.promise === promise) {
+      discoveryCache.delete(cacheKey);
+    }
   });
-
-  results.push({
-    id: "powershell",
-    label: SUBSYSTEM_METADATA.powershell.label,
-    available: !!powershell,
-    executable: powershell,
-    priority: SUBSYSTEM_METADATA.powershell.priority,
-  });
-
-  results.push({
-    id: "wsl",
-    label: SUBSYSTEM_METADATA.wsl.label,
-    available: wsl.available,
-    executable: wsl.executable,
-    details: wsl.details,
-    priority: SUBSYSTEM_METADATA.wsl.priority,
-  });
-
-  results.push({
-    id: "git-bash",
-    label: SUBSYSTEM_METADATA["git-bash"].label,
-    available: gitBash.available,
-    executable: gitBash.executable,
-    priority: SUBSYSTEM_METADATA["git-bash"].priority,
-  });
-
-  results.push({
-    id: "bash",
-    label: SUBSYSTEM_METADATA.bash.label,
-    available: !!bash,
-    executable: bash,
-    priority: SUBSYSTEM_METADATA.bash.priority,
-  });
-
-  results.push({
-    id: "cmd",
-    label: SUBSYSTEM_METADATA.cmd.label,
-    available: !!cmd,
-    executable: cmd,
-    priority: SUBSYSTEM_METADATA.cmd.priority,
-  });
-
-  return results.sort((a, b) => b.priority - a.priority);
+  return promise;
 }
 
 export async function getEffectiveSubsystem(
@@ -219,19 +244,31 @@ export async function getSubsystemStatusSnapshot(
   preferred: string,
 ): Promise<SubsystemStatusSnapshot> {
   const all = await discoverSubsystems();
-  const effective = await getEffectiveSubsystem(preferred);
+  const effective =
+    preferred && preferred !== "auto"
+      ? all.find((s) => s.id === preferred && s.available)
+      : undefined;
   const fallbackOrder = all.filter((s) => s.id !== "auto");
   const available = fallbackOrder.filter((s) => s.available);
   const unavailable = fallbackOrder.filter((s) => !s.available);
 
   return {
     preferred,
-    effective,
+    effective:
+      effective ||
+      available[0] ||
+      all.find((s) => s.id === "powershell") ||
+      all.find((s) => s.id === "cmd") ||
+      all[0]!,
     available,
     unavailable,
     fallbackOrder,
     all,
   };
+}
+
+export function clearSubsystemDiscoveryCache(): void {
+  discoveryCache.clear();
 }
 
 export async function buildSubsystemContextSummary(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { getConfiguredLightweightRouteSelection, getLightweightModelForProvider, getLightweightRoute, isSupportedOpenAIOAuthCatalogModelId, sanitizeOpenAIOAuthCatalogModels, type AIModel } from '../config';
+import { getConfiguredLightweightRouteSelection, getLightweightModelForProvider, getLightweightRoute, getMistralAuthMode, isSupportedOpenAIOAuthCatalogModelId, sanitizeOpenAIOAuthCatalogModels, type AIModel } from '../config';
 
 describe('OpenAI OAuth model catalog', () => {
   it('accepts only the supported ChatGPT OAuth models', () => {
@@ -36,11 +36,11 @@ describe('OpenAI OAuth model catalog', () => {
     expect(getLightweightModelForProvider('google', 'gemini-2.5-pro')).toBe('gemini-3-flash-preview');
     expect(getLightweightModelForProvider('groq', 'llama-3.3-70b-versatile')).toBe('llama-3.1-8b-instant');
 
-    expect(getLightweightModelForProvider('openai', 'gpt-5.4', {
+    expect(getLightweightModelForProvider('openai-oauth', 'gpt-5.4', {
       config: {
       firstRun: false,
       version: 'test',
-      provider: 'openai',
+      provider: 'openai-oauth',
       model: 'gpt-5.4',
       oauthTokens: {
         openai: {
@@ -104,6 +104,44 @@ describe('OpenAI OAuth model catalog', () => {
     expect(getLightweightRoute('anthropic', 'claude-opus-4-5', { config })).toEqual({
       providerId: 'anthropic',
       modelId: 'claude-haiku-4-5',
+      source: 'provider_default',
+    });
+  });
+
+  it('routes mistral lightweight requests to codestral when the auth mode is codestral-only', () => {
+    const config = {
+      firstRun: false,
+      version: 'test',
+      provider: 'mistral',
+      model: 'mistral-large-latest',
+      mistralAuthMode: 'codestral-only' as const,
+      apiKeys: {
+        mistral: 'codestral-key',
+      },
+    };
+
+    expect(getMistralAuthMode(config)).toBe('codestral-only');
+    expect(getLightweightRoute('mistral', 'mistral-large-latest', { config })).toEqual({
+      providerId: 'mistral',
+      modelId: 'codestral-latest',
+      source: 'provider_default',
+    });
+  });
+
+  it('selects mistral-small-latest as the default lightweight model for mistral generic', () => {
+    const config = {
+      firstRun: false,
+      version: 'test',
+      provider: 'mistral',
+      model: 'mistral-large-latest',
+      apiKeys: {
+        mistral: 'generic-key',
+      },
+    };
+
+    expect(getLightweightRoute('mistral', 'mistral-large-latest', { config })).toEqual({
+      providerId: 'mistral',
+      modelId: 'mistral-small-latest',
       source: 'provider_default',
     });
   });

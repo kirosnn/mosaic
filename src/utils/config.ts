@@ -44,6 +44,8 @@ export interface MosaicConfig {
     model: string;
   };
   modelReasoningEffort?: ReasoningEffort;
+  mistralAuthMode?: "generic" | "codestral-only";
+  mistralResolvedBackendByKey?: Record<string, "generic-api" | "codestral-domain">;
   apiKey?: string;
   apiKeys?: Record<string, string>;
   apiModels?: Record<string, string>;
@@ -82,7 +84,7 @@ const LIGHTWEIGHT_PROVIDER_MODELS: Partial<Record<string, string>> = {
   openai: "gpt-4.1-2025-04-14",
   "openai-oauth": "gpt-5.4-mini",
   anthropic: "claude-haiku-4-5",
-  mistral: "mistral-medium-latest",
+  mistral: "mistral-small-latest",
   xai: "grok-code-fast-1",
   google: "gemini-3-flash-preview",
   "google-oauth": "gemini-3-flash-preview",
@@ -349,6 +351,18 @@ export const AI_PROVIDERS: AIProvider[] = [
         name: "Mistral Large 3",
         description:
           "Mistral Large 3, is a state-of-the-art, open-weight, general-purpose multimodal model",
+      },
+      {
+        id: "mistral-small-latest",
+        name: "Mistral Small 3",
+        description:
+          "Mistral Small 3, is an efficient, cost-effective, and open-weight general-purpose model",
+      },
+      {
+        id: "codestral-latest",
+        name: "Codestral Latest",
+        description:
+          "Codestral-compatible coding model for code generation and editing",
       },
       {
         id: "devstral-medium-latest",
@@ -793,6 +807,36 @@ export function getPreferredModelForProvider(
   return provider?.models[0]?.id;
 }
 
+export function getMistralAuthMode(
+  config?: MosaicConfig,
+  apiKey?: string,
+): "generic" | "codestral-only" {
+  const current = config ?? readConfig();
+
+  if (apiKey) {
+    const { createHash } = require("crypto");
+    const fingerprint = createHash("sha256").update(apiKey.trim()).digest("hex");
+    const resolved = current.mistralResolvedBackendByKey?.[fingerprint];
+    if (resolved === "codestral-domain") {
+      return "codestral-only";
+    }
+    if (resolved === "generic-api") {
+      return "generic";
+    }
+  }
+
+  if (current.mistralAuthMode === "codestral-only") {
+    return "codestral-only";
+  }
+  return "generic";
+}
+
+export function setMistralAuthMode(mode: "generic" | "codestral-only"): void {
+  const config = readConfig();
+  config.mistralAuthMode = mode;
+  writeConfig(config);
+}
+
 export function getLightweightModelForProvider(
   providerId: string,
   currentModelId?: string,
@@ -819,6 +863,17 @@ export function getLightweightRoute(
       modelId: currentModelId ?? providerId,
       source: "current_model",
     };
+  }
+
+  if (providerId === "mistral") {
+    const authMode = getMistralAuthMode(config);
+    if (authMode === "codestral-only") {
+      return {
+        providerId,
+        modelId: "codestral-latest",
+        source: "provider_default",
+      };
+    }
   }
 
   const preferred = LIGHTWEIGHT_PROVIDER_MODELS[providerId];

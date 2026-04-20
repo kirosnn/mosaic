@@ -31,6 +31,7 @@ export interface RenderItem {
   blendWord?: string;
   isRunning?: boolean;
   runningStartTime?: number;
+  isProgressLine?: boolean;
   thinkingCollapsed?: boolean;
   thinkingRunning?: boolean;
   reasoningBlocks?: ReasoningRenderBlock[];
@@ -490,8 +491,8 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
                 isSpacer: false,
                 visualLines: 1,
                 planStatus,
-                isRunning: message.isRunning,
-                runningStartTime: message.runningStartTime,
+                isRunning: i === 0 && j === 0 ? message.isRunning : undefined,
+                runningStartTime: i === 0 && j === 0 ? message.runningStartTime : undefined,
                 codeLanguage: toolCodeLanguage,
                 ...(userMessageMeta ?? {})
               });
@@ -512,15 +513,13 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         isFirst: false,
         isSpacer: false,
         success: messageRole === 'slash' ? message.success : undefined,
-        isRunning: message.isRunning,
-        runningStartTime: message.runningStartTime,
         visualLines: 1,
         isPadding: true,
         ...(userMessageMeta ?? {})
       });
     }
 
-    if (message.isRunning && message.runningStartTime && messageRole === 'tool' && message.toolName !== 'explore' && !compactTool) {
+    if (message.isRunning && message.runningStartTime && (messageRole === 'tool' || messageRole === 'slash')) {
       allItems.push({
         key: `${messageKey}-running`,
         type: 'line',
@@ -534,7 +533,8 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         isSpacer: false,
         visualLines: 1,
         isRunning: true,
-        runningStartTime: message.runningStartTime
+        runningStartTime: message.runningStartTime,
+        isProgressLine: true
       });
     }
 

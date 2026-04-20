@@ -111,14 +111,18 @@ export async function runCommand(
       windowsVerbatimArguments: subsystem.id === "cmd",
     });
 
+    const MAX_OUTPUT_CHARS = 500_000;
     let stdout = "";
     let stderr = "";
+    let truncated = false;
 
     const timer = setTimeout(() => {
       proc.kill();
       resolve({
         success: false,
-        output: stdout + stderr,
+        output:
+          (stdout + stderr).slice(0, MAX_OUTPUT_CHARS) +
+          (truncated ? "\n[Output truncated due to size]" : ""),
         error: `Command timed out after ${timeout}ms`,
         subsystemUsed: subsystem.id,
         isCompatibilityFailure: false,
@@ -130,7 +134,9 @@ export async function runCommand(
       proc.kill();
       resolve({
         success: false,
-        output: stdout + stderr,
+        output:
+          (stdout + stderr).slice(0, MAX_OUTPUT_CHARS) +
+          (truncated ? "\n[Output truncated due to size]" : ""),
         error: "Command aborted by user",
         subsystemUsed: subsystem.id,
         isCompatibilityFailure: false,
@@ -142,11 +148,29 @@ export async function runCommand(
     }
 
     proc.stdout.on("data", (data) => {
-      stdout += data.toString();
+      const str = data.toString();
+      if (stdout.length + stderr.length + str.length <= MAX_OUTPUT_CHARS) {
+        stdout += str;
+      } else {
+        const remaining = MAX_OUTPUT_CHARS - (stdout.length + stderr.length);
+        if (remaining > 0) {
+          stdout += str.slice(0, remaining);
+        }
+        truncated = true;
+      }
     });
 
     proc.stderr.on("data", (data) => {
-      stderr += data.toString();
+      const str = data.toString();
+      if (stdout.length + stderr.length + str.length <= MAX_OUTPUT_CHARS) {
+        stderr += str;
+      } else {
+        const remaining = MAX_OUTPUT_CHARS - (stdout.length + stderr.length);
+        if (remaining > 0) {
+          stderr += str.slice(0, remaining);
+        }
+        truncated = true;
+      }
     });
 
     proc.on("close", (code) => {
@@ -155,11 +179,14 @@ export async function runCommand(
         abortSignal.removeEventListener("abort", abortHandler);
       }
       const success = code === 0;
-      const combinedOutput = (stdout + stderr).trim();
+      const combined = stdout + stderr;
+      const finalOutput =
+        combined.slice(0, MAX_OUTPUT_CHARS) +
+        (truncated ? "\n[Output truncated due to size]" : "");
 
       resolve({
         success,
-        output: combinedOutput,
+        output: finalOutput.trim(),
         exitCode: code ?? undefined,
         error: success ? undefined : stderr.trim() || `Exit code ${code}`,
         subsystemUsed: subsystem.id,
@@ -174,9 +201,13 @@ export async function runCommand(
       if (abortSignal) {
         abortSignal.removeEventListener("abort", abortHandler);
       }
+      const combined = stdout + stderr;
+      const finalOutput =
+        combined.slice(0, MAX_OUTPUT_CHARS) +
+        (truncated ? "\n[Output truncated due to size]" : "");
       resolve({
         success: false,
-        output: stdout + stderr,
+        output: finalOutput,
         error: err.message,
         subsystemUsed: subsystem.id,
         isCompatibilityFailure: true,

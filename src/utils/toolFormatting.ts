@@ -953,7 +953,7 @@ function formatToolBodyLines(toolName: string, args: Record<string, unknown>, re
         for (const item of normalized) {
           const displayStatus = item.status === 'in_progress' && !hasPending ? 'completed' : item.status;
           let marker = '[ ]';
-          if (displayStatus === 'in_progress') marker = '[●]';
+          if (displayStatus === 'in_progress') marker = '[~]';
           if (displayStatus === 'completed') marker = '[✓]';
           lines.push(`${marker} ${item.step}`);
         }

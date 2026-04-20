@@ -60,6 +60,7 @@ import { isLightweightTaskMode } from "../../agent/taskMode";
 import { applyToolResultToContinuationLedger } from "../../agent/continuationLedger";
 import { calculateHonestTokenBreakdown } from "../../utils/tokenAccounting";
 import { upsertAssistantMessage } from "./assistantMessageState";
+import type { RunMetadata } from "../../agent/types";
 
 const MAX_CONTINUATIONS = 3;
 const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
@@ -367,12 +368,24 @@ export async function runAgentStream(
   };
   setCurrentTokensMonotonic(estimateTokens());
   const config = readConfig();
+  const configuredProvider = config.provider ?? "";
+  const configuredModel = config.model ?? "";
   const isLightweightHandling =
     isLightweightTaskMode(runtimeContext?.taskModeDecision?.mode)
     || runtimeContext?.environmentHandlingMode === "lightweight";
-  let responseProvider = config.provider;
-  let responseModel = config.model;
+  let responseProvider = configuredProvider;
+  let responseModel = configuredModel;
   let responseReasoningEffort: string | undefined;
+  const runMetadata: RunMetadata = {
+    configuredProvider,
+    configuredModel,
+    effectiveProvider: configuredProvider,
+    effectiveModel: configuredModel,
+    authType: undefined,
+    lightweightRoutingUsed: isLightweightHandling,
+    fallbackOccurred: false,
+    routeReason: runtimeContext?.taskModeDecision?.reason,
+  };
 
   const applyAssistantRunMetadataToSteps = (
     duration: number,
@@ -543,6 +556,12 @@ export async function runAgentStream(
     const effectiveRun = agent.getRunMetadata();
     responseProvider = effectiveRun.provider;
     responseModel = effectiveRun.model;
+    runMetadata.configuredProvider = effectiveRun.configuredProvider;
+    runMetadata.configuredModel = effectiveRun.configuredModel;
+    runMetadata.effectiveProvider = effectiveRun.provider;
+    runMetadata.effectiveModel = effectiveRun.model;
+    runMetadata.authType = effectiveRun.authType;
+    runMetadata.lightweightRoutingUsed = isLightweightHandling;
     if (responseModel && effectiveRun.reasoningEffort) {
       try {
         responseReasoningEffort = (await supportsReasoningEffort(
@@ -718,8 +737,12 @@ export async function runAgentStream(
       } else if (event.type === "fallback") {
         responseProvider = event.provider;
         responseModel = event.model;
+        runMetadata.effectiveProvider = event.provider;
+        runMetadata.effectiveModel = event.model;
+        runMetadata.fallbackOccurred = true;
+        runMetadata.routeReason = event.reason;
         debugLog(
-          `[ui] stream fallback detected: switching to ${responseProvider}/${responseModel}`,
+          `[ui] stream fallback detected configured=${configuredProvider}/${configuredModel} effective=${responseProvider}/${responseModel} reason="${event.reason}"`,
         );
       } else if (event.type === "tool-result") {
         const pending = pendingToolCalls.get(event.toolCallId);
@@ -1119,8 +1142,8 @@ export async function runAgentStream(
               toolArgs,
             );
             const runningContent = toolInfo
-              ? `• ${toolDisplayName} (${toolInfo})`
-              : `• ${toolDisplayName}`;
+              ? `${toolDisplayName} (${toolInfo})`
+              : toolDisplayName;
             setMessages((prev: Message[]) => [
               ...prev,
               {
@@ -1369,8 +1392,9 @@ export async function runAgentStream(
       title: currentTitleRef.current ?? currentTitle ?? null,
       workspace: process.cwd(),
       totalTokens: totalTokens.total > 0 ? totalTokens : undefined,
-      model: responseModel,
-      provider: responseProvider,
+      model: runMetadata.effectiveModel,
+      provider: runMetadata.effectiveProvider,
+      runMetadata,
     };
 
     saveConversation(conversationData);
@@ -1434,8 +1458,8 @@ export async function runAgentStream(
     );
     const errorContent = formatErrorMessage("Mosaic", errorMessage, {
       source: "runtime",
-      provider: config.provider,
-      model: config.model,
+      provider: runMetadata.effectiveProvider || config.provider,
+      model: runMetadata.effectiveModel || config.model,
     });
     setChatError(errorContent);
   } finally {
@@ -1446,7 +1470,7 @@ export async function runAgentStream(
     }
     const finalDuration = responseDuration ?? Date.now() - localStartTime;
     debugLog(
-      `[agent] stream end conversationId=${conversationId} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`,
+      `[agent] stream end conversationId=${conversationId} configured=${runMetadata.configuredProvider}/${runMetadata.configuredModel} effective=${runMetadata.effectiveProvider}/${runMetadata.effectiveModel} auth=${runMetadata.authType ?? "none"} lightweight=${runMetadata.lightweightRoutingUsed} fallback=${runMetadata.fallbackOccurred} aborted=${abortController.signal.aborted} streamDisposed=${disposedRef.current} durationMs=${finalDuration} pendingChanges=${hasPendingChanges()} tokens={prompt:${totalTokens.prompt},completion:${totalTokens.completion},total:${totalTokens.total}}`,
     );
     if (!disposedRef.current) {
       const duration = finalDuration;

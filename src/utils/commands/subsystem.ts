@@ -3,6 +3,7 @@ import { getPreferredSubsystem, setPreferredSubsystem } from "../config";
 import {
   discoverSubsystems,
   getEffectiveSubsystem,
+  clearSubsystemDiscoveryCache,
 } from "../subsystemDiscovery";
 
 export const subsystemCommand: Command = {
@@ -51,6 +52,7 @@ export const subsystemCommand: Command = {
             const chosen = subsystems.find((s) => s.id === value);
             if (chosen) {
               setPreferredSubsystem(value);
+              clearSubsystemDiscoveryCache();
               return {
                 confirmationMessage: `Shell subsystem set to ${chosen.label} (${value}).`,
               };
@@ -81,6 +83,7 @@ export const subsystemCommand: Command = {
     }
 
     setPreferredSubsystem(targetId);
+    clearSubsystemDiscoveryCache();
     return {
       success: true,
       content: `Shell subsystem set to ${known.label} (${targetId}).`,

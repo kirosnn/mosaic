@@ -14,6 +14,7 @@ import {
   getLightweightRoute,
   getLightweightModelForProvider,
   getModelReasoningEffort,
+  getMistralAuthMode,
   normalizeModelForProvider,
   setActiveModel,
 } from "../utils/config";
@@ -30,6 +31,7 @@ import { OpenAIProvider } from "./provider/openai";
 import { OpenRouterProvider } from "./provider/openrouter";
 import { GoogleProvider } from "./provider/google";
 import { MistralProvider } from "./provider/mistral";
+import { resolveMistralBackendForKey, isCodestralModel } from "./provider/mistralAuth";
 import { XaiProvider } from "./provider/xai";
 import { GroqProvider } from "./provider/groq";
 import { OllamaProvider, checkAndStartOllama } from "./provider/ollama";
@@ -429,6 +431,8 @@ export class Agent {
   private messageHistory: CoreMessage[] = [];
   private provider: Provider;
   private config: ProviderConfig;
+  private readonly configuredProvider: string;
+  private readonly configuredModel: string;
   private static ollamaChecked = false;
   private resolvedMaxContextTokens?: number;
   private resolvedMaxOutputTokens?: number;
@@ -481,6 +485,8 @@ export class Agent {
 
   constructor(runtimeContext?: AgentRuntimeContext) {
     const userConfig = readConfig();
+    this.configuredProvider = userConfig.provider ?? "";
+    this.configuredModel = userConfig.model ?? "";
 
     if (!userConfig.provider || !userConfig.model) {
       throw new Error(
@@ -577,6 +583,17 @@ export class Agent {
       lightweightRoute?.providerId ?? userConfig.provider;
     const effectiveModel = lightweightRoute?.modelId ?? userConfig.model;
     const auth = getAuthForProvider(effectiveProvider);
+    const apiKey =
+      auth?.type === "api_key"
+        ? auth.apiKey
+        : (getApiKeyForProvider(effectiveProvider) ??
+          (effectiveProvider === userConfig.provider
+            ? userConfig.apiKey
+            : undefined));
+    const authMode =
+      effectiveProvider === "mistral"
+        ? getMistralAuthMode(userConfig, apiKey)
+        : undefined;
 
     this.config = {
       provider: effectiveProvider,
@@ -584,13 +601,8 @@ export class Agent {
       modelReasoningEffort: isLightweightHandling
         ? undefined
         : getModelReasoningEffort(),
-      apiKey:
-        auth?.type === "api_key"
-          ? auth.apiKey
-          : (getApiKeyForProvider(effectiveProvider) ??
-            (effectiveProvider === userConfig.provider
-              ? userConfig.apiKey
-              : undefined)),
+      authMode,
+      apiKey,
       auth,
       systemPrompt,
       tools,
@@ -604,7 +616,7 @@ export class Agent {
     this.runtimeContext = runtimeContext;
 
     debugLog(
-      `[agent] initialized provider=${effectiveProvider} model=${effectiveModel} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? "default"} repoScan=${runtimeContext?.repoSummary ? "yes" : "no"}`,
+      `[agent] initialized configured=${userConfig.provider}/${userConfig.model} effective=${effectiveProvider}/${effectiveModel} auth=${auth?.type ?? "none"} authMode=${authMode ?? "n/a"} lightweight=${isLightweightHandling} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? "default"} repoScan=${runtimeContext?.repoSummary ? "yes" : "no"}`,
     );
   }
 
@@ -641,6 +653,29 @@ export class Agent {
     debugLog(
       `[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`,
     );
+
+    if (this.config.provider === "mistral") {
+      const userConfig = readConfig();
+      const resolvedBackend = await resolveMistralBackendForKey(
+        userConfig,
+        this.config.apiKey,
+      );
+      const resolvedMode =
+        resolvedBackend === "codestral-domain" ? "codestral-only" : "generic";
+
+      if (resolvedMode !== this.config.authMode) {
+        this.config = { ...this.config, authMode: resolvedMode };
+      }
+      if (
+        resolvedBackend === "codestral-domain" &&
+        !isCodestralModel(this.config.model)
+      ) {
+        debugLog(
+          `[mistral-auth] substituting model=${this.config.model} with codestral-latest`,
+        );
+        this.config = { ...this.config, model: "codestral-latest" };
+      }
+    }
 
     this.memory.incrementTurn();
     resetTracker();
@@ -969,14 +1004,24 @@ export class Agent {
   }
 
   getRunMetadata(): {
+    configuredProvider: string;
+    configuredModel: string;
     provider: string;
     model: string;
     reasoningEffort?: string;
+    authType?: "api_key" | "oauth";
+    authMode?: "generic" | "codestral-only";
   } {
     return {
+      configuredProvider: this.configuredProvider,
+      configuredModel: this.configuredModel,
       provider: this.config.provider,
       model: this.config.model,
       reasoningEffort: this.config.modelReasoningEffort,
+      authType: this.config.auth?.type === "api_key" || this.config.auth?.type === "oauth"
+        ? this.config.auth.type
+        : undefined,
+      authMode: this.config.authMode,
     };
   }
 

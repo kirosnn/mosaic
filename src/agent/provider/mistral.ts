@@ -6,6 +6,8 @@ import { applyMistralReasoning, resolveReasoningEnabled } from './reasoningConfi
 import { debugLog } from '../../utils/debug';
 import { StreamSanitizer } from './streamSanitizer';
 import { ContextGuard } from './contextGuard';
+import { getMistralCodestralAuthError, resolveMistralBackendForKey, isCodestralModel, MistralBackend } from './mistralAuth';
+import { readConfig } from '../../utils/config';
 
 export class MistralProvider implements Provider {
   async *sendMessage(
@@ -14,12 +16,47 @@ export class MistralProvider implements Provider {
     options?: ProviderSendOptions
   ): AsyncGenerator<AgentEvent> {
     const cleanApiKey = config.apiKey?.trim().replace(/[\r\n]+/g, '');
-    const cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    let cleanModel = config.model.trim().replace(/[\r\n]+/g, '');
+    let authMode = config.authMode ?? 'generic';
+    let backend: MistralBackend = 'generic-api';
+
+    if (cleanApiKey) {
+      const userConfig = readConfig();
+      try {
+        backend = await resolveMistralBackendForKey(userConfig, cleanApiKey);
+        authMode = backend === 'codestral-domain' ? 'codestral-only' : 'generic';
+      } catch (err: any) {
+        yield {
+          type: 'error',
+          error: err.message,
+        };
+        return;
+      }
+
+      if (backend === 'codestral-domain' && !isCodestralModel(cleanModel)) {
+        debugLog(`[mistral] backend=codestral-domain substituting model=${cleanModel} with codestral-latest`);
+        cleanModel = 'codestral-latest';
+      }
+    }
+
     const { enabled: reasoningEnabled } = await resolveReasoningEnabled(config.provider, cleanModel);
-    debugLog(`[mistral] starting stream model=${cleanModel} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
+    const baseURL = backend === 'codestral-domain' ? 'https://codestral.mistral.ai/v1' : 'https://api.mistral.ai/v1';
+    debugLog(`[mistral] starting stream model=${cleanModel} backend=${backend} baseURL=${baseURL} authMode=${authMode} messagesLen=${messages.length} reasoning=${reasoningEnabled}`);
+
+    if (authMode === 'codestral-only') {
+      const authError = getMistralCodestralAuthError(cleanModel);
+      if (authError) {
+        yield {
+          type: 'error',
+          error: authError,
+        };
+        return;
+      }
+    }
 
     const mistral = createMistral({
       apiKey: cleanApiKey,
+      baseURL,
     });
     const baseModel = mistral(cleanModel);
     const { model, systemPrompt } = applyMistralReasoning(baseModel, config.systemPrompt, reasoningEnabled);
