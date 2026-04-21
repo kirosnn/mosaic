@@ -31,7 +31,11 @@ import { OpenAIProvider } from "./provider/openai";
 import { OpenRouterProvider } from "./provider/openrouter";
 import { GoogleProvider } from "./provider/google";
 import { MistralProvider } from "./provider/mistral";
-import { resolveMistralBackendForKey, isCodestralModel } from "./provider/mistralAuth";
+import {
+  resolveMistralBackendForKey,
+  isCodestralModel,
+  isModelSupportedByMistralKey,
+} from "./provider/mistralAuth";
 import { XaiProvider } from "./provider/xai";
 import { GroqProvider } from "./provider/groq";
 import { OllamaProvider, checkAndStartOllama } from "./provider/ollama";
@@ -242,29 +246,24 @@ function buildTaskReminder(messages: CoreMessage[]): string {
   const originalInstruction = extractOriginalUserInstruction(messages);
   if (originalInstruction) {
     parts.push(
-      `ORIGINAL USER REQUEST:\n${truncateText(normalizeWhitespace(originalInstruction), 1000)}`,
+      `GOAL: ${truncateText(normalizeWhitespace(originalInstruction), 500)}`,
     );
   }
 
   const planState = extractLastPlanState(messages);
   if (planState) {
-    const planLines: string[] = [];
-    for (const s of planState.steps) {
-      const marker =
-        s.status === "completed"
-          ? "[DONE]"
-          : s.status === "in_progress"
-            ? "[IN PROGRESS]"
-            : "[PENDING]";
-      planLines.push(`${marker} ${s.step}`);
+    const pending = planState.steps.filter((s) => s.status !== "completed");
+    if (pending.length > 0) {
+      parts.push(
+        `NEXT STEPS: ${pending
+          .slice(0, 3)
+          .map((s) => s.step)
+          .join("; ")}${pending.length > 3 ? "..." : ""}`,
+      );
     }
-    const pending = planState.steps.filter(
-      (s) => s.status !== "completed",
-    ).length;
-    parts.push(`CURRENT PLAN (${pending} remaining):\n${planLines.join("\n")}`);
   }
 
-  return parts.join("\n\n");
+  return parts.join("\n");
 }
 
 function buildSummary(
@@ -376,12 +375,12 @@ function buildExploreContext(messages: CoreMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]!;
 
-    if (msg.role === "user" && userMessages.length < 2) {
+    if (msg.role === "user" && userMessages.length < 1) {
       const text = normalizeWhitespace(contentToText(msg.content));
-      if (text) userMessages.unshift(truncateText(text, 300));
+      if (text) userMessages.unshift(truncateText(text, 250));
     }
 
-    if (msg.role === "tool" && recentFiles.size < 30) {
+    if (msg.role === "tool" && recentFiles.size < 12) {
       const content: any = msg.content;
       const part = Array.isArray(content) ? content[0] : undefined;
       const toolName = part?.toolName ?? part?.tool_name;
@@ -393,37 +392,17 @@ function buildExploreContext(messages: CoreMessage[]): string {
     }
   }
 
-  if (userMessages.length > 0) {
-    parts.push(`User intent:\n${userMessages.map((m) => `- ${m}`).join("\n")}`);
-  }
-
   const summaries = getExploreSummaries();
   if (summaries.length > 0) {
-    let summariesText = "";
-    let charBudget = 2000;
-    for (let i = summaries.length - 1; i >= 0 && charBudget > 0; i--) {
-      const entry = `[Explore #${i + 1}] ${summaries[i]!}`;
-      if (entry.length <= charBudget) {
-        summariesText = entry + "\n" + summariesText;
-        charBudget -= entry.length;
-      } else {
-        summariesText = entry.slice(0, charBudget) + "...\n" + summariesText;
-        break;
-      }
-    }
-    parts.push(`Previous explore findings:\n${summariesText.trim()}`);
+    const lastSummary = summaries[summaries.length - 1]!;
+    parts.push(`Latest explore findings:\n${truncateText(lastSummary, 1500)}`);
   }
 
   if (recentFiles.size > 0) {
-    parts.push(
-      `Files recently accessed:\n${[...recentFiles].map((f) => `- ${f}`).join("\n")}`,
-    );
+    parts.push(`Recent files: ${[...recentFiles].join(", ")}`);
   }
 
   const context = parts.join("\n\n");
-  debugLog(
-    `[context] exploreContext built chars=${context.length} userHints=${userMessages.length} previousExploreSummaries=${summaries.length} recentFiles=${recentFiles.size}`,
-  );
   return context;
 }
 
@@ -567,13 +546,21 @@ export class Agent {
     if (!isLightweightHandling && runtimeContext?.repoSummary) {
       const isArchMode =
         runtimeContext.taskModeDecision?.mode === "explore_readonly";
-      const repoPrompt = isArchMode
-        ? formatArchitectureSummary(runtimeContext.repoSummary, 2400)
-        : formatRepositorySummary(runtimeContext.repoSummary, 1800);
-      const label = isArchMode
-        ? "ARCHITECTURE SUMMARY (authoritative — do not re-discover)"
-        : "DETERMINISTIC REPO SCAN";
-      systemPrompt = `${systemPrompt}\n\n${label}:\n${repoPrompt}`;
+      const isShellFollowup = runtimeContext?.turnOrigin === "shell";
+
+      if (isShellFollowup) {
+        systemPrompt = `${systemPrompt}\n\nSHELL EXECUTION CONTEXT:
+The user just ran a shell command manually. Your IMMEDIATE priority is to analyze the command result, explain any errors, and suggest the next logical command if applicable.
+Do NOT resume prior architecture exploration or refactoring plans unless they are directly related to fixing this specific command. Keep your analysis focused on the shell output.`;
+      } else {
+        const repoPrompt = isArchMode
+          ? formatArchitectureSummary(runtimeContext.repoSummary, 2400)
+          : formatRepositorySummary(runtimeContext.repoSummary, 1800);
+        const label = isArchMode
+          ? "ARCHITECTURE SUMMARY (authoritative — do not re-discover)"
+          : "DETERMINISTIC REPO SCAN";
+        systemPrompt = `${systemPrompt}\n\n${label}:\n${repoPrompt}`;
+      }
     }
     const tools = isLightweightHandling ? {} : getTools();
     const lightweightRoute = isLightweightHandling
@@ -581,7 +568,7 @@ export class Agent {
       : undefined;
     const effectiveProvider =
       lightweightRoute?.providerId ?? userConfig.provider;
-    const effectiveModel = lightweightRoute?.modelId ?? userConfig.model;
+    const routedModel = lightweightRoute?.modelId ?? userConfig.model;
     const auth = getAuthForProvider(effectiveProvider);
     const apiKey =
       auth?.type === "api_key"
@@ -595,9 +582,15 @@ export class Agent {
         ? getMistralAuthMode(userConfig, apiKey)
         : undefined;
 
+    let transportModel = routedModel;
+    let backend = effectiveProvider;
+
     this.config = {
       provider: effectiveProvider,
-      model: effectiveModel,
+      model: transportModel,
+      routedModel,
+      transportModel,
+      backend,
       modelReasoningEffort: isLightweightHandling
         ? undefined
         : getModelReasoningEffort(),
@@ -611,12 +604,14 @@ export class Agent {
       isLightweight: isLightweightHandling,
     };
 
+    const effectiveModelToLog = transportModel;
+
     this.provider = this.createProvider(effectiveProvider);
     this.memory = getGlobalMemory();
     this.runtimeContext = runtimeContext;
 
     debugLog(
-      `[agent] initialized configured=${userConfig.provider}/${userConfig.model} effective=${effectiveProvider}/${effectiveModel} auth=${auth?.type ?? "none"} authMode=${authMode ?? "n/a"} lightweight=${isLightweightHandling} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? "default"} repoScan=${runtimeContext?.repoSummary ? "yes" : "no"}`,
+      `[agent] initialized configured=${userConfig.provider}/${userConfig.model} routed=${routedModel} transport=${transportModel} backend=${backend} auth=${auth?.type ?? "none"} authMode=${authMode ?? "n/a"} lightweight=${isLightweightHandling} tools=${Object.keys(tools).length} maxSteps=${this.config.maxSteps} memory={files:${this.memory.getStats().files}} mode=${runtimeContext?.taskModeDecision?.mode ?? "default"} repoScan=${runtimeContext?.repoSummary ? "yes" : "no"}`,
     );
   }
 
@@ -654,27 +649,55 @@ export class Agent {
       `[agent] sendMessage start msgLen=${userMessage.length} preview="${messagePreview}"`,
     );
 
-    if (this.config.provider === "mistral") {
+    if (this.config.provider === "mistral" && this.config.apiKey) {
       const userConfig = readConfig();
-      const resolvedBackend = await resolveMistralBackendForKey(
+      const initialBackend = await resolveMistralBackendForKey(
         userConfig,
         this.config.apiKey,
       );
-      const resolvedMode =
-        resolvedBackend === "codestral-domain" ? "codestral-only" : "generic";
 
-      if (resolvedMode !== this.config.authMode) {
-        this.config = { ...this.config, authMode: resolvedMode };
-      }
-      if (
-        resolvedBackend === "codestral-domain" &&
-        !isCodestralModel(this.config.model)
-      ) {
+      let transportModel = this.config.routedModel || this.config.model;
+      let finalBackend = initialBackend;
+      let fallbackHappened = false;
+
+      const probe = await isModelSupportedByMistralKey(
+        userConfig,
+        this.config.apiKey,
+        transportModel,
+        initialBackend,
+      );
+
+      if (probe.supported) {
+        finalBackend = probe.resolvedBackend;
+      } else {
         debugLog(
-          `[mistral-auth] substituting model=${this.config.model} with codestral-latest`,
+          `[mistral-auth] model=${transportModel} not supported on any compatible backend, falling back to codestral-latest`,
         );
-        this.config = { ...this.config, model: "codestral-latest" };
+        transportModel = "codestral-latest";
+        finalBackend = "codestral-domain";
+        fallbackHappened = true;
       }
+
+      const authMode =
+        finalBackend === "codestral-domain" ? "codestral-only" : "generic";
+
+      if (
+        authMode !== this.config.authMode ||
+        transportModel !== this.config.model ||
+        finalBackend !== this.config.backend
+      ) {
+        this.config = {
+          ...this.config,
+          authMode,
+          model: transportModel,
+          transportModel,
+          backend: finalBackend,
+        };
+      }
+
+      debugLog(
+        `[agent] mistral resolution: configured=${this.configuredModel} routed=${this.config.routedModel} transport=${transportModel} backend=${finalBackend} fallback=${fallbackHappened}`,
+      );
     }
 
     this.memory.incrementTurn();
@@ -1006,6 +1029,9 @@ export class Agent {
   getRunMetadata(): {
     configuredProvider: string;
     configuredModel: string;
+    routedModel: string;
+    transportModel: string;
+    backend: string;
     provider: string;
     model: string;
     reasoningEffort?: string;
@@ -1015,12 +1041,17 @@ export class Agent {
     return {
       configuredProvider: this.configuredProvider,
       configuredModel: this.configuredModel,
+      routedModel: this.config.routedModel ?? this.config.model,
+      transportModel: this.config.transportModel ?? this.config.model,
+      backend: this.config.backend ?? this.config.provider,
       provider: this.config.provider,
       model: this.config.model,
       reasoningEffort: this.config.modelReasoningEffort,
-      authType: this.config.auth?.type === "api_key" || this.config.auth?.type === "oauth"
-        ? this.config.auth.type
-        : undefined,
+      authType:
+        this.config.auth?.type === "api_key" ||
+        this.config.auth?.type === "oauth"
+          ? this.config.auth.type
+          : undefined,
       authMode: this.config.authMode,
     };
   }

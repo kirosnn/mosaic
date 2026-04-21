@@ -46,6 +46,7 @@ export interface MosaicConfig {
   modelReasoningEffort?: ReasoningEffort;
   mistralAuthMode?: "generic" | "codestral-only";
   mistralResolvedBackendByKey?: Record<string, "generic-api" | "codestral-domain">;
+  mistralModelSupportByKey?: Record<string, string[]>;
   apiKey?: string;
   apiKeys?: Record<string, string>;
   apiModels?: Record<string, string>;

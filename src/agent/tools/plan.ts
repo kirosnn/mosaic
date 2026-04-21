@@ -1,5 +1,6 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 const PlanStepSchema = z.object({
   step: z.string().describe('A short, specific action item.'),
@@ -13,6 +14,11 @@ export const plan: CoreTool = tool({
     plan: z.array(PlanStepSchema).min(1).describe('Ordered list of steps with statuses.'),
   }),
   execute: async (args) => {
+    const cached = checkDuplicate('plan', args);
+    if (cached) {
+      return cached.result;
+    }
+
     const rawPlan = Array.isArray(args.plan) ? args.plan : [];
     const normalizedPlan = rawPlan
       .map((item) => ({
@@ -22,6 +28,9 @@ export const plan: CoreTool = tool({
       .filter((item) => item.step.trim().length > 0);
 
     const explanation = typeof args.explanation === 'string' ? args.explanation : undefined;
-    return { explanation, plan: normalizedPlan };
+    const result = { explanation, plan: normalizedPlan };
+
+    recordCall('plan', args, result, explanation || 'Updated plan');
+    return result;
   },
 });

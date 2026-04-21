@@ -41,6 +41,9 @@ export interface Message {
   isError?: boolean;
   responseDuration?: number;
   responseModel?: string;
+  routedModel?: string;
+  transportModel?: string;
+  backend?: string;
   responseReasoningEffort?: string;
   blendWord?: string;
   thinkingContent?: string;

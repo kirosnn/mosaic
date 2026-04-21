@@ -372,6 +372,8 @@ function formatAssistantMetaLine(
   responseDuration: number | null | undefined,
   responseModel: string | null | undefined,
   responseReasoningEffort: string | null | undefined,
+  transportModel?: string,
+  backend?: string,
 ): string {
   const time = formatAssistantResponseDuration(responseDuration);
   const modelName = formatAssistantModelName(responseModel);
@@ -379,7 +381,15 @@ function formatAssistantMetaLine(
     typeof responseReasoningEffort === "string"
       ? responseReasoningEffort.trim()
       : "";
-  const modelLabel = [modelName, reasoning].filter(Boolean).join(" ");
+  let modelLabel = [modelName, reasoning].filter(Boolean).join(" ");
+
+  if (transportModel && responseModel && transportModel !== responseModel) {
+    const transportName = formatAssistantModelName(transportModel);
+    if (transportName) {
+      modelLabel = `${modelLabel} (via ${transportName})`;
+    }
+  }
+
   const brewWord = blendWord?.trim() || BLEND_WORDS[0] || "Brewed";
   if (modelLabel && time) {
     return `${modelLabel} · ${brewWord} in ${time}`;
@@ -1017,6 +1027,8 @@ export function ChatPage({
                     item.responseDuration,
                     item.responseModel,
                     item.responseReasoningEffort,
+                    item.transportModel,
+                    item.backend,
                   );
                   const innerWidth = Math.max(10, terminalWidth - 2);
                   const leftSegment = `─ `;

@@ -500,6 +500,20 @@ function formatListTree(result: unknown): string[] {
           .map((e: unknown) => (typeof e === 'string' ? e : ''))
           .filter((e: string) => e);
       }
+    } else if (parsed && typeof parsed === 'object' && parsed.truncated === true) {
+      const total = typeof parsed.totalEntries === 'number' ? parsed.totalEntries : 0;
+      const lines: string[] = [`(${total} entries, truncated)`];
+      const breakdown = parsed.topLevelBreakdown;
+      if (breakdown && typeof breakdown === 'object' && !Array.isArray(breakdown)) {
+        for (const [dir, counts] of Object.entries(breakdown as Record<string, { files?: number; dirs?: number }>)) {
+          const c = counts as { files?: number; dirs?: number };
+          const parts: string[] = [];
+          if (c.dirs) parts.push(`${c.dirs} dir${c.dirs > 1 ? 's' : ''}`);
+          if (c.files) parts.push(`${c.files} file${c.files > 1 ? 's' : ''}`);
+          lines.push(`  ${dir}/  ${parts.join(', ')}`);
+        }
+      }
+      return lines;
     } else {
       return [];
     }

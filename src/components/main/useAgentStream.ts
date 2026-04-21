@@ -379,6 +379,9 @@ export async function runAgentStream(
   const runMetadata: RunMetadata = {
     configuredProvider,
     configuredModel,
+    routedModel: configuredModel,
+    transportModel: configuredModel,
+    backend: configuredProvider,
     effectiveProvider: configuredProvider,
     effectiveModel: configuredModel,
     authType: undefined,
@@ -396,7 +399,10 @@ export async function runAgentStream(
         conversationSteps[i] = {
           ...conversationSteps[i]!,
           responseDuration: duration,
-          responseModel,
+          responseModel: runMetadata.routedModel || responseModel,
+          routedModel: runMetadata.routedModel,
+          transportModel: runMetadata.transportModel,
+          backend: runMetadata.backend,
           responseReasoningEffort,
           blendWord,
         };
@@ -416,7 +422,10 @@ export async function runAgentStream(
           newMessages[i] = {
             ...newMessages[i]!,
             responseDuration: duration,
-            responseModel,
+            responseModel: runMetadata.routedModel || responseModel,
+            routedModel: runMetadata.routedModel,
+            transportModel: runMetadata.transportModel,
+            backend: runMetadata.backend,
             responseReasoningEffort,
             blendWord,
           };
@@ -558,6 +567,9 @@ export async function runAgentStream(
     responseModel = effectiveRun.model;
     runMetadata.configuredProvider = effectiveRun.configuredProvider;
     runMetadata.configuredModel = effectiveRun.configuredModel;
+    runMetadata.routedModel = effectiveRun.routedModel;
+    runMetadata.transportModel = effectiveRun.transportModel;
+    runMetadata.backend = effectiveRun.backend;
     runMetadata.effectiveProvider = effectiveRun.provider;
     runMetadata.effectiveModel = effectiveRun.model;
     runMetadata.authType = effectiveRun.authType;

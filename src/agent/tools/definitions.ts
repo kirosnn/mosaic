@@ -175,6 +175,8 @@ function withUnknownToolFallback(baseTools: Record<string, CoreTool>): Record<st
   return new Proxy(baseTools, {
     get(target, prop, receiver) {
       if (typeof prop === 'string' && !(prop in target)) {
+        if (prop === 'then' || prop === 'toJSON') return undefined;
+
         const embedded = parseEmbeddedToolCall(prop);
         if (embedded && embedded.toolName in target) {
           return getFallback(prop);
@@ -182,9 +184,7 @@ function withUnknownToolFallback(baseTools: Record<string, CoreTool>): Record<st
         if (resolveTrustedAlias(prop, target)) {
           return getFallback(prop);
         }
-        if (isPlausibleToolName(prop)) {
-          return getStrictUnknown(prop);
-        }
+        return getStrictUnknown(prop);
       }
       return Reflect.get(target, prop, receiver);
     },

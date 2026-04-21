@@ -13,7 +13,11 @@ import {
   getEffectiveSubsystem,
   type SubsystemInfo,
 } from "../../utils/subsystemDiscovery";
-import { runCommand, type SubsystemOptions, type SubsystemResult } from "../subsystemRunner";
+import {
+  runCommand,
+  type SubsystemOptions,
+  type SubsystemResult,
+} from "../subsystemRunner";
 import { generateDiff, formatDiffForDisplay } from "../../utils/diff";
 import {
   trackFileChange,
@@ -440,10 +444,14 @@ async function executeReadOnlyBashChain(
   options: SubsystemOptions,
 ): Promise<SubsystemResult> {
   const parsed = splitTopLevelBashSegments(command);
-  const segments = parsed.segments.length > 0 ? parsed.segments : [command.trim()];
+  const segments =
+    parsed.segments.length > 0 ? parsed.segments : [command.trim()];
   const timeout = options.timeout ?? 30000;
   const env = options.env ?? {};
-  const perSegmentTimeout = Math.max(1000, Math.floor(timeout / Math.max(1, segments.length)));
+  const perSegmentTimeout = Math.max(
+    1000,
+    Math.floor(timeout / Math.max(1, segments.length)),
+  );
   const results = await Promise.all(
     segments.map((segment) =>
       runCommand(subsystem, segment, {
@@ -457,7 +465,8 @@ async function executeReadOnlyBashChain(
 
   const outputs = results.map(({ segment, result }) => {
     const header = `[$ ${segment}]`;
-    const body = result.output || result.error || "Command executed with no output";
+    const body =
+      result.output || result.error || "Command executed with no output";
     return `${header}\n${body}`;
   });
 
@@ -465,12 +474,17 @@ async function executeReadOnlyBashChain(
   return {
     success,
     output: outputs.join("\n\n"),
-    exitCode: success ? 0 : results.find(({ result }) => !result.success)?.result.exitCode,
+    exitCode: success
+      ? 0
+      : results.find(({ result }) => !result.success)?.result.exitCode,
     error: success
       ? undefined
-      : results.find(({ result }) => !result.success)?.result.error || "One or more commands failed",
+      : results.find(({ result }) => !result.success)?.result.error ||
+        "One or more commands failed",
     subsystemUsed: subsystem.id,
-    isCompatibilityFailure: results.some(({ result }) => result.isCompatibilityFailure),
+    isCompatibilityFailure: results.some(
+      ({ result }) => result.isCompatibilityFailure,
+    ),
   };
 }
 
@@ -1542,6 +1556,35 @@ async function generatePreview(
   }
 }
 
+function isIncompleteUnixCommand(command: string): {
+  isIncomplete: boolean;
+  message?: string;
+} {
+  const trimmed = command.trim();
+  const parts = trimmed.split(/\s+/);
+  const cmd = parts[0]?.toLowerCase();
+
+  if (cmd === "grep") {
+    const hasPathOrFile = parts.length > 2;
+    const hasPipeOrRedirect = /[|<>&&;]/.test(trimmed);
+    const hasOptions = parts.some((p) => p.startsWith("-") && p !== "-");
+
+    if (!hasPathOrFile && !hasPipeOrRedirect && !hasOptions) {
+      return {
+        isIncomplete: true,
+        message: `The command "grep" is incomplete because it is missing a file or directory to search in, and no input is being piped to it. This would cause the command to wait indefinitely for input.
+
+Try one of these valid variants instead:
+- grep -R "pattern" . (recursive search in current directory)
+- findstr /S /N /I "pattern" * (Windows alternative)
+- Get-ChildItem -Recurse -File | Select-String -Pattern "pattern" (PowerShell alternative)`,
+      };
+    }
+  }
+
+  return { isIncomplete: false };
+}
+
 export async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
@@ -2017,6 +2060,16 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
       case "bash": {
         let command = args.command as string;
         let timeout = 30000;
+
+        const incompleteCheck = isIncompleteUnixCommand(command);
+        if (incompleteCheck.isIncomplete) {
+          return {
+            success: false,
+            error: incompleteCheck.message,
+            userMessage: "Incomplete command detected",
+          };
+        }
+
         const flushBashTrackedChanges =
           async (): Promise<WorkspaceReviewOutcome | null> => {
             if (!bashSnapshotBefore) {
@@ -2058,10 +2111,11 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const fallbacks: SubsystemInfo[] = [initialSubsystem];
 
-        // If it's a Unix-like command on Windows, prioritize WSL or Git Bash
         if (process.platform === "win32" && isUnixLikeCommand(command)) {
           const unixSubsystems = allSubsystems
-            .filter((s) => s.id === "wsl" || s.id === "git-bash" || s.id === "bash")
+            .filter(
+              (s) => s.id === "wsl" || s.id === "git-bash" || s.id === "bash",
+            )
             .filter((s) => s.available && s.id !== initialSubsystem.id)
             .sort((a, b) => b.priority - a.priority);
 
@@ -2108,12 +2162,16 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
             let success = true;
 
             if (isReadOnlyBashCommandChain(command)) {
-              const runResult = await executeReadOnlyBashChain(subsystem, command, {
-                cwd: workspace,
-                timeout,
-                env,
-                abortSignal: options.abortSignal,
-              });
+              const runResult = await executeReadOnlyBashChain(
+                subsystem,
+                command,
+                {
+                  cwd: workspace,
+                  timeout,
+                  env,
+                  abortSignal: options.abortSignal,
+                },
+              );
               output = runResult.output;
               success = runResult.success;
               if (!success) {
@@ -2280,6 +2338,10 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const files = await findFilesByPattern(pattern, fullPath);
 
+        debugLog(
+          `[glob] workspaceRoot=${fullPath} pattern=${pattern} discoveredFiles=${files.length}`,
+        );
+
         return {
           success: true,
           result: JSON.stringify(files),
@@ -2428,6 +2490,10 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         }
 
         let allFiles = await findFilesByPattern(finalPattern, fullPath);
+
+        debugLog(
+          `[grep] workspaceRoot=${fullPath} pattern=${finalPattern} fileType=${normalizedFileType ?? "none"} discoveredFiles=${allFiles.length} extensions=${resolvedExtensions?.join(",") ?? "all"}`,
+        );
 
         if (!includeHidden) {
           allFiles = allFiles.filter(

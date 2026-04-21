@@ -29,4 +29,20 @@ describe('taskMode routing', () => {
     const decision = await detectTaskModeWithModel([{ role: 'user', content: 'Tu as des serveurs MCP ?' }]);
     expect(decision.mode).toBe('assistant_capabilities');
   });
+
+  it('should route workspace inspection questions to explore_readonly', async () => {
+    process.env.MOSAIC_DISABLE_MODEL_TASK_ROUTER = '1';
+    const questions = [
+      'Dis moi ce qui se trouve dans ce dossier',
+      'What is in this folder?',
+      'List the files here',
+      'inspect this project',
+      'what is in the current directory',
+    ];
+
+    for (const q of questions) {
+      const decision = await detectTaskModeWithModel([{ role: 'user', content: q }]);
+      expect(decision.mode).toBe('explore_readonly');
+    }
+  });
 });

@@ -31,12 +31,21 @@ function main() {
     process.exit(1);
   }
 
-  const entryPoint = path.join(__dirname, '..', 'src', 'app', 'cli', 'main.tsx');
+  const packageRoot = path.resolve(__dirname, '..');
+  const entryPoint = path.join(packageRoot, 'src', 'app', 'cli', 'main.tsx');
   const args = process.argv.slice(2);
 
+  // Spawn with the mosaic package root as cwd so bun resolves node_modules correctly
+  // (bun link on Windows doesn't chain resolution back to the linked package's node_modules).
+  // The user's original working directory is passed via env so the app can restore it.
   const child = spawn('bun', ['run', entryPoint, ...args], {
     stdio: 'inherit',
-    shell: process.platform === 'win32'
+    shell: process.platform === 'win32',
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      MOSAIC_WORKSPACE: process.env.MOSAIC_WORKSPACE || process.cwd(),
+    },
   });
 
   child.on('error', (error) => {

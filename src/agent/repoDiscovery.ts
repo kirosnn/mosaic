@@ -9,6 +9,7 @@ export const EXCLUDED_DISCOVERY_DIRECTORIES = new Set([
   '.hg',
   'dist',
   'build',
+  'artifacts',
   '.next',
   '.nuxt',
   '.output',

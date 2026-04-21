@@ -115,12 +115,32 @@ const WORKSPACE_REFERENCE_PATTERNS = [
   /\bcodebase\b/i,
   /\bfichiers?\b/i,
   /\bfiles?\b/i,
+  /\bfolder\b/i,
+  /\bdirectory\b/i,
+  /\bdossier\b/i,
+  /\brépertoire\b/i,
   /\bbranch\b/i,
   /\bdiff\b/i,
   /\bcommit\b/i,
   /\bpackage\.json\b/i,
   /\bsrc\b/i,
   /\btests?\b/i,
+];
+
+const WORKSPACE_INSPECTION_PATTERNS = [
+  /^(?:what(?:'s|\s+is)\s+)?in\s+(?:this|the|current|my|your|the\s+current|the\s+present|the\s+working)\s+(?:folder|directory|repo|repository|project|workspace|codebase)\b.*\??$/i,
+  /\blist\s+(?:the\s+)?files?\b.*\??$/i,
+  /^(?:inspect)\s+(?:this|the|current|my|the\s+current|the\s+present|the\s+working)\s+(?:repo|repository|project|workspace|codebase)\b.*\??$/i,
+  /\bce\s+qui\s+se\s+trouve\s+dans\s+(?:ce|le|le\s+présent|mon|votre|le\s+présent)\s+(?:dossier|répertoire|projet|repo|repository)\b.*\??$/i,
+  /\blister\s+(?:les\s+)?fichiers?\b.*\??$/i,
+  /\bwhat(?:'s|\s+is)\s+in\s+this\b.*\??$/i,
+  /\bqu'est-ce\s+qu'il\s+y\s+a\s+dans\s+this\b.*\??$/i,
+  /\bqu['’]y\s+a-t-il\s+dans\s+ce\s+dossier\b.*\??$/i,
+  /\bliste\s+les\s+fichiers\s+ici\b.*\??$/i,
+  /\bwhat\s+is\s+in\s+this\s+folder\b.*\??$/i,
+  /\bwhat\s+is\s+in\s+the\s+current\s+directory\b.*\??$/i,
+  /\binspect\s+this\s+project\b.*\??$/i,
+  /\blist\s+files\s+here\b.*\??$/i,
 ];
 
 const ASSISTANT_REFERENCE_PATTERNS = [
@@ -235,7 +255,8 @@ export function shouldBypassModelTaskRouter(
 
   return decision.mode === 'chat'
     || decision.mode === 'assistant_capabilities'
-    || decision.mode === 'environment_config';
+    || decision.mode === 'environment_config'
+    || decision.mode === 'explore_readonly';
 }
 
 export function isLightweightChatIntent(text: string): boolean {
@@ -336,6 +357,10 @@ function classifyTextTaskMode(text: string): Omit<TaskModeDecision, 'latestUserR
 
   if (matchesAny(lower, SUBSYSTEM_PATTERNS)) {
     return { mode: 'environment_config', confidence: 'high', reason: 'subsystem or shell environment question detected' };
+  }
+
+  if (matchesAny(lower, WORKSPACE_INSPECTION_PATTERNS)) {
+    return { mode: 'explore_readonly', confidence: 'high', reason: 'workspace inspection request detected' };
   }
 
   if (isLightweightChatIntent(normalized)) {
@@ -477,13 +502,107 @@ export function buildTaskModePrompt(mode: TaskMode): string {
 - Keep outside-workspace reads and writes policy-aware; approvals and review still apply when required.`;
     case 'explore_readonly':
       return `${header}
-- Start from the deterministic repo scan summary. It already contains manifests, entrypoints, and key config files.
-- Do NOT call list with recursive=true on the root directory or broad paths (apps/, src/, tests/). It will be truncated and wastes tokens.
+- Start from the deterministic repo scan summary when available. It already contains manifests, entrypoints, and key config files.
+- Do NOT call list with recursive=true on the root directory or broad paths. It will be truncated and wastes tokens.
 - Use glob or grep with specific patterns to locate files when the repo scan is not sufficient.
 - Read only targeted files: primary manifest, primary entrypoint, a few core modules. Stop once the architecture is clear.
 - Do not explore tests/, tools/, or artifacts/ unless explicitly asked.
 - Do not call write, edit, bash, or mutation MCP tools unless the user explicitly asks for changes or execution.
-- Do not call plan for read-only understanding tasks.`;
+- Do not call plan for read-only understanding tasks.
+
+───────────────────────────────────────────────
+WORKSPACE / FOLDER INSPECTION FLOW
+Applies to: "what's in this folder", "list files", "inspect this project", or equivalent.
+───────────────────────────────────────────────
+
+Step 1 — NARRATIVE FIRST (text before any tool call):
+  Output a short visible message in the user's language. This must appear BEFORE title and all tools.
+  Vary the phrasing. Examples:
+  - "Je vais inspecter la structure du projet puis vérifier les manifestes importants."
+  - "Je commence par regarder la racine, puis je vais confirmer les technologies présentes."
+  - "Let me inspect the workspace structure."
+
+Step 2 — TITLE (first tool call):
+  Call title in the user's language. Examples:
+  - "Inspection du dossier courant" / "Structure du projet" / "Workspace overview"
+
+Step 3 — LIST TOP LEVEL:
+  Call list(path=".", recursive=false). Can be parallel with title.
+
+Step 4 — INTER-PHASE NARRATION + PARALLEL GLOB FOR PROJECT MARKERS:
+  After the listing result arrives, write one sentence about what you see and what you are checking next:
+  - "La racine contient un .sln et plusieurs répertoires — je vais vérifier les manifestes .NET et Node."
+  - "I can see .csproj files and a package.json — checking those in parallel."
+  Then call globs in parallel for plausible project markers only:
+  - glob("**/package.json")         JS/TS/Node tooling visible
+  - glob("**/*.csproj")             .NET project files
+  - glob("**/*.sln")                Visual Studio solution
+  - glob("**/Cargo.toml")           Rust workspace or crate
+  - glob("**/go.mod")               Go module
+  - glob("**/pyproject.toml")       Python project
+  Do NOT glob blindly for everything. Pick only markers that are plausible from the listing.
+
+Step 5 — FOCUSED READS (optional):
+  Read key manifest snippets (name, description, workspace members) only when they add concrete interpretation value.
+  Skip if listing + globs already give enough signal.
+
+Step 6 — TRANSITION + SYNTHESIS:
+  Emit a short transition phrase naturally suited to the context, then deliver a structured final answer.
+  Vary transitions — do NOT always use the same phrase.
+
+  The final answer MUST include:
+  - What the project concretely appears to be (product type, target platform, likely use case)
+  - Primary technology stack (language, framework, runtime — be specific)
+  - Important source roots grouped by role: source code, tests, scripts, docs, config
+  - Key manifests and what each one indicates
+  - Build/generated/output directories flagged as secondary: artifacts/, dist/, target/, __pycache__/, node_modules/
+  - Mixed-language or multi-technology setup explained (e.g., "Rust component for X, Node tooling for Y")
+  - Likely developer workflow when obvious from the structure
+
+  The final answer must EXPLAIN, not just LIST.
+  "Found package.json, Cargo.toml, and *.csproj" is NOT acceptable.
+  "This appears to be a Windows desktop app in .NET/C# with Bun/Node tooling at the root and a Rust component for speech integration" IS the target quality.
+
+CRITICAL: Always synthesize. Use the repo scan summary when available.
+
+───────────────────────────────────────────────
+GIT REPORTING FLOW
+Applies to: "git status", "état git", "full git report", "what changed", "donne-moi un rapport git", etc.
+───────────────────────────────────────────────
+
+Step 1 — NARRATIVE FIRST (text before any tool call):
+  One sentence in the user's language explaining what you are about to check.
+  This MUST appear as text output BEFORE the title tool call.
+  Examples:
+  - "Je vais examiner l'état Git actuel, les derniers commits et la configuration du dépôt."
+  - "Let me pull together a full Git status report."
+  - "Je vais vérifier la branche, les modifications locales et les commits récents."
+
+Step 2 — TITLE (first tool call):
+  Call title in the user's language. Examples:
+  - "Rapport Git" / "État du dépôt" / "Git status report"
+
+Step 3 — GIT INVESTIGATION (read-only bash commands):
+  Run a compact, targeted git batch. Prefer these commands:
+  - git status --short --branch         (state + branch + divergence)
+  - git log --oneline -n 5              (recent commit direction)
+  - git remote -v                       (remote setup)
+  - git diff --stat                     (if modifications are present)
+  - git stash list                      (if relevant)
+  Run commands in parallel where possible. Do NOT run redundant commands if a structured wrapper already provides the same data.
+
+Step 4 — SYNTHESIS: produce a real repository report covering:
+  - Overall state: clean vs dirty (explain, don't just count)
+  - Current branch and divergence from remote (ahead/behind)
+  - Modified files: what was changed and what it likely means
+  - Untracked files: brief mention
+  - Recent commit trend: what direction is work heading
+  - Remote setup: where pushes go
+  - Concrete next action when relevant: "tu peux pousser", "il reste X fichiers à nettoyer", etc.
+
+  The report must read like a human wrote it, not like command output was pasted.
+  Use structured tool output fields (modifiedCount, untrackedCount, aheadCount, behindCount, currentBranch) when a wrapper provides them — do not ignore them.`;
+
     case 'plan':
       return `${header}
 - Focus on producing and maintaining a compact plan.

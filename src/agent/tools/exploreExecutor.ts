@@ -3,10 +3,13 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
-import { resolveMistralBackendForKey, isCodestralModel } from "../provider/mistralAuth";
+import {
+  resolveMistralBackendForKey,
+  isCodestralModel,
+} from "../provider/mistralAuth";
 import { createXai } from "@ai-sdk/xai";
-import { stat } from "fs/promises";
-import { resolve } from "path";
+import { stat, readdir } from "fs/promises";
+import { resolve, extname } from "path";
 import { z } from "zod";
 import {
   readConfig,
@@ -341,6 +344,234 @@ configureGlobalRateLimit(EXPLORE_RATE_LIMIT_KEY, {
   burstLimit: 5,
   cooldownMultiplier: 2,
 });
+
+interface ProjectTypeInfo {
+  label: string;
+  extensions: string[];
+  globPatterns: string[];
+  markerFiles: string[];
+}
+
+async function detectProjectType(
+  workspaceRoot: string,
+): Promise<ProjectTypeInfo> {
+  const FALLBACK: ProjectTypeInfo = {
+    label: "unknown",
+    extensions: [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".cs",
+      ".py",
+      ".go",
+      ".rs",
+      ".cpp",
+      ".c",
+      ".h",
+      ".java",
+      ".json",
+      ".md",
+    ],
+    globPatterns: [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.cs",
+      "**/*.py",
+      "**/*.go",
+      "**/*.rs",
+    ],
+    markerFiles: [],
+  };
+
+  try {
+    const topEntries = await readdir(workspaceRoot, { withFileTypes: true });
+    const topNames = topEntries.map((e) => e.name.toLowerCase());
+
+    const markerFiles: string[] = [];
+    const foundExts = new Set<string>();
+
+    for (const entry of topEntries) {
+      if (entry.isFile()) {
+        const ext = extname(entry.name).toLowerCase();
+        if (ext) foundExts.add(ext);
+        markerFiles.push(entry.name);
+      }
+    }
+
+    for (const entry of topEntries) {
+      if (
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        ![
+          "node_modules",
+          "dist",
+          "build",
+          "bin",
+          "obj",
+          "target",
+          ".git",
+        ].includes(entry.name.toLowerCase())
+      ) {
+        try {
+          const subEntries = await readdir(resolve(workspaceRoot, entry.name), {
+            withFileTypes: true,
+          });
+          for (const sub of subEntries) {
+            if (sub.isFile()) {
+              const ext = extname(sub.name).toLowerCase();
+              if (ext) foundExts.add(ext);
+              markerFiles.push(`${entry.name}/${sub.name}`);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const lowerMarkers = markerFiles.map((m) => m.toLowerCase());
+
+    const hasCsproj = lowerMarkers.some(
+      (m) =>
+        m.endsWith(".csproj") || m.endsWith(".fsproj") || m.endsWith(".vbproj"),
+    );
+    const hasSln = topNames.some((n) => n.endsWith(".sln"));
+    if (hasCsproj || hasSln) {
+      return {
+        label: "C# / .NET",
+        extensions: [
+          ".cs",
+          ".xaml",
+          ".csproj",
+          ".sln",
+          ".props",
+          ".targets",
+          ".json",
+          ".xml",
+          ".md",
+        ],
+        globPatterns: ["**/*.cs", "**/*.xaml", "**/*.csproj"],
+        markerFiles: lowerMarkers
+          .filter((m) => m.endsWith(".csproj") || m.endsWith(".sln"))
+          .slice(0, 5),
+      };
+    }
+
+    const hasCargoToml = topNames.includes("cargo.toml");
+    if (hasCargoToml) {
+      return {
+        label: "Rust",
+        extensions: [".rs", ".toml", ".md"],
+        globPatterns: ["**/*.rs", "**/Cargo.toml"],
+        markerFiles: ["Cargo.toml"],
+      };
+    }
+
+    const hasGoMod = topNames.includes("go.mod");
+    if (hasGoMod) {
+      return {
+        label: "Go",
+        extensions: [".go", ".mod", ".sum", ".md"],
+        globPatterns: ["**/*.go"],
+        markerFiles: ["go.mod"],
+      };
+    }
+
+    const hasPyProject =
+      topNames.includes("pyproject.toml") ||
+      topNames.includes("setup.py") ||
+      topNames.includes("requirements.txt");
+    const hasPyFiles = foundExts.has(".py");
+    if (hasPyProject || hasPyFiles) {
+      return {
+        label: "Python",
+        extensions: [".py", ".pyi", ".toml", ".cfg", ".md"],
+        globPatterns: ["**/*.py"],
+        markerFiles: lowerMarkers
+          .filter(
+            (m) =>
+              m === "pyproject.toml" ||
+              m === "setup.py" ||
+              m === "requirements.txt",
+          )
+          .slice(0, 3),
+      };
+    }
+
+    const hasTsConfig = topNames.includes("tsconfig.json");
+    const hasPackageJson = topNames.includes("package.json");
+    const hasTsFiles = foundExts.has(".ts") || foundExts.has(".tsx");
+    if (hasTsConfig || (hasPackageJson && hasTsFiles)) {
+      return {
+        label: "TypeScript",
+        extensions: [".ts", ".tsx", ".js", ".jsx", ".json", ".md"],
+        globPatterns: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+        markerFiles: [
+          hasTsConfig ? "tsconfig.json" : "",
+          hasPackageJson ? "package.json" : "",
+        ].filter(Boolean),
+      };
+    }
+    if (hasPackageJson) {
+      return {
+        label: "JavaScript / Node.js",
+        extensions: [".js", ".jsx", ".mjs", ".cjs", ".json", ".md"],
+        globPatterns: ["**/*.js", "**/*.jsx", "**/*.mjs"],
+        markerFiles: ["package.json"],
+      };
+    }
+
+    const hasMavenOrGradle =
+      topNames.includes("pom.xml") ||
+      topNames.includes("build.gradle") ||
+      topNames.includes("build.gradle.kts");
+    const hasJavaFiles = foundExts.has(".java") || foundExts.has(".kt");
+    if (hasMavenOrGradle || hasJavaFiles) {
+      const isKotlin =
+        foundExts.has(".kt") || topNames.includes("build.gradle.kts");
+      return {
+        label: isKotlin ? "Kotlin" : "Java",
+        extensions: [".java", ".kt", ".xml", ".gradle", ".properties", ".md"],
+        globPatterns: ["**/*.java", "**/*.kt"],
+        markerFiles: lowerMarkers
+          .filter((m) => m === "pom.xml" || m.endsWith(".gradle"))
+          .slice(0, 3),
+      };
+    }
+
+    const hasCppFiles =
+      foundExts.has(".cpp") ||
+      foundExts.has(".cc") ||
+      foundExts.has(".cxx") ||
+      foundExts.has(".c");
+    const hasCmake =
+      topNames.includes("cmakelists.txt") ||
+      topNames.some((n) => n.endsWith(".cmake"));
+    if (hasCppFiles || hasCmake) {
+      return {
+        label: "C / C++",
+        extensions: [
+          ".cpp",
+          ".cc",
+          ".cxx",
+          ".c",
+          ".h",
+          ".hpp",
+          ".hxx",
+          ".cmake",
+          ".md",
+        ],
+        globPatterns: ["**/*.cpp", "**/*.c", "**/*.h", "**/*.hpp"],
+        markerFiles: hasCmake ? ["CMakeLists.txt"] : [],
+      };
+    }
+
+    return FALLBACK;
+  } catch {
+    return FALLBACK;
+  }
+}
 
 const EXPLORE_SYSTEM_PROMPT = `You are an exploration agent that gathers information from a codebase and the web.
 
@@ -2075,7 +2306,14 @@ export async function executeExploreTool(
   }
 
   debugLog(
-    `[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size}`,
+    `[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} workspaceRoot=${workspaceRoot} projectType=${projectType.label}`,
+  );
+
+  const workspaceRoot = process.cwd();
+  const projectType = await detectProjectType(workspaceRoot);
+
+  debugLog(
+    `[explore] workspaceRoot=${workspaceRoot} projectType=${projectType.label} extensions=${projectType.extensions.join(",")} markers=${projectType.markerFiles.join(",")}`,
   );
 
   const abortSignal = getExploreAbortSignal();
@@ -2096,6 +2334,19 @@ export async function executeExploreTool(
     const previousSummaries = getExploreSummaries();
 
     let dynamicSections = "";
+
+    {
+      const extList = projectType.extensions.join(", ");
+      const globExamples = projectType.globPatterns
+        .slice(0, 3)
+        .map((p) => `glob(pattern="${p}")`)
+        .join(", ");
+      const markerNote =
+        projectType.markerFiles.length > 0
+          ? ` Detected marker files: ${projectType.markerFiles.slice(0, 3).join(", ")}.`
+          : "";
+      dynamicSections += `\n\n# WORKSPACE\nWorkspace root: ${workspaceRoot}\nProject type: ${projectType.label}${markerNote}\nPrimary file extensions: ${extList}\n\nCRITICAL: Use these extensions when searching. Do NOT default to TypeScript patterns unless this is a TypeScript project.\nCorrect glob examples for this project: ${globExamples}\nFor grep, always pass file_type or pattern matching the project extensions above.`;
+    }
 
     if (previousSummaries.length > 0) {
       let summariesText = "";

@@ -118,6 +118,9 @@ export interface FallbackEvent extends BaseEvent {
 export interface RunMetadata {
   configuredProvider: string;
   configuredModel: string;
+  routedModel: string;
+  transportModel: string;
+  backend: string;
   effectiveProvider: string;
   effectiveModel: string;
   authType?: "api_key" | "oauth" | "codestral-only";
@@ -146,6 +149,9 @@ export type AgentEvent =
 export interface ProviderConfig {
   provider: string;
   model: string;
+  routedModel?: string;
+  transportModel?: string;
+  backend?: string;
   modelReasoningEffort?: ReasoningEffort;
   apiKey?: string;
   auth?: ProviderAuth;
@@ -201,6 +207,7 @@ export interface AgentRuntimeContext {
   environmentContextSummary?: string;
   subsystemContextSummary?: string;
   environmentHandlingMode?: "lightweight" | "full";
+  turnOrigin?: "shell" | "user" | "explore";
   contextMetrics?: {
     compiledContextChars: number;
     compactedContextSize: number;

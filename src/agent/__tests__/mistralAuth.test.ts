@@ -1,9 +1,12 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test";
-import { getMistralCodestralAuthError, isCodestralModel, resolveMistralBackendForKey } from "../provider/mistralAuth";
+import {
+  getMistralCodestralAuthError,
+  isCodestralModel,
+  resolveMistralBackendForKey,
+} from "../provider/mistralAuth";
 import * as configUtils from "../../utils/config";
 import * as ai from "ai";
 
-// Mock debugLog to avoid noise in tests
 mock.module("../../utils/debug", () => ({
   debugLog: () => {},
 }));
@@ -15,7 +18,9 @@ describe("Mistral auth helpers", () => {
   });
 
   it("rejects generic mistral models for codestral-only auth", () => {
-    expect(getMistralCodestralAuthError("mistral-large-latest")).toContain("Codestral-only");
+    expect(getMistralCodestralAuthError("mistral-large-latest")).toContain(
+      "Codestral-only",
+    );
   });
 
   it("allows codestral models for codestral-only auth", () => {
@@ -35,13 +40,16 @@ describe("resolveMistralBackendForKey", () => {
 
     mock.module("../../utils/config", () => ({
       readConfig: () => mockConfig,
-      writeConfig: (c: any) => { savedConfig = c; mockConfig = c; },
+      writeConfig: (c: any) => {
+        savedConfig = c;
+        mockConfig = c;
+      },
     }));
   });
 
   it("reuses cached resolved backend for the same key fingerprint", async () => {
     const apiKey = "test-key-1";
-    
+
     let callCount = 0;
     mock.module("ai", () => ({
       generateText: async () => {
@@ -56,7 +64,7 @@ describe("resolveMistralBackendForKey", () => {
 
     const backend2 = await resolveMistralBackendForKey(mockConfig, apiKey);
     expect(backend2).toBe("generic-api");
-    expect(callCount).toBe(1); // Should be cached in config or in-memory
+    expect(callCount).toBe(1);
   });
 
   it("does not share backend state between different API keys", async () => {
@@ -64,7 +72,6 @@ describe("resolveMistralBackendForKey", () => {
     mock.module("ai", () => ({
       generateText: async ({ model }: any) => {
         callCount++;
-        // Fail generic for second key (callCount 2 is Probe A for second key)
         if (callCount === 2) throw new Error("unauthorized");
         return { text: "ok" };
       },
@@ -91,7 +98,6 @@ describe("resolveMistralBackendForKey", () => {
   it("persists 'codestral-domain' when generic fails but codestral succeeds", async () => {
     mock.module("ai", () => ({
       generateText: async ({ model }: any) => {
-        // Probe A uses mistral-small-latest, Probe B uses codestral-latest
         if (model.modelId.includes("small")) throw new Error("unauthorized");
         return { text: "ok" };
       },
@@ -126,16 +132,18 @@ describe("resolveMistralBackendForKey", () => {
 
     try {
       await resolveMistralBackendForKey(mockConfig, "key-fail");
-      expect(false).toBe(true); // Should not reach here
+      expect(false).toBe(true);
     } catch (e: any) {
-      expect(e.message).toContain("could not be validated for either generic Mistral or Codestral access");
+      expect(e.message).toContain(
+        "could not be validated for either generic Mistral or Codestral access",
+      );
     }
   });
 
   it("never probes twice concurrently for the same key", async () => {
     let callCount = 0;
     let resolveProbe: any;
-    const probeStarted = new Promise(resolve => {
+    const probeStarted = new Promise((resolve) => {
       resolveProbe = resolve;
     });
 
@@ -149,12 +157,12 @@ describe("resolveMistralBackendForKey", () => {
 
     const p1 = resolveMistralBackendForKey(mockConfig, "concurrent-key");
     const p2 = resolveMistralBackendForKey(mockConfig, "concurrent-key");
-    
+
     resolveProbe();
-    
+
     const [b1, b2] = await Promise.all([p1, p2]);
     expect(b1).toBe("generic-api");
     expect(b2).toBe("generic-api");
-    expect(callCount).toBe(1); // Only one probe should have started
+    expect(callCount).toBe(1);
   });
 });

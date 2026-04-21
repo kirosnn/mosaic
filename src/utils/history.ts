@@ -7,6 +7,9 @@ export interface ConversationStep {
   content: string;
   thinkingContent?: string;
   responseModel?: string;
+  routedModel?: string;
+  transportModel?: string;
+  backend?: string;
   responseReasoningEffort?: string;
   images?: import("./images").ImageAttachment[];
   toolName?: string;
@@ -39,6 +42,9 @@ export interface ConversationHistory {
   runMetadata?: {
     configuredProvider: string;
     configuredModel: string;
+    routedModel: string;
+    transportModel: string;
+    backend: string;
     effectiveProvider: string;
     effectiveModel: string;
     authType?: "api_key" | "oauth" | "codestral-only";

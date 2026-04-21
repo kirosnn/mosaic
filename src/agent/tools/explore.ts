@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { executeExploreTool } from './exploreExecutor';
+import { checkDuplicate, recordCall } from './toolCallTracker';
 
 export const explore: CoreTool = tool({
   description: `Explore the codebase and web autonomously to gather information.
@@ -11,8 +12,15 @@ Use this for open-ended exploration tasks like understanding code structure, fin
     purpose: z.string().describe('The goal of the exploration - what information you need to gather'),
   }),
   execute: async (args) => {
+    const cached = checkDuplicate('explore', args);
+    if (cached) {
+      return typeof cached.result === 'string' ? cached.result : JSON.stringify(cached.result);
+    }
+
     const result = await executeExploreTool(args.purpose);
     if (!result.success) return { error: result.error || 'Unknown error occurred' };
+
+    recordCall('explore', args, result.result || '', (result.result || '').slice(0, 500));
     return result.result;
   },
 });

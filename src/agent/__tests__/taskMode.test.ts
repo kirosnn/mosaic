@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { detectTaskMode, shouldUseLightweightEnvironmentHandling } from '../taskMode';
+import { detectTaskMode, shouldUseLightweightEnvironmentHandling, shouldBypassModelTaskRouter } from '../taskMode';
 
 describe('task mode fallback heuristics', () => {
   it('keeps lightweight greetings in chat mode', () => {
@@ -8,6 +8,25 @@ describe('task mode fallback heuristics', () => {
     ]);
 
     expect(decision.mode).toBe('chat');
+  });
+
+  it('routes workspace inspection questions to explore_readonly', () => {
+    const questions = [
+      'Dis moi ce qui se trouve dans ce dossier',
+      'Qu’y a-t-il dans ce dossier',
+      'Liste les fichiers ici',
+      'What is in this folder',
+      'What is in the current directory',
+      'Inspect this project',
+      'List files here',
+    ];
+
+    for (const q of questions) {
+      const decision = detectTaskMode([{ role: 'user', content: q }]);
+      expect(decision.mode).toBe('explore_readonly');
+      expect(decision.confidence).toBe('high');
+      expect(shouldBypassModelTaskRouter(decision)).toBe(true);
+    }
   });
 
   it('routes assistant capability questions to assistant_capabilities', () => {
@@ -122,5 +141,67 @@ describe('task mode fallback heuristics', () => {
 
     expect(decision.mode).toBe('plan');
     expect(decision.reason).toContain('planning');
+  });
+});
+
+describe('workspace inspection routing', () => {
+  it('routes French folder inspection to explore_readonly with high confidence', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'Dis moi ce qui se trouve dans ce dossier' },
+    ]);
+    expect(decision.mode).toBe('explore_readonly');
+    expect(decision.confidence).toBe('high');
+    expect(shouldBypassModelTaskRouter(decision)).toBe(true);
+  });
+
+  it('routes English folder inspection to explore_readonly', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'What is in this folder?' },
+    ]);
+    expect(decision.mode).toBe('explore_readonly');
+    expect(decision.confidence).toBe('high');
+  });
+
+  it('routes project inspect request to explore_readonly', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'Inspect this project' },
+    ]);
+    expect(decision.mode).toBe('explore_readonly');
+    expect(decision.confidence).toBe('high');
+  });
+
+  it('keeps greeting lightweight even after a workspace inspection', () => {
+    const decision = detectTaskMode([
+      { role: 'user', content: 'What is in this folder?' },
+      { role: 'assistant', content: 'This is a Node.js project...' },
+      { role: 'user', content: 'salut' },
+    ]);
+    expect(decision.mode).toBe('chat');
+  });
+
+  it('explore_readonly task mode prompt includes workspace inspection and git reporting flows', () => {
+    const { buildTaskModePrompt } = require('../taskMode');
+    const prompt = buildTaskModePrompt('explore_readonly');
+    expect(prompt).toContain('WORKSPACE / FOLDER INSPECTION FLOW');
+    expect(prompt).toContain('NARRATIVE FIRST');
+    expect(prompt).toContain('PARALLEL GLOB FOR PROJECT MARKERS');
+    expect(prompt).toContain('TRANSITION + SYNTHESIS');
+    expect(prompt).toContain('GIT REPORTING FLOW');
+    expect(prompt).toContain('GIT INVESTIGATION');
+  });
+
+  it('explore_readonly prompt forbids stopping at raw file listing', () => {
+    const { buildTaskModePrompt } = require('../taskMode');
+    const prompt = buildTaskModePrompt('explore_readonly');
+    expect(prompt).toContain('Always synthesize');
+    expect(prompt).toContain('EXPLAIN, not just LIST');
+  });
+
+  it('explore_readonly prompt includes git synthesis requirements', () => {
+    const { buildTaskModePrompt } = require('../taskMode');
+    const prompt = buildTaskModePrompt('explore_readonly');
+    expect(prompt).toContain('clean vs dirty');
+    expect(prompt).toContain('divergence');
+    expect(prompt).toContain('Recent commit trend');
   });
 });

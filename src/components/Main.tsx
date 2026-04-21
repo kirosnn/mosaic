@@ -699,7 +699,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
         baseMessages,
         userMessage: userMessageForAgent,
         conversationHistory,
-        runtimeContext,
+        runtimeContext: { ...runtimeContext, turnOrigin: 'shell' },
         abortMessage: "Conversation interrupted — tell Mosaic what to do differently. Something went wrong? Hit `/feedback` to report the issue.",
         userStepContent: composedShellContent,
         autoCompact: true,

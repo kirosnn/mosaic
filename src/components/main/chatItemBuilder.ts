@@ -47,6 +47,9 @@ export interface RenderItem {
   isHorizontalRule?: boolean;
   isAssistantMeta?: boolean;
   responseModel?: string;
+  routedModel?: string;
+  transportModel?: string;
+  backend?: string;
   responseReasoningEffort?: string;
   responseDuration?: number;
   planStatus?: 'pending' | 'in_progress' | 'completed';
@@ -108,12 +111,19 @@ export function getCompactResult(message: Message): string {
     try {
       const parsed = JSON.parse(message.toolResult);
       if (Array.isArray(parsed)) {
-        return `${parsed.length} results`;
+        const n = parsed.length;
+        return n === 1 ? '1 result' : `${n} results`;
       }
       if (parsed && typeof parsed === 'object') {
         const obj = parsed as Record<string, unknown>;
         const files = Array.isArray(obj.files) ? obj.files : null;
-        if (files) return `${files.length} results`;
+        if (files) {
+          const n = files.length;
+          return n === 1 ? '1 result' : `${n} results`;
+        }
+        if (obj.truncated === true && typeof obj.totalEntries === 'number') {
+          return `${obj.totalEntries} entries (truncated)`;
+        }
       }
     } catch {
     }
@@ -547,6 +557,9 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         isAssistantMeta: true,
         blendWord: message.blendWord,
         responseModel: message.responseModel,
+        routedModel: message.routedModel,
+        transportModel: message.transportModel,
+        backend: message.backend,
         responseReasoningEffort: message.responseReasoningEffort,
         responseDuration: message.responseDuration,
         visualLines: 1,
