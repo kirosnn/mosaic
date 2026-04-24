@@ -28,9 +28,9 @@ import {
 } from "./compaction";
 import {
   buildAssistantCapabilitiesSystemPrompt,
+  buildLightweightChatSystemPrompt,
   buildLightweightEnvironmentSystemPrompt,
   DEFAULT_SYSTEM_PROMPT,
-  LIGHTWEIGHT_CHAT_SYSTEM_PROMPT,
   processSystemPrompt,
 } from "../../agent/prompts/systemPrompt";
 import { getDefaultContextBudget } from "../../utils/tokenEstimator";
@@ -462,7 +462,7 @@ export async function runAgentStream(
       );
     }
     if (isLightweightHandling) {
-      return LIGHTWEIGHT_CHAT_SYSTEM_PROMPT;
+      return buildLightweightChatSystemPrompt();
     }
     const rawSystemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
     return processSystemPrompt(rawSystemPrompt, true);

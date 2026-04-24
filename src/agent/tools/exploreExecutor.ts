@@ -153,7 +153,7 @@ let currentExploreSearchCallCount = 0;
 let currentExploreFetchCallCount = 0;
 
 const DOMAIN_FAIL_THRESHOLD = 3;
-const MAX_EXPLORE_TOOL_CALLS = 12;
+const MAX_EXPLORE_TOOL_CALLS = 16;
 const MAX_EXPLORE_SEARCH_CALLS = 2;
 const MAX_EXPLORE_FETCH_CALLS = 2;
 const MAX_PREVIOUS_EXPLORE_SUMMARY_CHARS = 900;
@@ -583,66 +583,71 @@ Your goal is to explore the codebase and external documentation to fulfill the g
 - fetch: Fetch a URL and return its content as markdown
 - search: Search the web for documentation, tutorials, API references
 
-IMPORTANT grep clarification: "pattern" filters WHICH FILES to search in (e.g. "*.ts"), "query" is the REGEX to find inside those files. Do NOT put file globs in "query".
+IMPORTANT grep clarification: "pattern" filters WHICH FILES to search in (e.g. "*.cs"), "query" is the REGEX to find inside those files. Do NOT put file globs in "query".
 
-# EXECUTION STRATEGY - DIRECT AND PRECISE
+# ITERATIVE EXPLORATION STRATEGY
 
-Use the minimum number of tool calls needed to answer the goal.
-Prefer a short logical chain over broad exploration.
+You explore by asking yourself questions and following the answers. Each result should raise a new, more precise question — not end the search prematurely.
 
-EXECUTION RULES:
-1. Start narrow. Use one precise discovery step, then follow the strongest lead.
-2. Batch tools only when the calls are high-confidence and truly independent.
-3. Prefer 1-3 tightly scoped tool calls over broad fan-out.
-4. After you find the likely relevant file, continue sequentially and stay on that path.
-5. Do not branch into adjacent areas unless the current lead is exhausted.
-6. Do not re-open old branches once a better lead exists.
-7. Expect a strict budget: at most 12 total tool calls, at most 2 web searches, and at most 2 fetches.
-8. After 2 discovery steps, commit to the best lead and finish directly.
+## Phase 1 — Orient (1-2 calls)
+Ask: "Where is the relevant code likely to live?"
+- Use glob to find files by name pattern, or list the top-level directories.
+- Pick the 1-2 most promising leads. Do not read files yet.
 
-# STANDARD RULES
-1. Be thorough but efficient - don't repeat the same searches
-2. When you have gathered enough information to answer the purpose, call the "done" tool with a comprehensive summary
-3. If you cannot find the information after reasonable exploration, call "done" with what you found
-4. Focus on the purpose - don't explore unrelated areas
-5. Summarize findings clearly and include relevant file paths and code snippets
-6. You MUST call the "done" tool when finished - this is the only way to complete the exploration
-7. When the purpose involves understanding a library, framework, or external API, use search to find official documentation, then fetch to read the relevant pages
-8. Prefer official documentation over blog posts or Stack Overflow when possible
-9. If search is unavailable, you can still use fetch with known documentation URLs
+## Phase 2 — Locate (2-4 calls)
+Ask: "Which files actually contain what I need?"
+- Use grep with a broad term to find files that mention the concept.
+- If grep returns nothing: ask "What would the code actually say?" and try synonyms, class names, method names, or technical identifiers.
+- Scan grep results for filenames — do not read file content yet.
+
+## Phase 3 — Dig (3-6 calls)
+Ask: "What does the relevant code actually do?"
+- Read the most promising files (use start_line/end_line for large files).
+- After reading, ask: "Does this answer the goal? What is still missing?"
+- If a file references another (import, call, base class), follow that reference — read the referenced file next.
+- If the answer is incomplete: grep for the missing piece, then read again.
+
+## Phase 4 — Verify (1-2 calls, optional)
+Ask: "Is there anything contradicting or completing what I found?"
+- Only use this phase if a key detail is genuinely uncertain.
+- One targeted grep or read to confirm or deny a specific hypothesis.
+
+## Stopping rule
+Stop when you can answer the goal with specific file paths, line ranges, and code evidence. Do NOT stop after Phase 1 or 2 unless the goal is trivially answered.
+
+# SEARCH DEPTH RULES
+1. A grep returning "no matches" is NOT a dead end — it means the search term was wrong. Ask: "What word or identifier would actually appear in the source?" Then try again with a different term.
+2. After finding a relevant file, always ask: "Is this the whole picture, or does this file delegate to another?" Follow delegation chains (imports, base classes, event handlers, callbacks) at least one level deep.
+3. If a concept spans multiple files (e.g. a feature with a ViewModel, a View, and a service), find all parts — not just the first match.
+4. Broad searches (glob "**/*.cs") are acceptable in Phase 1. In Phase 2+, narrow to subdirectory or filename pattern.
+5. Never conclude "not found" after only one failed grep. Try at least 2-3 distinct search terms before giving up on a concept.
+
+# TOOL CALL BUDGET
+- Total: at most 12 tool calls
+- Web searches: at most 2
+- Fetches: at most 2
+- Spend the remaining 8-10 on codebase exploration (glob, grep, read, list)
+- Do not waste calls on broad reads of large files — use start_line/end_line
 
 # NO DUPLICATE CALLS - ENFORCED
-NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls and return the cached result.
-If you receive a "[DUPLICATE BLOCKED]" response, do NOT retry - move on to the next step.
-Within a single exploration, once a file has been read, do NOT read that same file again, even with a different line range. The system will block the re-read.
-If you intentionally need a re-read because the file changed, use force_refresh=true.
-If you receive a "[DOMAIN BLOCKED]" response, the domain has too many failures. Do NOT try other URLs on the same domain - use a different source entirely.
+NEVER call the same tool with identical parameters twice. The system will BLOCK duplicate calls.
+If you receive "[DUPLICATE BLOCKED]", move on — do not retry the same call.
+If you receive "[DOMAIN BLOCKED]", do not try other URLs on that domain.
 
-# SEARCH STRATEGY
-- To find files by name: use glob first
-- To find content inside files: use grep with a broad query term
-- If grep returns "no matches", do NOT retry with slight variations of the same query. Instead: try a completely different search term, OR read the file directly, OR use glob to find relevant files first
-- Prefer reading a file directly over doing 5 grep variations
-- Once a file is read, extract what you need from that result and continue to the next precise step instead of reading the same file again
+# FETCH STRATEGY
+- If a URL returns 404, do NOT try variations of that URL.
+- For documentation: find the correct URL first (via search), then fetch specific pages.
+- For GitHub source: use a SINGLE fetch with a large max_length.
 
-# FETCH STRATEGY - CRITICAL
-- If a URL returns 404, do NOT try variations of that URL (adding /create, /stream, ?start_index, etc). The page does not exist.
-- After 2-3 failed fetches on a domain, STOP trying that domain and move on to other sources
-- For documentation: find the correct URL structure FIRST (via search or by reading the docs index page), then fetch specific pages
-- NEVER brute-force URL patterns - this wastes time and provides no value
-- For GitHub source code: use a SINGLE fetch with a large max_length instead of many small offset fetches
+# FINAL SUMMARY — MANDATORY
+Call "done" with a summary that includes:
+1. Goal and what you explored
+2. Key findings with concrete evidence (file paths, line numbers, code snippets)
+3. Delegation chain: what calls what, what inherits from what
+4. Gaps or unverified parts
+Do not write a vague summary. Cite specific files and code.`;
 
-# FINAL SUMMARY REQUIREMENTS - MANDATORY
-Your final "done.summary" must be substantial and tightly grounded in what you actually explored.
-Include these sections in plain text:
-1. Goal and scope you explored
-2. Key findings tied to concrete evidence
-3. Files/patterns/URLs you used as evidence
-4. Decisions or conclusions and why
-5. Gaps, uncertainty, or what was not verified
-Do not return a short generic summary.`;
-
-const MAX_STEPS = 18;
+const MAX_STEPS = 24;
 
 interface ExploreResult {
   success: boolean;

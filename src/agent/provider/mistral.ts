@@ -37,30 +37,54 @@ export class MistralProvider implements Provider {
     if (cleanApiKey) {
       const userConfig = readConfig();
       try {
-        const initialBackend = await resolveMistralBackendForKey(
-          userConfig,
-          cleanApiKey,
-        );
-
-        const probe = await isModelSupportedByMistralKey(
-          userConfig,
-          cleanApiKey,
-          cleanModel,
-          initialBackend,
-        );
-
-        if (probe.supported) {
-          cleanModel = config.model.trim().replace(/[\r\n]+/g, "");
-          backend = probe.resolvedBackend;
-        } else {
+        // If authMode is already codestral-only and model isn't codestral, skip the probe
+        // to avoid polluting logs with expected auth failures.
+        if (authMode === "codestral-only" && !isCodestralModel(cleanModel)) {
           debugLog(
-            `[mistral] model=${cleanModel} not supported on any compatible backend, falling back to codestral-latest`,
+            `[mistral] authMode=codestral-only, model=${cleanModel} is not codestral — switching directly to codestral-latest`,
           );
+          const previousModel = cleanModel;
           cleanModel = "codestral-latest";
           backend = "codestral-domain";
+          yield {
+            type: "fallback",
+            provider: "mistral",
+            model: cleanModel,
+            reason: `authMode=codestral-only, ${previousModel} replaced with codestral-latest`,
+          };
+        } else {
+          const initialBackend = await resolveMistralBackendForKey(
+            userConfig,
+            cleanApiKey,
+          );
+
+          const probe = await isModelSupportedByMistralKey(
+            userConfig,
+            cleanApiKey,
+            cleanModel,
+            initialBackend,
+          );
+
+          if (probe.supported) {
+            cleanModel = config.model.trim().replace(/[\r\n]+/g, "");
+            backend = probe.resolvedBackend;
+          } else {
+            const previousModel = cleanModel;
+            cleanModel = "codestral-latest";
+            backend = "codestral-domain";
+            debugLog(
+              `[mistral] model=${previousModel} not supported on any compatible backend, falling back to codestral-latest`,
+            );
+            yield {
+              type: "fallback",
+              provider: "mistral",
+              model: cleanModel,
+              reason: `${previousModel} not supported, fell back to codestral-latest`,
+            };
+          }
+          authMode =
+            backend === "codestral-domain" ? "codestral-only" : "generic";
         }
-        authMode =
-          backend === "codestral-domain" ? "codestral-only" : "generic";
       } catch (err: any) {
         yield {
           type: "error",

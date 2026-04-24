@@ -63,7 +63,9 @@ const EXPLORE_PATTERNS = [
   /\btrace\b/i,
   /\bread\b/i,
   /\banalyze\b/i,
-  /\bgit\s+(?:status|diff|log|show|branch|blame|stash\s+list|remote|tag|describe)\b/i,
+  /\bgit\b/i,
+  /\brepo(?:sitory)?\b/i,
+  /\bfichiers?\b/i,
   /\bshow\s+(?:me\s+)?(?:the\s+)?(?:diff|changes|commits?|log|branch|status)\b/i,
   /\bwhat(?:'s|\s+is)\s+(?:changed|modified|staged|the\s+diff|the\s+status)\b/i,
   /\bcommit\s+history\b/i,
@@ -128,19 +130,28 @@ const WORKSPACE_REFERENCE_PATTERNS = [
 ];
 
 const WORKSPACE_INSPECTION_PATTERNS = [
-  /^(?:what(?:'s|\s+is)\s+)?in\s+(?:this|the|current|my|your|the\s+current|the\s+present|the\s+working)\s+(?:folder|directory|repo|repository|project|workspace|codebase)\b.*\??$/i,
+  /^(?:what(?:’s|\s+is)\s+)?in\s+(?:this|the|current|my|your|the\s+current|the\s+present|the\s+working)\s+(?:folder|directory|repo|repository|project|workspace|codebase)\b.*\??$/i,
   /\blist\s+(?:the\s+)?files?\b.*\??$/i,
   /^(?:inspect)\s+(?:this|the|current|my|the\s+current|the\s+present|the\s+working)\s+(?:repo|repository|project|workspace|codebase)\b.*\??$/i,
   /\bce\s+qui\s+se\s+trouve\s+dans\s+(?:ce|le|le\s+présent|mon|votre|le\s+présent)\s+(?:dossier|répertoire|projet|repo|repository)\b.*\??$/i,
   /\blister\s+(?:les\s+)?fichiers?\b.*\??$/i,
-  /\bwhat(?:'s|\s+is)\s+in\s+this\b.*\??$/i,
-  /\bqu'est-ce\s+qu'il\s+y\s+a\s+dans\s+this\b.*\??$/i,
-  /\bqu['’]y\s+a-t-il\s+dans\s+ce\s+dossier\b.*\??$/i,
+  /\bwhat(?:’s|\s+is)\s+in\s+this\b.*\??$/i,
+  /\bqu’est-ce\s+qu’il\s+y\s+a\s+dans\s+this\b.*\??$/i,
+  /\bqu[‘’]y\s+a-t-il\s+dans\s+ce\s+dossier\b.*\??$/i,
   /\bliste\s+les\s+fichiers\s+ici\b.*\??$/i,
   /\bwhat\s+is\s+in\s+this\s+folder\b.*\??$/i,
   /\bwhat\s+is\s+in\s+the\s+current\s+directory\b.*\??$/i,
   /\binspect\s+this\s+project\b.*\??$/i,
   /\blist\s+files\s+here\b.*\??$/i,
+  // CWD / current folder queries
+  /\bdans\s+quel\s+(?:dossier|répertoire|repo|projet)\b/i,
+  /\bon\s+est\s+(?:dans|où)\b/i,
+  /\bquel(?:\s+est)?\s+(?:le\s+)?(?:dossier|répertoire|chemin|path)\s+(?:courant|actuel|de\s+travail)\b/i,
+  /\bcurrent\s+(?:working\s+)?(?:directory|folder|path)\b/i,
+  /\b(?:what(?:’s|\s+is)\s+(?:the\s+)?)?cwd\b/i,
+  /\bpwd\b/i,
+  /\bwhere\s+(?:are\s+we|am\s+i)\b/i,
+  /\brépertoire\s+courant\b/i,
 ];
 
 const ASSISTANT_REFERENCE_PATTERNS = [

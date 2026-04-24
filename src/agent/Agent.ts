@@ -20,9 +20,9 @@ import {
 } from "../utils/config";
 import {
   buildAssistantCapabilitiesSystemPrompt,
+  buildLightweightChatSystemPrompt,
   buildLightweightEnvironmentSystemPrompt,
   DEFAULT_SYSTEM_PROMPT,
-  LIGHTWEIGHT_CHAT_SYSTEM_PROMPT,
   processSystemPrompt,
 } from "./prompts/systemPrompt";
 import { getTools } from "./tools/definitions";
@@ -526,7 +526,7 @@ export class Agent {
               runtimeContext?.environmentContextSummary,
               runtimeContext?.subsystemContextSummary,
             )
-          : LIGHTWEIGHT_CHAT_SYSTEM_PROMPT
+          : buildLightweightChatSystemPrompt()
       : processSystemPrompt(rawSystemPrompt, true, mcpToolInfos, {
           consumeOneShotSkills: true,
         });
