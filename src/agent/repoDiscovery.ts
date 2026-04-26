@@ -17,6 +17,8 @@ export const EXCLUDED_DISCOVERY_DIRECTORIES = new Set([
   'obj',
   'bin',
   'tmp',
+  'temp',
+  'Temp',
   'coverage',
   '.cache',
   '.parcel-cache',
@@ -31,6 +33,18 @@ export const EXCLUDED_DISCOVERY_DIRECTORIES = new Set([
   'target',
   '.idea',
   '.vscode',
+  // Windows system / user-level directories that must never be scanned
+  'AppData',
+  'Application Data',
+  '.uv',
+  '.rye',
+  '.cargo',
+  '.rustup',
+  'pip',
+  'site-packages',
+  'Lib',
+  'Scripts',
+  'Include',
 ]);
 
 export interface DiscoveryEntry {
