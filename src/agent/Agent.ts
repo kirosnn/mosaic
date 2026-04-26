@@ -562,7 +562,9 @@ Do NOT resume prior architecture exploration or refactoring plans unless they ar
         systemPrompt = `${systemPrompt}\n\n${label}:\n${repoPrompt}`;
       }
     }
-    const tools = isLightweightHandling ? {} : getTools();
+    const readOnlyMode =
+      runtimeContext?.taskModeDecision?.mode === "explore_readonly";
+    const tools = isLightweightHandling ? {} : getTools({ readOnlyMode });
     const lightweightRoute = isLightweightHandling
       ? getLightweightRoute(userConfig.provider, userConfig.model)
       : undefined;
