@@ -1,6 +1,7 @@
 import { tool, type CoreTool } from 'ai';
 import { z } from 'zod';
 import { debugLog } from '../../utils/debug';
+import { withExecuteToolContext } from './executor';
 
 import { bash } from './bash.ts';
 import { list } from './list.ts';
@@ -200,16 +201,43 @@ function withUnknownToolFallback(baseTools: Record<string, CoreTool>): Record<st
   });
 }
 
-export function getTools(): Record<string, CoreTool> {
+interface GetToolsOptions {
+  readOnlyMode?: boolean;
+}
+
+function withScopedToolContext(
+  baseTools: Record<string, CoreTool>,
+  options: GetToolsOptions,
+): Record<string, CoreTool> {
+  if (options.readOnlyMode !== true) return baseTools;
+
+  return Object.fromEntries(
+    Object.entries(baseTools).map(([name, baseTool]) => {
+      const execute = (baseTool as { execute?: unknown }).execute;
+      if (typeof execute !== 'function') return [name, baseTool];
+      return [
+        name,
+        {
+          ...baseTool,
+          execute: (...args: unknown[]) =>
+            withExecuteToolContext({ readOnlyMode: true }, () =>
+              (execute as (...innerArgs: unknown[]) => unknown)(...args),
+            ),
+        } as CoreTool,
+      ];
+    }),
+  );
+}
+
+export function getTools(options: GetToolsOptions = {}): Record<string, CoreTool> {
   try {
     const { getMcpCatalog, isMcpInitialized } = require('../../mcp/index');
     if (isMcpInitialized()) {
       const catalog = getMcpCatalog();
       const mcpTools = catalog.getExposedTools();
-      return withUnknownToolFallback({ ...tools, ...mcpTools });
+      return withUnknownToolFallback(withScopedToolContext({ ...tools, ...mcpTools }, options));
     }
   } catch {
-    // MCP not available, return internal tools only
   }
-  return withUnknownToolFallback(tools);
+  return withUnknownToolFallback(withScopedToolContext(tools, options));
 }
