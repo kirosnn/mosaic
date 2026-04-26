@@ -28,7 +28,6 @@
     "src/**/*"
   ],
   "exclude": [
-    "node_modules",
-    "src/electron/renderer/src/**/*"
+    "node_modules"
   ]
 }
