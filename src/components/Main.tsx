@@ -100,6 +100,14 @@ export function Main({ pasteRequestId = 0, copyRequestId = 0, onCopy, shortcutsO
     }));
   }, []);
 
+  const handleToggleToolGroup = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(m => (
+      m.id === messageId
+        ? { ...m, toolGroupCollapsed: !m.toolGroupCollapsed }
+        : m
+    )));
+  }, []);
+
   const handleAnswerQuestion = useCallback((index: number, customText?: string) => {
     const question = getCurrentQuestion();
     if (question) {
@@ -992,6 +1000,7 @@ Analyze the output and continue. Do not run the same command again unless I expl
       onCopyMessage={onCopy}
       onResubmitUserMessage={handleResubmitUserMessage}
       onToggleThinking={handleToggleThinking}
+      onToggleToolGroup={handleToggleToolGroup}
       onAnswer={handleAnswerQuestion}
       historyVersion={historyVersion}
       pendingImages={pendingImages}
