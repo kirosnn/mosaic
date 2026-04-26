@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { getCompactResult } from '../chatItemBuilder';
+import { buildChatItems, getCompactResult } from '../chatItemBuilder';
 import type { Message } from '../types';
 
 function makeToolMessage(toolName: string, toolResult: unknown, content = ''): Message {
@@ -79,5 +79,179 @@ describe('getCompactResult — lightweight greetings stay lightweight', () => {
       isRunning: true,
     };
     expect(getCompactResult(msg)).toBe('in progress...');
+  });
+});
+
+describe('buildChatItems — grouped read-only tools', () => {
+  it('groups consecutive read-only tools behind the preceding assistant goal', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Je vais inspecter la configuration puis lire les fichiers utiles.',
+      },
+      {
+        id: 'title-1',
+        role: 'tool',
+        toolName: 'title',
+        toolArgs: { title: 'Config' },
+        toolResult: { title: 'Config' },
+        content: 'Title (Config)\nConfig',
+      },
+      {
+        id: 'glob-1',
+        role: 'tool',
+        toolName: 'glob',
+        toolArgs: { pattern: '**/*.json' },
+        toolResult: JSON.stringify(['package.json', 'tsconfig.json']),
+        content: 'Glob (**/*.json)\n  package.json\n  tsconfig.json',
+        success: true,
+      },
+      {
+        id: 'read-1',
+        role: 'tool',
+        toolName: 'read',
+        toolArgs: { path: 'package.json' },
+        toolResult: '{\n  "name": "mosaic"\n}',
+        content: 'Read (package.json)\nRead 3 lines',
+        success: true,
+      },
+    ];
+
+    const items = buildChatItems({
+      messages,
+      maxWidth: 80,
+      viewportHeight: 40,
+      questionRequest: null,
+      approvalRequest: null,
+    });
+
+    const toolGroup = items.find((item) => item.type === 'tool_group');
+    expect(toolGroup).toBeDefined();
+    expect(toolGroup?.toolGroupGoal).toBe('Inspecter la configuration puis lire les fichiers utiles.');
+    expect(toolGroup?.toolGroupEntries).toHaveLength(2);
+    expect(toolGroup?.toolGroupEntries?.[0]?.label).toContain('Glob');
+    expect(toolGroup?.toolGroupEntries?.[1]?.label).toContain('Read');
+  });
+
+  it('does not include non read-only bash commands in the grouped tool block', () => {
+    const messages: Message[] = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Je vais vérifier puis modifier le dépôt.',
+      },
+      {
+        id: 'bash-1',
+        role: 'tool',
+        toolName: 'bash',
+        toolArgs: { command: 'git status --short --branch' },
+        toolResult: '## main',
+        content: 'Command (git status --short --branch)\n## main',
+        success: true,
+      },
+      {
+        id: 'bash-2',
+        role: 'tool',
+        toolName: 'bash',
+        toolArgs: { command: 'git add README.md' },
+        toolResult: '',
+        content: 'Command (git add README.md)',
+        success: true,
+      },
+    ];
+
+    const items = buildChatItems({
+      messages,
+      maxWidth: 80,
+      viewportHeight: 40,
+      questionRequest: null,
+      approvalRequest: null,
+    });
+
+    const toolGroup = items.find((item) => item.type === 'tool_group');
+    expect(toolGroup).toBeDefined();
+    expect(toolGroup?.toolGroupEntries).toHaveLength(1);
+    expect(toolGroup?.toolGroupEntries?.[0]?.label).toContain('git status');
+  });
+
+  it('uses the previous title tool when no assistant message exists', () => {
+    const messages: Message[] = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Je veux un état rapide du dépôt. Vérifie git status, git branch --show-current et liste les fichiers du dossier src, puis résume.',
+      },
+      {
+        id: 'title-1',
+        role: 'tool',
+        toolName: 'title',
+        toolArgs: { title: 'État rapide du dépôt' },
+        toolResult: { title: 'État rapide du dépôt' },
+        content: 'Title (État rapide du dépôt)\nÉtat rapide du dépôt',
+      },
+      {
+        id: 'bash-1',
+        role: 'tool',
+        toolName: 'bash',
+        toolArgs: { command: 'git branch --show-current' },
+        toolResult: 'main',
+        content: 'Command (git branch --show-current)\nmain',
+        success: true,
+      },
+      {
+        id: 'bash-2',
+        role: 'tool',
+        toolName: 'bash',
+        toolArgs: { command: 'git status --short --branch' },
+        toolResult: '## main',
+        content: 'Command (git status --short --branch)\n## main',
+        success: true,
+      },
+    ];
+
+    const items = buildChatItems({
+      messages,
+      maxWidth: 80,
+      viewportHeight: 40,
+      questionRequest: null,
+      approvalRequest: null,
+    });
+
+    const toolGroup = items.find((item) => item.type === 'tool_group');
+    expect(toolGroup).toBeDefined();
+    expect(toolGroup?.toolGroupGoal).toBe('État rapide du dépôt');
+    expect(toolGroup?.toolGroupEntries).toHaveLength(2);
+  });
+
+  it('falls back to an agent-side generated title when no assistant or title exists', () => {
+    const messages: Message[] = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Je veux un état rapide du dépôt.',
+      },
+      {
+        id: 'bash-1',
+        role: 'tool',
+        toolName: 'bash',
+        toolArgs: { command: 'git status --short --branch' },
+        toolResult: '## main',
+        content: 'Command (git status --short --branch)\n## main',
+        success: true,
+      },
+    ];
+
+    const items = buildChatItems({
+      messages,
+      maxWidth: 80,
+      viewportHeight: 40,
+      questionRequest: null,
+      approvalRequest: null,
+    });
+
+    const toolGroup = items.find((item) => item.type === 'tool_group');
+    expect(toolGroup).toBeDefined();
+    expect(toolGroup?.toolGroupGoal).toBe('Inspecting repository');
   });
 });
