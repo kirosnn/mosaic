@@ -1,5 +1,6 @@
 import { generateDiff, formatDiffForDisplay } from './diff';
 import { debugLog } from './debug';
+import { playUiSound } from './sound';
 
 export interface PendingChange {
     id: string;
@@ -203,6 +204,7 @@ export async function startReview(): Promise<boolean[]> {
     reviewResults = [];
     notifyReviewMode();
     notify();
+    playUiSound("attention");
 
     return new Promise((resolve) => {
         reviewResolve = resolve;
@@ -233,6 +235,7 @@ export function respondReview(approved: boolean): void {
         resolve(results);
     } else {
         notify();
+        playUiSound("attention");
     }
 }
 
