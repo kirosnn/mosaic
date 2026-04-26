@@ -9,10 +9,12 @@ import { wrapText } from "./wrapText";
 import { buildReasoningRenderBlocks } from "./reasoningBlocks";
 import { getReasoningPanelVisualLines, type ReasoningRenderBlock } from "./reasoningPanelModel";
 import { getDefaultThinkingCollapsed } from "./assistantMessageState";
+import { isReadOnlyGitInspectionCommand } from "../../agent/gitWorkspaceState";
+import type { ToolGroupEntry } from "./ToolGroupPanel";
 
 export interface RenderItem {
   key: string;
-  type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact' | 'reasoning';
+  type: 'line' | 'question' | 'approval' | 'blend' | 'tool_compact' | 'reasoning' | 'tool_group';
   content?: string;
   role: "user" | "assistant" | "tool" | "slash";
   toolName?: string;
@@ -56,6 +58,10 @@ export interface RenderItem {
   isCompactTool?: boolean;
   compactLabel?: string;
   compactResult?: string;
+  toolGroupGoal?: string;
+  toolGroupCollapsed?: boolean;
+  toolGroupEntries?: ToolGroupEntry[];
+  toolGroupEndMessageIndex?: number;
   messageId?: string;
   messageIndex?: number;
   userMessageText?: string;
@@ -78,6 +84,152 @@ export function isCompactTool(toolName?: string): boolean {
     return nativeName === 'nativesearch_search';
   }
   return false;
+}
+
+function isReadOnlyResearchBashCommand(command: string): boolean {
+  const normalized = command.trim().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  if (isReadOnlyGitInspectionCommand(normalized)) return true;
+
+  const readOnlyPatterns = [
+    /^(Get-ChildItem|Get-Content|Select-String|Test-Path|Resolve-Path|Get-Location)(\s|$)/i,
+    /^(ls|dir|pwd|cat|head|tail|find|grep|rg|which|where)(\s|$)/i,
+  ];
+
+  return readOnlyPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function isGroupedReadOnlyToolMessage(message: Message): boolean {
+  if ((message.displayRole ?? message.role) !== "tool") return false;
+  const toolName = message.toolName;
+  if (!toolName) return false;
+
+  if (toolName === "bash") {
+    const command = typeof message.toolArgs?.command === "string"
+      ? message.toolArgs.command
+      : "";
+    return isReadOnlyResearchBashCommand(command);
+  }
+
+  if (toolName === "read" || toolName === "list" || toolName === "glob" || toolName === "grep" || toolName === "fetch") {
+    return true;
+  }
+
+  if (toolName.startsWith("mcp__")) {
+    return getNativeMcpToolName(toolName) === "nativesearch_search";
+  }
+
+  return false;
+}
+
+function stripGoalPrefix(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^(I(?:'ll| will)\s+|Je vais\s+|J['’]analyse\s+|J['’]inspecte\s+|J['’]examine\s+)/i, "")
+    .trim();
+}
+
+function uppercaseFirstLetter(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function getFallbackToolGroupTitle(groupedMessages: Array<{ message: Message; index: number }>): string {
+  const toolNames = groupedMessages.map(({ message }) => message.toolName);
+  if (toolNames.some((toolName) => toolName === "bash")) {
+    const commands = groupedMessages
+      .map(({ message }) => typeof message.toolArgs?.command === "string" ? message.toolArgs.command : "")
+      .join(" ");
+    if (/\bgit\b/i.test(commands)) return "Inspecting repository";
+    return "Running checks";
+  }
+
+  if (toolNames.some((toolName) => toolName === "read")) {
+    return "Reading files";
+  }
+  if (toolNames.some((toolName) => toolName === "glob" || toolName === "list")) {
+    return "Exploring files";
+  }
+  if (toolNames.some((toolName) => toolName === "grep")) {
+    return "Searching code";
+  }
+  if (toolNames.some((toolName) => toolName === "fetch")) {
+    return "Fetching references";
+  }
+  if (toolNames.some((toolName) => toolName?.startsWith("mcp__"))) {
+    return "Researching";
+  }
+
+  return "Researching";
+}
+
+function getTitleToolText(message: Message): string | null {
+  if (message.toolName !== "title") return null;
+
+  const argsTitle = typeof message.toolArgs?.title === "string"
+    ? message.toolArgs.title.trim()
+    : "";
+  if (argsTitle) return argsTitle;
+
+  const result = message.toolResult;
+  if (result && typeof result === "object") {
+    const resultTitle = (result as Record<string, unknown>).title;
+    if (typeof resultTitle === "string" && resultTitle.trim()) {
+      return resultTitle.trim();
+    }
+  }
+
+  const contentTitle = getCompactResult(message).trim();
+  return contentTitle && contentTitle !== "Completed" ? contentTitle : null;
+}
+
+function getToolGroupGoal(messages: Message[], startIndex: number): string | null {
+  let titleFallback: string | null = null;
+
+  for (let i = startIndex - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || message.hiddenInUi) continue;
+    const role = message.displayRole ?? message.role;
+
+    if (role === "tool") {
+      const title = getTitleToolText(message);
+      if (title && !titleFallback) {
+        titleFallback = title;
+      }
+      continue;
+    }
+
+    if (role !== "assistant") continue;
+
+    const content = (message.displayContent ?? message.content).trim();
+    if (!content) continue;
+
+    const firstLine = content.split("\n").find((line) => line.trim())?.trim() ?? "";
+    if (!firstLine) continue;
+
+    const goal = stripGoalPrefix(firstLine) || firstLine;
+    return uppercaseFirstLetter(goal);
+  }
+
+  return titleFallback ? uppercaseFirstLetter(titleFallback) : null;
+}
+
+function buildCompactToolEntry(message: Message, key: string): ToolGroupEntry {
+  const { name, info } = parseToolHeader(message.toolName || "", message.toolArgs || {});
+  return {
+    key,
+    toolName: message.toolName,
+    label: info ? `${name} (${info})` : name,
+    result: getCompactResult(message),
+    success: message.success,
+    isRunning: message.isRunning,
+  };
+}
+
+function getToolGroupVisualLines(entryCount: number, collapsed: boolean): number {
+  if (collapsed) return 3;
+  if (entryCount <= 0) return 3;
+  return entryCount + 3;
 }
 
 export function getFirstBodyLine(content: string): string {
@@ -235,6 +387,40 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
     if (message.hiddenInUi) {
       continue;
     }
+    if (isGroupedReadOnlyToolMessage(message)) {
+      const groupedMessages: Array<{ message: Message; index: number }> = [];
+      let groupIndex = messageIndex;
+      while (groupIndex < messages.length) {
+        const candidate = messages[groupIndex];
+        if (!candidate || candidate.hiddenInUi || !isGroupedReadOnlyToolMessage(candidate)) break;
+        groupedMessages.push({ message: candidate, index: groupIndex });
+        groupIndex += 1;
+      }
+
+      if (groupedMessages.length >= 1) {
+        const firstGroupMessage = groupedMessages[0]!.message;
+        const goal = getToolGroupGoal(messages, messageIndex) ?? getFallbackToolGroupTitle(groupedMessages);
+        const groupEntries = groupedMessages.map(({ message: groupedMessage, index }) =>
+          buildCompactToolEntry(groupedMessage, `${groupedMessage.id || `m-${index}`}-group-entry`));
+
+        allItems.push({
+          key: `${firstGroupMessage.id || `m-${messageIndex}`}-tool-group`,
+          type: "tool_group",
+          role: "tool",
+          toolName: firstGroupMessage.toolName,
+          isFirst: true,
+          visualLines: getToolGroupVisualLines(groupEntries.length, firstGroupMessage.toolGroupCollapsed ?? false),
+          toolGroupGoal: uppercaseFirstLetter(goal),
+          toolGroupCollapsed: firstGroupMessage.toolGroupCollapsed ?? false,
+          toolGroupEntries: groupEntries,
+          toolGroupEndMessageIndex: groupedMessages[groupedMessages.length - 1]!.index,
+          messageId: firstGroupMessage.id,
+        });
+        messageIndex = groupIndex - 1;
+        continue;
+      }
+    }
+
     const messageKey = message.id || `m-${messageIndex}`;
     const messageRole = message.displayRole ?? message.role;
     const userMessageText = message.displayContent ?? message.content;
@@ -660,6 +846,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
       && item.type !== 'question'
       && item.type !== 'approval'
       && item.type !== 'tool_compact'
+      && item.type !== 'tool_group'
       && item.type !== 'reasoning'
       && item.type !== 'blend';
 
@@ -673,6 +860,7 @@ export function buildChatItems(params: BuildChatItemsParams): RenderItem[] {
         && prev.type !== 'question'
         && prev.type !== 'approval'
         && prev.type !== 'tool_compact'
+        && prev.type !== 'tool_group'
         && prev.type !== 'blend';
 
       if (prevIsEmpty) {
