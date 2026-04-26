@@ -1,6 +1,7 @@
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from "fs/promises";
 import { join, resolve, dirname, extname, sep } from "path";
 import { exec } from "child_process";
+import { AsyncLocalStorage } from "async_hooks";
 import { promisify } from "util";
 import { requestApproval } from "../../utils/approvalBridge";
 import {
@@ -54,6 +55,20 @@ import {
 } from "../toolPathScope";
 
 const execAsync = promisify(exec);
+
+interface ExecuteToolContext {
+  readOnlyMode?: boolean;
+}
+
+const executeToolContext = new AsyncLocalStorage<ExecuteToolContext>();
+
+export function withExecuteToolContext<T>(
+  context: ExecuteToolContext,
+  callback: () => T,
+): T {
+  const current = executeToolContext.getStore() ?? {};
+  return executeToolContext.run({ ...current, ...context }, callback);
+}
 
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36";
@@ -168,7 +183,7 @@ const SAFE_BASH_COMMANDS = new Set([
 ]);
 
 const DANGEROUS_BASH_PATTERNS = [
-  /\bgit\s+(push|commit|add|reset|checkout|switch|merge|rebase|cherry-pick|stash|pull|fetch|tag|branch|remote|submodule|worktree|gc|clean)\b/i,
+  /\bgit\s+(push|commit|add|reset|checkout|switch|merge|rebase|cherry-pick|stash|pull|fetch|submodule|worktree|gc|clean)\b/i,
 
   /\brm\b/i,
   /\brmdir\b/i,
@@ -256,7 +271,7 @@ const BASH_REDIRECTION_PATTERN =
   /(^|[\s(])(?:\d?>>?|\d?<<?|>>?|<<?|&>>?|&>)(?=\s|$)/;
 
 const GIT_READONLY_PATTERN =
-  /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+rev-list\s+.*--left-right\s+.*--count(?:\s|$)|^git\s+branch\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b)(?:\s|$)|^git\s+stash\s+list(?:\s|$)|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)(?:\s|$)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
+  /^git\s+(?:status|diff|log|show|describe|rev-parse|shortlog|blame|ls-files|ls-tree|for-each-ref|cat-file|check-ignore|archive)(?:\s|$)|^git\s+rev-list\s+.*--left-right\s+.*--count(?:\s|$)|^git\s+branch(?:\s+(?:--show-current\b|-v\b|-vv\b|-a\b|-r\b|--list\b))?(?:\s|$)|^git\s+stash\s+list(?:\s|$)|^git\s+remote\s+(?:-v\b|--verbose\b|show\b)(?:\s|$)|^git\s+tag\s*(?:-l\b|--list\b|$)/i;
 
 function isGitReadOnlyCommand(command: string): boolean {
   const normalized = command.trim().replace(/\s+/g, " ");
@@ -289,6 +304,10 @@ function isUnixLikeCommand(command: string): boolean {
   ];
   const firstToken = command.trim().split(/\s+/)[0]?.toLowerCase();
   return firstToken ? unixCommands.includes(firstToken) : false;
+}
+
+function isMutatingTool(toolName: string): boolean {
+  return ["write", "edit", "delete", "move", "mkdir", "create_directory"].includes(toolName);
 }
 
 function isSafeBashCommand(command: string): boolean {
@@ -436,6 +455,89 @@ function isReadOnlyBashCommandChain(command: string): boolean {
   }
 
   return true;
+}
+
+export function getShellCommandHeads(command: string): string[] {
+  const parsed = splitTopLevelBashSegments(command);
+  if (parsed.hasUnsupportedSyntax) {
+    return [];
+  }
+  const segments =
+    parsed.segments.length > 0 ? parsed.segments : [command.trim()];
+  return segments
+    .map((segment) => segment.trim().split(/\s+/)[0]?.toLowerCase())
+    .filter(Boolean) as string[];
+}
+
+const READONLY_MUTATING_COMMAND_HEADS = new Set([
+  "rm",
+  "del",
+  "mv",
+  "move",
+  "cp",
+  "copy",
+  "touch",
+  "mkdir",
+  "rmdir",
+  "remove-item",
+  "new-item",
+  "set-content",
+  "add-content",
+  "out-file",
+  "rename-item",
+  "move-item",
+  "copy-item",
+]);
+
+const READONLY_MUTATING_GIT_SUBCOMMANDS = new Set([
+  "add",
+  "commit",
+  "checkout",
+  "switch",
+  "restore",
+  "reset",
+  "clean",
+  "stash",
+  "merge",
+  "rebase",
+  "pull",
+  "push",
+  "apply",
+  "am",
+  "cherry-pick",
+  "revert",
+]);
+
+function isMutatingGitCommandSegment(segment: string): boolean {
+  const tokens = segment.trim().split(/\s+/);
+  if (tokens[0]?.toLowerCase() !== "git") return false;
+  const subcommand = tokens[1]?.toLowerCase();
+  return subcommand ? READONLY_MUTATING_GIT_SUBCOMMANDS.has(subcommand) : false;
+}
+
+function isMutatingBashCommand(command: string): boolean {
+  const normalized = command.trim();
+  if (/>|>>/.test(normalized)) {
+    return true;
+  }
+
+  const parsed = splitTopLevelBashSegments(normalized);
+  if (parsed.hasUnsupportedSyntax) {
+    return true;
+  }
+
+  const heads = getShellCommandHeads(normalized);
+  if (heads.some((head) => READONLY_MUTATING_COMMAND_HEADS.has(head))) {
+    return true;
+  }
+
+  const segments =
+    parsed.segments.length > 0 ? parsed.segments : [normalized];
+  if (segments.some((segment) => isMutatingGitCommandSegment(segment))) {
+    return true;
+  }
+
+  return /\b(npm|bun|pnpm|yarn)\s+install\b/i.test(normalized);
 }
 
 async function executeReadOnlyBashChain(
@@ -861,6 +963,7 @@ async function enforceSingleReviewDecision(
 export interface ExecuteToolOptions {
   skipApproval?: boolean;
   abortSignal?: AbortSignal;
+  readOnlyMode?: boolean;
 }
 
 async function requestOutsideWorkspaceApproval(
@@ -936,10 +1039,33 @@ const globPatternCache = new Map<string, RegExp>();
 
 const BASH_REVIEW_MAX_FILES = 2000;
 const BASH_REVIEW_MAX_FILE_BYTES = 512 * 1024;
+const BASH_REVIEW_MAX_DEPTH = 10;
+
+function normalizePathForCompare(value: string): string {
+  const resolved = resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isSubPath(child: string, parent: string): boolean {
+  const resolvedChild = normalizePathForCompare(child);
+  const resolvedParent = normalizePathForCompare(parent);
+  if (resolvedChild === resolvedParent) return true;
+  const parentWithSep = resolvedParent.endsWith(sep)
+    ? resolvedParent
+    : resolvedParent + sep;
+  return resolvedChild.startsWith(parentWithSep);
+}
+
 const BASH_REVIEW_MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+
+interface WorkspaceStatEntry {
+  mtimeMs: number;
+  size: number;
+}
 
 interface WorkspaceReviewSnapshot {
   files: Map<string, string>;
+  stats: Map<string, WorkspaceStatEntry>;
   truncated: boolean;
   skipped: number;
 }
@@ -970,80 +1096,130 @@ function shouldTrackBashFileChanges(command: string): boolean {
   return !isSafeBashCommand(trimmed);
 }
 
-async function captureWorkspaceReviewSnapshot(
+async function collectWorkspaceFilePaths(
   workspace: string,
-): Promise<WorkspaceReviewSnapshot> {
-  const files = new Map<string, string>();
-  const stack: string[] = [""];
+): Promise<{ relPaths: string[]; truncated: boolean }> {
+  const resolvedWorkspace = resolve(workspace);
+  const relPaths: string[] = [];
+  const stack: Array<{ relDir: string; depth: number }> = [{ relDir: '', depth: 0 }];
   let truncated = false;
-  let skipped = 0;
-  let totalBytes = 0;
 
   while (stack.length > 0) {
-    const relDir = stack.pop() ?? "";
-    const absDir = relDir ? resolve(workspace, relDir) : workspace;
+    const { relDir, depth } = stack.pop()!;
+    if (depth > BASH_REVIEW_MAX_DEPTH) { truncated = true; continue; }
+    const absDir = relDir ? resolve(resolvedWorkspace, relDir) : resolvedWorkspace;
+
+    // Guard: never scan outside the workspace root
+    if (!isSubPath(absDir, resolvedWorkspace)) continue;
+
     let entries;
     try {
       entries = await readdir(absDir, { withFileTypes: true });
     } catch {
       continue;
     }
-
     for (const entry of entries) {
       const relPath = relDir ? join(relDir, entry.name) : entry.name;
-
       if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
-        stack.push(relPath);
-        continue;
+        if (!EXCLUDED_DIRECTORIES.has(entry.name)) {
+          stack.push({ relDir: relPath, depth: depth + 1 });
+        }
+      } else if (entry.isFile()) {
+        if (relPaths.length >= BASH_REVIEW_MAX_FILES) {
+          truncated = true;
+        } else {
+          relPaths.push(relPath);
+        }
       }
-
-      if (!entry.isFile()) continue;
-      if (files.size >= BASH_REVIEW_MAX_FILES) {
-        truncated = true;
-        continue;
-      }
-
-      const absPath = resolve(workspace, relPath);
-      let fileStats;
-      try {
-        fileStats = await stat(absPath);
-      } catch {
-        continue;
-      }
-
-      if (
-        fileStats.size > BASH_REVIEW_MAX_FILE_BYTES ||
-        totalBytes + fileStats.size > BASH_REVIEW_MAX_TOTAL_BYTES
-      ) {
-        skipped++;
-        continue;
-      }
-
-      let raw: Buffer;
-      try {
-        raw = await readFile(absPath);
-      } catch {
-        continue;
-      }
-
-      if (isBinaryFile(raw)) {
-        skipped++;
-        continue;
-      }
-
-      const content = raw.toString("utf-8");
-      if (content.includes("\u0000")) {
-        skipped++;
-        continue;
-      }
-
-      files.set(normalizeWorkspaceRelativePath(relPath), content);
-      totalBytes += raw.length;
     }
   }
 
-  return { files, truncated, skipped };
+  return { relPaths, truncated };
+}
+
+async function captureWorkspaceReviewSnapshot(
+  workspace: string,
+): Promise<WorkspaceReviewSnapshot> {
+  const { relPaths, truncated } = await collectWorkspaceFilePaths(workspace);
+
+  const files = new Map<string, string>();
+  const stats = new Map<string, WorkspaceStatEntry>();
+  let skipped = 0;
+  let totalBytes = 0;
+
+  const CONCURRENCY = 32;
+  for (let i = 0; i < relPaths.length; i += CONCURRENCY) {
+    const batch = relPaths.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async (relPath) => {
+        const absPath = resolve(workspace, relPath);
+        const key = normalizeWorkspaceRelativePath(relPath);
+
+        let fileStats;
+        try {
+          fileStats = await stat(absPath);
+        } catch {
+          return;
+        }
+
+        stats.set(key, { mtimeMs: fileStats.mtimeMs, size: fileStats.size });
+
+        if (
+          fileStats.size > BASH_REVIEW_MAX_FILE_BYTES ||
+          totalBytes + fileStats.size > BASH_REVIEW_MAX_TOTAL_BYTES
+        ) {
+          skipped++;
+          return;
+        }
+
+        let raw: Buffer;
+        try {
+          raw = await readFile(absPath);
+        } catch {
+          return;
+        }
+
+        if (isBinaryFile(raw)) { skipped++; return; }
+
+        const content = raw.toString('utf-8');
+        if (content.includes("\u0000")) { skipped++; return; }
+
+        files.set(key, content);
+        totalBytes += raw.length;
+      }),
+    );
+  }
+
+  return { files, stats, truncated, skipped };
+}
+
+async function captureWorkspaceStatSnapshot(
+  workspace: string,
+): Promise<WorkspaceReviewSnapshot> {
+  const { relPaths, truncated } = await collectWorkspaceFilePaths(workspace);
+
+  const stats = new Map<string, WorkspaceStatEntry>();
+  const files = new Map<string, string>();
+  const skipped = 0;
+
+  const CONCURRENCY = 64;
+  for (let i = 0; i < relPaths.length; i += CONCURRENCY) {
+    const batch = relPaths.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async (relPath) => {
+        const absPath = resolve(workspace, relPath);
+        const key = normalizeWorkspaceRelativePath(relPath);
+        try {
+          const s = await stat(absPath);
+          stats.set(key, { mtimeMs: s.mtimeMs, size: s.size });
+        } catch {
+          // deleted file — intentionally absent from after-stats
+        }
+      }),
+    );
+  }
+
+  return { files, stats, truncated, skipped };
 }
 
 async function trackBashWorkspaceChanges(
@@ -1059,10 +1235,37 @@ async function trackBashWorkspaceChanges(
       deniedCount: 0,
     };
   }
-  const after = await captureWorkspaceReviewSnapshot(workspace);
-  const allPaths = Array.from(
-    new Set([...before.files.keys(), ...after.files.keys()]),
-  ).sort((a, b) => a.localeCompare(b));
+  // Fast stat-only "after" scan — read content only for files that actually changed
+  const afterStats = await captureWorkspaceStatSnapshot(workspace);
+
+  // Determine changed paths by comparing stats (mtime or size differs, or file added/removed)
+  const allStatPaths = new Set([
+    ...before.stats.keys(),
+    ...afterStats.stats.keys(),
+  ]);
+  const changedPaths = Array.from(allStatPaths).filter((p) => {
+    const b = before.stats.get(p);
+    const a = afterStats.stats.get(p);
+    if (!b || !a) return true; // added or deleted
+    return b.mtimeMs !== a.mtimeMs || b.size !== a.size;
+  });
+
+  // Read content for changed files (in parallel)
+  const afterContents = new Map<string, string>();
+  await Promise.all(
+    changedPaths.map(async (relPath) => {
+      if (!afterStats.stats.has(relPath)) return; // deleted — no after content
+      const absPath = resolve(workspace, relPath.split("/").join(sep));
+      try {
+        const raw = await readFile(absPath);
+        if (!isBinaryFile(raw)) afterContents.set(relPath, raw.toString("utf-8"));
+      } catch {
+        // ignore
+      }
+    }),
+  );
+
+  const allPaths = changedPaths.sort((a, b) => a.localeCompare(b));
   let changedCount = 0;
   let reviewedCount = 0;
   let keptCount = 0;
@@ -1074,16 +1277,26 @@ async function trackBashWorkspaceChanges(
   }> = [];
 
   for (const path of allPaths) {
-    const oldContent = before.files.get(path) ?? "";
-    const newContent = after.files.get(path) ?? "";
-    if (oldContent === newContent) continue;
+    const beforeExists = before.stats.has(path);
+    const afterExists = afterStats.stats.has(path);
+
+    const oldContentKnown = before.files.has(path);
+    const newContentKnown = afterContents.has(path);
+
+    const oldContent = oldContentKnown ? before.files.get(path)! : "";
+    const newContent = newContentKnown ? afterContents.get(path)! : "";
+
+    const existenceChanged = beforeExists !== afterExists;
+    const contentChanged = oldContentKnown && newContentKnown && oldContent !== newContent;
+
+    if (!existenceChanged && !contentChanged) continue;
 
     trackFileChange(path, oldContent, newContent);
 
     const diff = generateDiff(oldContent, newContent);
     const diffLines = formatDiffForDisplay(diff, 0);
     const type: "write" | "edit" | "delete" =
-      oldContent === "" ? "write" : newContent === "" ? "delete" : "edit";
+      !beforeExists ? "write" : !afterExists ? "delete" : "edit";
     const title =
       type === "write"
         ? `Create (${path})`
@@ -1144,11 +1357,11 @@ async function trackBashWorkspaceChanges(
   if (
     before.truncated ||
     before.skipped > 0 ||
-    after.truncated ||
-    after.skipped > 0
+    afterStats.truncated ||
+    afterStats.skipped > 0
   ) {
     debugLog(
-      `[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={files:${after.files.size},truncated:${after.truncated},skipped:${after.skipped}}`,
+      `[tool] bash review snapshot limits reached before={files:${before.files.size},truncated:${before.truncated},skipped:${before.skipped}} after={stats:${afterStats.stats.size},truncated:${afterStats.truncated},skipped:${afterStats.skipped}}`,
     );
   }
 
@@ -1590,24 +1803,33 @@ export async function executeTool(
   args: Record<string, unknown>,
   options: ExecuteToolOptions = {},
 ): Promise<ToolResult> {
-  const workspace = process.cwd();
+  // Resolve workspace: prefer MOSAIC_WORKSPACE env var to guard against cases
+  // where process.cwd() returns the app install dir or user home directory.
+  const workspace = resolve(process.env.MOSAIC_WORKSPACE || process.cwd());
   const startTime = Date.now();
   const argsPreview = JSON.stringify(args).slice(0, 200);
-  debugLog(`[tool] ${toolName} START args=${argsPreview}`);
+  debugLog(`[tool] ${toolName} START workspace=${workspace} args=${argsPreview}`);
 
   try {
-    const readOnlyMode = process.env.MOSAIC_READONLY === "1";
+    const readOnlyMode =
+      process.env.MOSAIC_READONLY === "1" ||
+      options.readOnlyMode === true ||
+      executeToolContext.getStore()?.readOnlyMode === true;
     if (readOnlyMode) {
-      const blockedTools = new Set([
-        "write",
-        "edit",
-        "create_directory",
-        "bash",
-      ]);
-      if (blockedTools.has(toolName)) {
+      if (isMutatingTool(toolName)) {
         return {
           success: false,
-          error: `Read-only mode: tool "${toolName}" is disabled in Mosaic desktop.`,
+          error: `Tool "${toolName}" is not allowed in read-only mode`,
+        };
+      }
+      if (
+        toolName === "bash" &&
+        typeof args.command === "string" &&
+        isMutatingBashCommand(args.command)
+      ) {
+        return {
+          success: false,
+          error: `Command is not allowed in read-only mode: ${args.command}`,
         };
       }
     }
@@ -2111,31 +2333,22 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
         const fallbacks: SubsystemInfo[] = [initialSubsystem];
 
-        if (process.platform === "win32" && isUnixLikeCommand(command)) {
-          const unixSubsystems = allSubsystems
-            .filter(
-              (s) => s.id === "wsl" || s.id === "git-bash" || s.id === "bash",
-            )
-            .filter((s) => s.available && s.id !== initialSubsystem.id)
-            .sort((a, b) => b.priority - a.priority);
-
-          if (unixSubsystems.length > 0) {
-            debugLog(
-              `[tool] bash unix-like command detected, prioritizing unix subsystems: ${unixSubsystems.map((s) => s.id).join(", ")}`,
-            );
-            fallbacks.unshift(...unixSubsystems);
-          }
-        }
-
+        // On Windows, exclude WSL from the auto-fallback pool unless the user
+        // explicitly selected it as their preferred subsystem.
+        const wslExplicitlyPreferred =
+          process.platform === "win32" && preferredSubsystemId === "wsl";
         const others = allSubsystems
           .filter(
             (s) =>
               s.id !== "auto" &&
+              !(process.platform === "win32" && s.id === "wsl" && !wslExplicitlyPreferred) &&
               !fallbacks.some((f) => f.id === s.id) &&
               s.available,
           )
           .sort((a, b) => b.priority - a.priority);
         fallbacks.push(...others);
+
+        const resolvedWorkspace = resolve(workspace);
 
         let lastResult: ToolResult | null = null;
         const attempts: Array<{
@@ -2147,7 +2360,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
         for (const subsystem of fallbacks) {
           try {
             debugLog(
-              `[tool] bash attempt subsystem=${subsystem.id} command="${command.slice(0, 100)}"`,
+              `[tool] bash attempt subsystem=${subsystem.id} cwd="${resolvedWorkspace}" command="${command.slice(0, 100)}"`,
             );
             const env = {
               CI: process.env.CI || "1",
@@ -2166,7 +2379,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
                 subsystem,
                 command,
                 {
-                  cwd: workspace,
+                  cwd: resolvedWorkspace,
                   timeout,
                   env,
                   abortSignal: options.abortSignal,
@@ -2192,7 +2405,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
 
               for (const segment of segments) {
                 const stepResult = await runCommand(subsystem, segment, {
-                  cwd: workspace,
+                  cwd: resolvedWorkspace,
                   timeout: Math.floor(timeout / segments.length),
                   env,
                   abortSignal: options.abortSignal,
@@ -2212,7 +2425,7 @@ DO NOT continue without using the question tool. DO NOT ask in plain text.`;
               output = formatStructuredGitInspection(captures);
             } else {
               const runResult = await runCommand(subsystem, command, {
-                cwd: workspace,
+                cwd: resolvedWorkspace,
                 timeout,
                 env,
                 abortSignal: options.abortSignal,
