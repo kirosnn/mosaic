@@ -49,6 +49,7 @@ export interface Message {
   thinkingContent?: string;
   thinkingCollapsed?: boolean;
   thinkingRunning?: boolean;
+  toolGroupCollapsed?: boolean;
   isRunning?: boolean;
   runningStartTime?: number;
   timestamp?: number;
