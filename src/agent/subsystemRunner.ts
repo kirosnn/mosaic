@@ -1,6 +1,24 @@
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { SubsystemId, SubsystemInfo } from "../utils/subsystemDiscovery";
 import { debugLog } from "../utils/debug";
+
+function killProcessTree(pid: number): void {
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" });
+    } catch {
+      // ignore — process may have already exited
+    }
+  }
+}
+
+export function toWslPath(windowsPath: string): string {
+  return windowsPath.replace(/^([A-Za-z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`).replace(/\\/g, "/");
+}
+
+export function shellQuotePosix(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 export interface SubsystemResult {
   success: boolean;
@@ -84,10 +102,13 @@ export async function runCommand(
       executable = "cmd.exe";
       args = ["/d", "/s", "/c", command];
       break;
-    case "wsl":
+    case "wsl": {
       executable = "wsl.exe";
-      args = ["-e", "sh", "-lc", command];
+      const wslCwd = process.platform === "win32" ? toWslPath(cwd) : cwd;
+      const cdPrefix = `cd ${shellQuotePosix(wslCwd)} && `;
+      args = ["-e", "sh", "-lc", cdPrefix + command];
       break;
+    }
     case "git-bash":
       executable = subsystem.executable || "bash.exe";
       args = ["-lc", command];
@@ -105,8 +126,10 @@ export async function runCommand(
   debugLog(`[subsystem] spawning ${executable} ${args.join(" ")}`);
 
   return new Promise((resolve) => {
+    // WSL manages its own cwd via the cd prefix injected into the command
+    const spawnCwd = subsystem.id === "wsl" ? undefined : cwd;
     const proc = spawn(executable, args, {
-      cwd,
+      cwd: spawnCwd,
       env: { ...process.env, ...env },
       windowsVerbatimArguments: subsystem.id === "cmd",
     });
@@ -116,8 +139,13 @@ export async function runCommand(
     let stderr = "";
     let truncated = false;
 
-    const timer = setTimeout(() => {
+    const killProc = () => {
+      if (proc.pid) killProcessTree(proc.pid);
       proc.kill();
+    };
+
+    const timer = setTimeout(() => {
+      killProc();
       resolve({
         success: false,
         output:
@@ -131,7 +159,7 @@ export async function runCommand(
 
     const abortHandler = () => {
       clearTimeout(timer);
-      proc.kill();
+      killProc();
       resolve({
         success: false,
         output:
