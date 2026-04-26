@@ -20,9 +20,12 @@
 
 Mosaic is an open-source coding agent built around a terminal UI, a tool-driven agent runtime, MCP integration, and multi-provider model support.
 
+Mosaic also includes an optional desktop shell that embeds the terminal runtime in a fixed application window.
+
 ## Highlights
 
 - Terminal UI built with React and OpenTUI
+- Optional Electron desktop shell with a persistent embedded Mosaic terminal
 - Task-mode routing for lightweight chat, assistant capability questions, read-only exploration, planning, edits, execution, and review
 - Built-in coding tools (`read`, `write`, `edit`, `bash`, `glob`, `grep`, `explore`, and more)
 - MCP server management from the CLI
@@ -121,6 +124,20 @@ mosaic mcp <subcommand>
 mosaic uninstall --force
 ```
 
+### Desktop app
+
+```bash
+bun install
+bun run desktop:dev
+```
+
+Production build:
+
+```bash
+bun run desktop:build
+bun run desktop:start
+```
+
 ### Slash commands
 
 | Command | Description |
@@ -216,35 +233,25 @@ Native MCP servers currently include:
 - `AGENTS.md`
 - `.mosaic/`
 
-## Electron IDE
-
-The Electron surface is experimental and source-only for now.
-
-```bash
-bun install
-bun run electron:dev
-```
-
-It is not part of the intended published package surface.
-
 ## Development
 
 ```bash
 bun install
 bun run dev
 bun run start
+bun run desktop:dev
+bun run desktop:build
 bun run lint
 bun test
 ```
 
 ## Repository Structure
 
-- `src/app`: CLI and Electron entrypoints
+- `src/app`: CLI entrypoints
 - `src/agent`: core agent runtime, providers, prompts, tools
 - `src/components`: terminal UI
 - `src/mcp`: MCP runtime and CLI
 - `src/utils`: shared config, history, commands, bridges
-- `src/electron`: implementation modules still being migrated behind `src/app`
 - `docs/architecture`: maintainer-facing technical design docs
 
 Migration notes: [docs/architecture/repository-layout.md](docs/architecture/repository-layout.md)
