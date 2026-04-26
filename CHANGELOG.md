@@ -19,7 +19,7 @@ The format is intentionally lightweight:
 
 ### Architecture and docs
 
-- introduced `src/app` as the explicit entrypoint layer for CLI and Electron launch surfaces
+- introduced `src/app` as the explicit entrypoint layer for CLI launch surfaces
 - added maintainer-facing architecture docs for task routing, runtime context, providers, MCP, and repository boundaries
 - documented the provider support matrix with explicit caveats
 
