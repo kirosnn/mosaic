@@ -50,6 +50,7 @@ import { wrapText } from "./wrapText";
 import { getAllProviders } from "../../utils/config";
 import { ReasoningPanel } from "./ReasoningPanel";
 import { getDefaultThinkingCollapsed } from "./assistantMessageState";
+import { ToolGroupPanel } from "./ToolGroupPanel";
 
 const CODE_SYNTAX_STYLE = SyntaxStyle.fromStyles({
   keyword: { fg: RGBA.fromHex("#FF7B72"), bold: true },
@@ -432,6 +433,7 @@ interface ChatPageProps {
   selectMenu?: React.ReactNode;
   onModalOpenChange?: (open: boolean) => void;
   onToggleThinking?: (messageId: string) => void;
+  onToggleToolGroup?: (messageId: string) => void;
   onAnswer?: (index: number, customText?: string) => void;
   historyVersion?: number;
 }
@@ -457,6 +459,7 @@ export function ChatPage({
   selectMenu,
   onModalOpenChange,
   onToggleThinking,
+  onToggleToolGroup,
   onAnswer,
   historyVersion,
 }: ChatPageProps) {
@@ -508,12 +511,12 @@ export function ChatPage({
   useEffect(() => {
     const interval = setInterval(() => {
       const hasRunning = messages.some((m) => m.isRunning);
-      if (hasRunning) {
+      if (hasRunning || isProcessing) {
         setTimerTick((tick) => tick + 1);
       }
     }, 500);
     return () => clearInterval(interval);
-  }, [messages]);
+  }, [isProcessing, messages]);
 
   useEffect(() => {
     const sb = scrollboxRef.current;
@@ -639,6 +642,25 @@ export function ChatPage({
     questionRequest,
     approvalRequest,
   });
+  const isToolGroupActive = (endIndex: number | undefined): boolean => {
+    if (!isProcessing || typeof endIndex !== "number") return false;
+
+    for (let i = endIndex + 1; i < messages.length; i += 1) {
+      const message = messages[i];
+      if (!message || message.hiddenInUi) continue;
+      const role = message.displayRole ?? message.role;
+
+      if (role === "assistant" || role === "slash" || role === "user") {
+        return false;
+      }
+
+      if (role === "tool") {
+        return false;
+      }
+    }
+
+    return true;
+  };
   const hasApprovalPanel = Boolean(approvalRequest);
 
   const totalVisualLines = allItems.reduce(
@@ -759,6 +781,22 @@ export function ChatPage({
                   item.messageId && onToggleThinking?.(item.messageId)
                 }
                 isStreaming={item.thinkingRunning}
+              />
+            );
+          }
+
+          if (item.type === "tool_group") {
+            return (
+              <ToolGroupPanel
+                key={item.key}
+                goal={item.toolGroupGoal ?? "Research"}
+                entries={item.toolGroupEntries ?? []}
+                collapsed={item.toolGroupCollapsed ?? false}
+                isActive={isToolGroupActive(item.toolGroupEndMessageIndex)}
+                blinkOn={timerTick % 2 === 0}
+                onToggle={() =>
+                  item.messageId && onToggleToolGroup?.(item.messageId)
+                }
               />
             );
           }
