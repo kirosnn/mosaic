@@ -9,11 +9,10 @@ Mosaic is moving toward clearer product layers:
 - `src/components`: terminal UI
 - `src/mcp`: MCP services and CLI
 - `src/utils`: shared helpers and config
-- `src/electron`: Electron implementation details
 
 ## What changed in this pass
 
-- CLI and Electron launch surfaces now have explicit entrypoints under `src/app`
+- CLI entrypoints now have explicit entrypoints under `src/app`
 - contributor docs and README now describe `src/app` as the entrypoint layer
 - the published package surface is centered on the CLI/runtime modules instead of the full source tree
 
@@ -32,4 +31,3 @@ The migration strategy is:
 - new top-level launch surfaces should live in `src/app`
 - `src/agent` should stay runtime-focused and UI-agnostic
 - `src/components` should not absorb provider or MCP policy logic
-- `src/electron` can keep implementation modules until those files need active refactors
