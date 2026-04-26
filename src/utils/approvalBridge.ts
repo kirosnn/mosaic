@@ -1,4 +1,5 @@
 import { recordApprovalTriggered } from '../agent/runtimeMetrics';
+import { playUiSound } from './sound';
 
 export interface ApprovalRequest {
   id: string;
@@ -106,6 +107,7 @@ export async function requestApproval(
     pendingResolve = resolve;
     pendingReject = reject;
     notify();
+    playUiSound("attention");
   });
 
   return { approved: response.approved, customResponse: response.customResponse };
@@ -141,6 +143,7 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
     pendingResolve = next.resolve;
     pendingReject = next.reject;
     notify();
+    playUiSound("attention");
   }
 }
 
@@ -161,5 +164,6 @@ export function cancelApproval(): void {
     pendingResolve = next.resolve;
     pendingReject = next.reject;
     notify();
+    playUiSound("attention");
   }
 }
