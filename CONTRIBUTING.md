@@ -24,7 +24,6 @@ Useful commands:
 ```bash
 bun run dev
 bun run start
-bun run electron:dev
 ```
 
 ## Repository structure
@@ -34,7 +33,6 @@ bun run electron:dev
 - `src/components`: terminal UI
 - `src/mcp`: MCP runtime and CLI management
 - `src/utils`: shared configuration, history, commands, and bridges
-- `src/electron`: Electron implementation modules kept behind app entrypoints during migration
 - `docs/architecture`: maintainer-facing technical design notes
 
 The current structure is intentionally incremental. New entrypoints should land under `src/app`, while existing deeper modules can move only when the migration stays low-risk.
