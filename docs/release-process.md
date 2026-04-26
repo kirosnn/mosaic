@@ -36,7 +36,6 @@ npm pack --dry-run --cache ./.npm-pack-cache
 
 - the npm package is the distribution channel
 - Bun is the required runtime for Mosaic itself
-- Electron remains source-only and is not part of the supported published package surface
 
 ## Release notes guidance
 
