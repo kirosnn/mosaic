@@ -1,3 +1,5 @@
+import { playUiSound } from './sound';
+
 export interface QuestionOption {
   label: string;
   value?: string | null;
@@ -78,6 +80,7 @@ export async function askQuestion(
 
   currentRequest = request;
   notify();
+  playUiSound("attention");
 
   const answer = await new Promise<QuestionAnswer>((resolve, reject) => {
     pendingResolve = resolve;
