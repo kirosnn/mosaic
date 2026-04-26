@@ -5,7 +5,7 @@ import { join } from "path";
 import { debugLog } from "./debug";
 
 const execAsync = promisify(exec);
-const DISCOVERY_CACHE_TTL_MS = 30_000;
+const DISCOVERY_CACHE_TTL_MS = 300_000;
 
 type DiscoveryCacheEntry = {
   timestamp: number;
@@ -47,10 +47,11 @@ const SUBSYSTEM_METADATA: Record<
 > = {
   pwsh: { label: "PowerShell 7", priority: 10 },
   powershell: { label: "Windows PowerShell", priority: 9 },
-  wsl: { label: "WSL", priority: 8 },
   "git-bash": { label: "Git Bash", priority: 7 },
   bash: { label: "Bash", priority: 6 },
   cmd: { label: "Command Prompt", priority: 5 },
+  // WSL is deprioritized: it must be explicitly selected, never auto-chosen
+  wsl: { label: "WSL", priority: 1 },
 };
 
 async function checkExecutable(name: string): Promise<string | undefined> {
@@ -231,7 +232,11 @@ export async function getEffectiveSubsystem(
     }
   }
 
-  const available = all.filter((s) => s.id !== "auto" && s.available);
+  // On Windows, exclude WSL from auto-selection — it must be explicitly requested.
+  const isWindows = process.platform === "win32";
+  const available = all.filter(
+    (s) => s.id !== "auto" && s.available && !(isWindows && s.id === "wsl"),
+  );
   return (
     available[0] ||
     all.find((s) => s.id === "powershell") ||
