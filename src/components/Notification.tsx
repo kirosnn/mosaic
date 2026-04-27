@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect } from "react";
 
-export type NotificationType = 'info' | 'success' | 'error' | 'warning';
+export type NotificationType = "info" | "success" | "error" | "warning";
 
 export interface NotificationData {
   id: string;
@@ -37,15 +37,15 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
 
   const getTypeColor = (type: NotificationType): string => {
     switch (type) {
-      case 'success':
-        return '#38ff65';
-      case 'error':
-        return '#ff3838';
-      case 'warning':
-        return '#ffca38';
-      case 'info':
+      case "success":
+        return "#38ff65";
+      case "error":
+        return "#ff3838";
+      case "warning":
+        return "#D4D4D8";
+      case "info":
       default:
-        return '#3899ff';
+        return "#3899ff";
     }
   };
 
@@ -60,11 +60,15 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     innerWidth: number;
     text: string;
   }) => {
-    const content = text.padEnd(innerWidth, ' ');
+    const content = text.padEnd(innerWidth, " ");
     const totalWidth = innerWidth + 2;
 
     return (
-      <box flexDirection="row" backgroundColor={hasBackground ? "#111010ff" : "transparent"} width={totalWidth}>
+      <box
+        flexDirection="row"
+        backgroundColor={hasBackground ? "#111010ff" : "transparent"}
+        width={totalWidth}
+      >
         <text fg={color}>▎ </text>
         <text fg="white">{content}</text>
       </box>
@@ -83,16 +87,31 @@ export function Notification({ notifications, onRemove }: NotificationProps) {
     >
       {notifications.map((notification) => {
         const color = getTypeColor(notification.type);
-        const hasBackground = notification.type !== 'error';
+        const hasBackground = notification.type !== "error";
 
         const message = notification.message;
         const innerWidth = Math.max(1, message.length + 2);
 
         return (
           <box key={notification.id} flexDirection="column">
-            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text="" />
-            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text={`${message}  `} />
-            <Line color={color} hasBackground={hasBackground} innerWidth={innerWidth} text="" />
+            <Line
+              color={color}
+              hasBackground={hasBackground}
+              innerWidth={innerWidth}
+              text=""
+            />
+            <Line
+              color={color}
+              hasBackground={hasBackground}
+              innerWidth={innerWidth}
+              text={`${message}  `}
+            />
+            <Line
+              color={color}
+              hasBackground={hasBackground}
+              innerWidth={innerWidth}
+              text=""
+            />
           </box>
         );
       })}
