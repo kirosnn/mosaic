@@ -1,7 +1,15 @@
 import { TextAttributes } from "@opentui/core";
 
 export interface MarkdownSegment {
-  type: 'text' | 'bold' | 'italic' | 'code' | 'heading' | 'listitem' | 'link' | 'blockquote';
+  type:
+    | "text"
+    | "bold"
+    | "italic"
+    | "code"
+    | "heading"
+    | "listitem"
+    | "link"
+    | "blockquote";
   content: string;
   level?: number;
   href?: string;
@@ -13,8 +21,14 @@ function normalizeLinkUri(href: string) {
   const trimmed = href.trim();
   if (!trimmed) return trimmed;
   if (linkSchemePattern.test(trimmed)) return trimmed;
-  if (trimmed.startsWith('//')) return `https:${trimmed}`;
-  if (trimmed.startsWith('/') || trimmed.startsWith('#') || trimmed.startsWith('.') || trimmed.startsWith('?')) return trimmed;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  if (
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith(".") ||
+    trimmed.startsWith("?")
+  )
+    return trimmed;
   return `https://${trimmed}`;
 }
 
@@ -22,56 +36,56 @@ function parseInline(text: string): MarkdownSegment[] {
   const segments: MarkdownSegment[] = [];
 
   let i = 0;
-  let buffer = '';
+  let buffer = "";
 
   const flushText = () => {
     if (buffer) {
-      segments.push({ type: 'text', content: buffer });
-      buffer = '';
+      segments.push({ type: "text", content: buffer });
+      buffer = "";
     }
   };
 
   while (i < text.length) {
-    if (text[i] === '`') {
-      const j = text.indexOf('`', i + 1);
+    if (text[i] === "`") {
+      const j = text.indexOf("`", i + 1);
       if (j !== -1) {
         flushText();
-        segments.push({ type: 'code', content: text.substring(i + 1, j) });
+        segments.push({ type: "code", content: text.substring(i + 1, j) });
         i = j + 1;
         continue;
       }
     }
 
-    if (text.substring(i, i + 2) === '**') {
-      const j = text.indexOf('**', i + 2);
+    if (text.substring(i, i + 2) === "**") {
+      const j = text.indexOf("**", i + 2);
       if (j !== -1) {
         flushText();
-        segments.push({ type: 'bold', content: text.substring(i + 2, j) });
+        segments.push({ type: "bold", content: text.substring(i + 2, j) });
         i = j + 2;
         continue;
       }
     }
 
-    if (text[i] === '[') {
-      const labelEnd = text.indexOf(']', i + 1);
-      if (labelEnd !== -1 && text[labelEnd + 1] === '(') {
-        const urlEnd = text.indexOf(')', labelEnd + 2);
+    if (text[i] === "[") {
+      const labelEnd = text.indexOf("]", i + 1);
+      if (labelEnd !== -1 && text[labelEnd + 1] === "(") {
+        const urlEnd = text.indexOf(")", labelEnd + 2);
         if (urlEnd !== -1) {
           const label = text.substring(i + 1, labelEnd);
           const href = text.substring(labelEnd + 2, urlEnd).trim();
           flushText();
-          segments.push({ type: 'link', content: label, href });
+          segments.push({ type: "link", content: label, href });
           i = urlEnd + 1;
           continue;
         }
       }
     }
 
-    if (text[i] === '*' && text.substring(i, i + 2) !== '**') {
-      const j = text.indexOf('*', i + 1);
+    if (text[i] === "*" && text.substring(i, i + 2) !== "**") {
+      const j = text.indexOf("*", i + 1);
       if (j !== -1) {
         flushText();
-        segments.push({ type: 'italic', content: text.substring(i + 1, j) });
+        segments.push({ type: "italic", content: text.substring(i + 1, j) });
         i = j + 1;
         continue;
       }
@@ -82,7 +96,7 @@ function parseInline(text: string): MarkdownSegment[] {
   }
 
   flushText();
-  return segments.length > 0 ? segments : [{ type: 'text', content: text }];
+  return segments.length > 0 ? segments : [{ type: "text", content: text }];
 }
 
 export function getListContinuationIndent(line: string): number {
@@ -97,31 +111,36 @@ export function parseMarkdownLine(line: string): MarkdownSegment[] {
   if (line.match(/^#{1,6}\s/)) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match && match[2]) {
-      return [{ type: 'heading', content: match[2], level: match[1]?.length || 1 }];
+      return [
+        { type: "heading", content: match[2], level: match[1]?.length || 1 },
+      ];
     }
   }
 
   const blockquoteMatch = line.match(/^(>\s*)+/);
   if (blockquoteMatch) {
     const depth = (line.match(/>/g) || []).length;
-    const content = line.replace(/^(>\s*)+/, '');
-    const prefix = '│ '.repeat(depth);
-    return [{ type: 'blockquote', content: prefix }, ...parseInline(content)];
+    const content = line.replace(/^(>\s*)+/, "");
+    const prefix = "│ ".repeat(depth);
+    return [{ type: "blockquote", content: prefix }, ...parseInline(content)];
   }
 
   const unorderedMatch = line.match(/^(\s*)([-*+])\s(.*)$/);
   if (unorderedMatch) {
-    const indent = unorderedMatch[1] ?? '';
-    const content = unorderedMatch[3] ?? '';
-    return [{ type: 'text', content: `${indent}• ` }, ...parseInline(content)];
+    const indent = unorderedMatch[1] ?? "";
+    const content = unorderedMatch[3] ?? "";
+    return [{ type: "text", content: `${indent}• ` }, ...parseInline(content)];
   }
 
   const orderedMatch = line.match(/^(\s*)(\d+)\.\s(.*)$/);
   if (orderedMatch) {
-    const indent = orderedMatch[1] ?? '';
-    const num = orderedMatch[2] ?? '1';
-    const content = orderedMatch[3] ?? '';
-    return [{ type: 'text', content: `${indent}${num}. ` }, ...parseInline(content)];
+    const indent = orderedMatch[1] ?? "";
+    const num = orderedMatch[2] ?? "1";
+    const content = orderedMatch[3] ?? "";
+    return [
+      { type: "text", content: `${indent}${num}. ` },
+      ...parseInline(content),
+    ];
   }
 
   return parseInline(line);
@@ -129,35 +148,59 @@ export function parseMarkdownLine(line: string): MarkdownSegment[] {
 
 export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
   switch (segment.type) {
-    case 'bold':
-      return <text key={key} fg="white" attributes={TextAttributes.BOLD}>{segment.content}</text>;
+    case "bold":
+      return (
+        <text key={key} fg="white" attributes={TextAttributes.BOLD}>
+          {segment.content}
+        </text>
+      );
 
-    case 'italic':
-      return <text key={key} fg="white" attributes={TextAttributes.DIM}>{segment.content}</text>;
+    case "italic":
+      return (
+        <text key={key} fg="white" attributes={TextAttributes.DIM}>
+          {segment.content}
+        </text>
+      );
 
-    case 'code':
+    case "code":
       return <text key={key} fg="#ffdd80">{`${segment.content}`}</text>;
 
-    case 'heading':
-      return <text key={key} fg="#ffca38" attributes={TextAttributes.BOLD}>{segment.content}</text>;
+    case "heading":
+      return (
+        <text key={key} fg="#D4D4D8" attributes={TextAttributes.BOLD}>
+          {segment.content}
+        </text>
+      );
 
-    case 'link':
-      return <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>{segment.content}</text>;
+    case "link":
+      return (
+        <text key={key} fg="#7fbfff" attributes={TextAttributes.UNDERLINE}>
+          {segment.content}
+        </text>
+      );
 
-    case 'listitem':
+    case "listitem":
       return (
         <box key={key} flexDirection="row">
-          <text fg="#ffca38">• </text>
+          <text fg="#D4D4D8">• </text>
           <text>{segment.content}</text>
         </box>
       );
 
-    case 'blockquote':
-      return <text key={key} fg="#5a8a6a">{segment.content}</text>;
+    case "blockquote":
+      return (
+        <text key={key} fg="#5a8a6a">
+          {segment.content}
+        </text>
+      );
 
-    case 'text':
+    case "text":
     default:
-      return <text key={key} fg="white">{segment.content}</text>;
+      return (
+        <text key={key} fg="white">
+          {segment.content}
+        </text>
+      );
   }
 }
 
@@ -167,42 +210,51 @@ export interface ParsedMarkdownLine {
 }
 
 export function parseMarkdownContent(content: string): ParsedMarkdownLine[] {
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   const result: ParsedMarkdownLine[] = [];
 
   for (const line of lines) {
     result.push({
       segments: parseMarkdownLine(line),
-      rawLine: line
+      rawLine: line,
     });
   }
 
   return result;
 }
 
-export function wrapMarkdownText(text: string, maxWidth: number): { text: string; segments: MarkdownSegment[] }[] {
-  if (!text || maxWidth <= 0) return [{ text: '', segments: [] }];
+export function wrapMarkdownText(
+  text: string,
+  maxWidth: number,
+): { text: string; segments: MarkdownSegment[] }[] {
+  if (!text || maxWidth <= 0) return [{ text: "", segments: [] }];
 
   const continuationIndent = getListContinuationIndent(text);
   const segments = parseMarkdownLine(text);
   const lines: { text: string; segments: MarkdownSegment[] }[] = [];
-  let currentLine = '';
+  let currentLine = "";
   let currentSegments: MarkdownSegment[] = [];
 
   const splitSegment = (segment: MarkdownSegment): MarkdownSegment[] => {
-    if (segment.type === 'code') return [segment];
+    if (segment.type === "code") return [segment];
     const parts = segment.content.match(/\s+|[^\s]+/g);
     if (!parts) return [segment];
-    return parts.map(part => ({ ...segment, content: part }));
+    return parts.map((part) => ({ ...segment, content: part }));
   };
 
   const pushLine = () => {
     if (!currentLine) return;
     const first = lines.length === 0;
-    const prefix = (!first && continuationIndent > 0) ? ' '.repeat(continuationIndent) : '';
-    const prefixSegs: MarkdownSegment[] = prefix ? [{ type: 'text', content: prefix }] : [];
-    lines.push({ text: prefix + currentLine, segments: [...prefixSegs, ...currentSegments] });
-    currentLine = '';
+    const prefix =
+      !first && continuationIndent > 0 ? " ".repeat(continuationIndent) : "";
+    const prefixSegs: MarkdownSegment[] = prefix
+      ? [{ type: "text", content: prefix }]
+      : [];
+    lines.push({
+      text: prefix + currentLine,
+      segments: [...prefixSegs, ...currentSegments],
+    });
+    currentLine = "";
     currentSegments = [];
   };
 
@@ -215,7 +267,7 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
     let remaining = piece.content;
     while (remaining.length > 0) {
       if (!currentLine) {
-        if (remaining.trim() === '') {
+        if (remaining.trim() === "") {
           return;
         }
         const limit = effectiveMaxWidth(isFirstLine());
@@ -225,8 +277,16 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
           return;
         }
         const chunk = remaining.slice(0, limit);
-        const pfx = isFirstLine() ? '' : ' '.repeat(continuationIndent);
-        lines.push({ text: pfx + chunk, segments: pfx ? [{ type: 'text', content: pfx }, { ...piece, content: chunk }] : [{ ...piece, content: chunk }] });
+        const pfx = isFirstLine() ? "" : " ".repeat(continuationIndent);
+        lines.push({
+          text: pfx + chunk,
+          segments: pfx
+            ? [
+                { type: "text", content: pfx },
+                { ...piece, content: chunk },
+              ]
+            : [{ ...piece, content: chunk }],
+        });
         remaining = remaining.slice(limit);
         continue;
       }
@@ -257,7 +317,12 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
     const merged: MarkdownSegment[] = [];
     for (const seg of line.segments) {
       const prev = merged.length > 0 ? merged[merged.length - 1] : undefined;
-      if (prev && prev.type === seg.type && prev.href === seg.href && prev.level === seg.level) {
+      if (
+        prev &&
+        prev.type === seg.type &&
+        prev.href === seg.href &&
+        prev.level === seg.level
+      ) {
         prev.content += seg.content;
       } else {
         merged.push({ ...seg });
@@ -266,11 +331,11 @@ export function wrapMarkdownText(text: string, maxWidth: number): { text: string
     line.segments = merged;
   }
 
-  return lines.length > 0 ? lines : [{ text: '', segments: [] }];
+  return lines.length > 0 ? lines : [{ text: "", segments: [] }];
 }
 
 export interface WrappedMarkdownBlock {
-  type: 'line' | 'code' | 'table' | 'hr';
+  type: "line" | "code" | "table" | "hr";
   wrappedLines?: { text: string; segments: MarkdownSegment[] }[];
   codeLines?: string[];
   tableRows?: string[][];
@@ -280,7 +345,7 @@ export interface WrappedMarkdownBlock {
 }
 
 function wrapCodeLine(line: string, maxWidth: number): string[] {
-  if (!line) return [''];
+  if (!line) return [""];
   if (maxWidth <= 0) return [line];
   if (line.length <= maxWidth) return [line];
 
@@ -294,19 +359,19 @@ function wrapCodeLine(line: string, maxWidth: number): string[] {
 }
 
 function wrapCellText(text: string, maxWidth: number): string[] {
-  if (!text) return [''];
+  if (!text) return [""];
   if (maxWidth <= 0) return [text];
   if (text.length <= maxWidth) return [text];
 
   const parts = text.split(/\s+/g).filter(Boolean);
-  if (parts.length === 0) return [''];
+  if (parts.length === 0) return [""];
 
   const lines: string[] = [];
-  let current = '';
+  let current = "";
 
   const pushLine = () => {
-    if (current !== '') lines.push(current);
-    current = '';
+    if (current !== "") lines.push(current);
+    current = "";
   };
 
   for (const part of parts) {
@@ -322,8 +387,8 @@ function wrapCellText(text: string, maxWidth: number): string[] {
 
     if (!current) {
       current = part;
-    } else if ((current + ' ' + part).length <= maxWidth) {
-      current += ' ' + part;
+    } else if ((current + " " + part).length <= maxWidth) {
+      current += " " + part;
     } else {
       pushLine();
       current = part;
@@ -331,21 +396,27 @@ function wrapCellText(text: string, maxWidth: number): string[] {
   }
 
   pushLine();
-  return lines.length > 0 ? lines : [''];
+  return lines.length > 0 ? lines : [""];
 }
 
-function computeTableColumnWidths(rows: string[][], maxWidth: number): number[] {
-  const columnCount = Math.max(...rows.map(row => row.length));
+function computeTableColumnWidths(
+  rows: string[][],
+  maxWidth: number,
+): number[] {
+  const columnCount = Math.max(...rows.map((row) => row.length));
   const widths = new Array<number>(columnCount).fill(1);
 
   for (const row of rows) {
     for (let col = 0; col < columnCount; col++) {
-      const cell = row[col] ?? '';
+      const cell = row[col] ?? "";
       widths[col] = Math.max(widths[col]!, cell.length);
     }
   }
 
-  const availableContentWidth = Math.max(1, maxWidth - (columnCount * 2) - (columnCount - 1));
+  const availableContentWidth = Math.max(
+    1,
+    maxWidth - columnCount * 2 - (columnCount - 1),
+  );
   let total = widths.reduce((sum, w) => sum + w, 0);
 
   if (availableContentWidth <= columnCount) {
@@ -371,14 +442,17 @@ function isTableSeparator(line: string): boolean {
   return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
 }
 
-function parseHorizontalRuleLine(line: string): { isRule: boolean; trailingText: string } {
+function parseHorizontalRuleLine(line: string): {
+  isRule: boolean;
+  trailingText: string;
+} {
   const match = line.match(/^\s*-{3,}(?:\s+(.+))?\s*$/);
-  if (!match) return { isRule: false, trailingText: '' };
-  return { isRule: true, trailingText: (match[1] ?? '').trim() };
+  if (!match) return { isRule: false, trailingText: "" };
+  return { isRule: true, trailingText: (match[1] ?? "").trim() };
 }
 
 function reflowParagraphs(text: string): string {
-  const rawLines = text.split('\n');
+  const rawLines = text.split("\n");
   const result: string[] = [];
   let inCodeBlock = false;
 
@@ -396,7 +470,7 @@ function reflowParagraphs(text: string): string {
       continue;
     }
 
-    if (line.trim() === '') {
+    if (line.trim() === "") {
       result.push(line);
       continue;
     }
@@ -406,13 +480,21 @@ function reflowParagraphs(text: string): string {
       continue;
     }
 
-    if (/^#{1,6}\s/.test(line) || /^\s*[-*+]\s/.test(line) || /^\s*\d+\.\s/.test(line) || /^(>\s*)+/.test(line) || isTableSeparator(line) || line.includes('|')) {
+    if (
+      /^#{1,6}\s/.test(line) ||
+      /^\s*[-*+]\s/.test(line) ||
+      /^\s*\d+\.\s/.test(line) ||
+      /^(>\s*)+/.test(line) ||
+      isTableSeparator(line) ||
+      line.includes("|")
+    ) {
       result.push(line);
       continue;
     }
 
-    const prev = result.length > 0 ? result[result.length - 1]! : '';
-    const prevIsText = prev.trim() !== '' &&
+    const prev = result.length > 0 ? result[result.length - 1]! : "";
+    const prevIsText =
+      prev.trim() !== "" &&
       !/^```/.test(prev) &&
       !/^#{1,6}\s/.test(prev) &&
       !/^\s*[-*+]\s/.test(prev) &&
@@ -420,17 +502,20 @@ function reflowParagraphs(text: string): string {
       !/^(>\s*)+/.test(prev);
 
     if (prevIsText) {
-      result[result.length - 1] = prev + ' ' + line;
+      result[result.length - 1] = prev + " " + line;
     } else {
       result.push(line);
     }
   }
 
-  return result.join('\n');
+  return result.join("\n");
 }
 
-export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMarkdownBlock[] {
-  const lines = reflowParagraphs(text).split('\n');
+export function parseAndWrapMarkdown(
+  text: string,
+  maxWidth: number,
+): WrappedMarkdownBlock[] {
+  const lines = reflowParagraphs(text).split("\n");
   const blocks: WrappedMarkdownBlock[] = [];
   let inCodeBlock = false;
   let codeLines: string[] = [];
@@ -445,8 +530,10 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
         language = fenceMatch[1];
         codeLines = [];
       } else {
-        const wrapped = codeLines.flatMap(codeLine => wrapCodeLine(codeLine, maxWidth));
-        blocks.push({ type: 'code', codeLines: wrapped, language });
+        const wrapped = codeLines.flatMap((codeLine) =>
+          wrapCodeLine(codeLine, maxWidth),
+        );
+        blocks.push({ type: "code", codeLines: wrapped, language });
         inCodeBlock = false;
         codeLines = [];
         language = undefined;
@@ -461,31 +548,35 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
 
     const hrLine = parseHorizontalRuleLine(line);
     if (hrLine.isRule) {
-      blocks.push({ type: 'hr' });
+      blocks.push({ type: "hr" });
       if (hrLine.trailingText) {
         blocks.push({
-          type: 'line',
-          wrappedLines: wrapMarkdownText(hrLine.trailingText, maxWidth)
+          type: "line",
+          wrappedLines: wrapMarkdownText(hrLine.trailingText, maxWidth),
         });
       }
       continue;
     }
 
     const nextLine = lines[i + 1];
-    if (line.includes('|') && typeof nextLine === 'string' && isTableSeparator(nextLine)) {
+    if (
+      line.includes("|") &&
+      typeof nextLine === "string" &&
+      isTableSeparator(nextLine)
+    ) {
       const tableRows: string[][] = [];
       const splitRow = (rowLine: string) => {
         let row = rowLine.trim();
-        if (row.startsWith('|')) row = row.slice(1);
-        if (row.endsWith('|')) row = row.slice(0, -1);
-        return row.split('|').map(cell => cell.trim());
+        if (row.startsWith("|")) row = row.slice(1);
+        if (row.endsWith("|")) row = row.slice(0, -1);
+        return row.split("|").map((cell) => cell.trim());
       };
 
       tableRows.push(splitRow(line));
       i += 2;
       while (i < lines.length) {
         const rowLine = lines[i]!;
-        if (!rowLine.includes('|') || rowLine.trim() === '') {
+        if (!rowLine.includes("|") || rowLine.trim() === "") {
           i -= 1;
           break;
         }
@@ -494,23 +585,25 @@ export function parseAndWrapMarkdown(text: string, maxWidth: number): WrappedMar
       }
 
       const columnWidths = computeTableColumnWidths(tableRows, maxWidth);
-      const tableCellLines = tableRows.map(row =>
-        columnWidths.map((width, col) => wrapCellText(row[col] ?? '', width))
+      const tableCellLines = tableRows.map((row) =>
+        columnWidths.map((width, col) => wrapCellText(row[col] ?? "", width)),
       );
 
-      blocks.push({ type: 'table', tableRows, columnWidths, tableCellLines });
+      blocks.push({ type: "table", tableRows, columnWidths, tableCellLines });
       continue;
     }
 
     blocks.push({
-      type: 'line',
-      wrappedLines: wrapMarkdownText(line, maxWidth)
+      type: "line",
+      wrappedLines: wrapMarkdownText(line, maxWidth),
     });
   }
 
   if (inCodeBlock) {
-    const wrapped = codeLines.flatMap(codeLine => wrapCodeLine(codeLine, maxWidth));
-    blocks.push({ type: 'code', codeLines: wrapped, language });
+    const wrapped = codeLines.flatMap((codeLine) =>
+      wrapCodeLine(codeLine, maxWidth),
+    );
+    blocks.push({ type: "code", codeLines: wrapped, language });
   }
 
   return blocks;
