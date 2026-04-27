@@ -120,7 +120,7 @@ function renderToolText(
             : "pending");
       const isInProgress = resolvedStatus === "in_progress";
       const isCompleted = resolvedStatus === "completed";
-      const markerColor = isInProgress ? "#ffca38" : "#9a9a9a";
+      const markerColor = isInProgress ? "#D4D4D8" : "#9a9a9a";
       const markerChar = isInProgress ? "~" : isCompleted ? "✓" : " ";
       return (
         <box flexDirection="row">
@@ -166,11 +166,11 @@ function renderToolText(
   const planMatch = content.match(/^(\s*)>\s*(\[[~x ]\])?\s*(.*)$/);
   if (planMatch) {
     const [, leading, bracket, rest] = planMatch;
-    const bracketColor = bracket === "[~]" ? "#ffca38" : "white";
+    const bracketColor = bracket === "[~]" ? "#D4D4D8" : "white";
     return (
       <box flexDirection="row">
         <text fg="white">{leading || ""}</text>
-        <text fg="#ffca38">{">"}</text>
+        <text fg="#D4D4D8">{">"}</text>
         <text fg="white"> </text>
         {bracket ? <text fg={bracketColor}>{bracket}</text> : null}
         {bracket ? <text fg="white"> </text> : null}
@@ -217,7 +217,7 @@ function renderSlashText(content: string, indent: number) {
     const max = parts[3] || "0";
     return (
       <box flexDirection="row">
-        <text fg="#ffca38">Model in use : </text>
+        <text fg="#D4D4D8">Model in use : </text>
         <text fg="white" attributes={TextAttributes.BOLD}>
           {model}
         </text>
@@ -272,7 +272,7 @@ function renderSlashText(content: string, indent: number) {
       UP: "#58a6ff",
       MS: "#79c0ff",
       FS: "#8b949e",
-      AB: "#ffca38",
+      AB: "#D4D4D8",
     };
     const color = colorByCode[code] || "white";
 
@@ -300,8 +300,8 @@ function renderSlashText(content: string, indent: number) {
   if (head === "[CTX_NOTE]") {
     return (
       <box flexDirection="row">
-        <text fg="#ffca38">! </text>
-        <text fg="#ffca38" attributes={TextAttributes.DIM}>
+        <text fg="#D4D4D8">! </text>
+        <text fg="#D4D4D8" attributes={TextAttributes.DIM}>
           {parts.slice(1).join("|") || ""}
         </text>
       </box>
@@ -908,7 +908,7 @@ export function ChatPage({
               onMouseDown={handleUserMouseDown}
             >
               {item.role === "user" && (item.content || item.isPadding) && (
-                <text fg="#ffca38">▎ </text>
+                <text fg="#D4D4D8">▎ </text>
               )}
               {showSlashBar && <text fg="#9a9a9a">• </text>}
               {showToolBullet && <text fg="#9a9a9a">• </text>}
@@ -1151,7 +1151,7 @@ export function ChatPage({
       >
         {pendingImages.length > 0 && (
           <box flexDirection="row" width="100%" marginBottom={1}>
-            <text fg="#ffca38">Images: </text>
+            <text fg="#D4D4D8">Images: </text>
             <text fg="gray">
               {pendingImages.map((img) => img.name).join(", ")}
             </text>
