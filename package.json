@@ -1,5 +1,6 @@
 {
   "name": "@kirosnn/mosaic",
+  "productName": "Mosaic",
   "version": "0.8.0",
   "description": "The open source coding agent.",
   "license": "MIT",
