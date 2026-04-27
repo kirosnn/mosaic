@@ -8,7 +8,7 @@ export interface UserMessageModalState {
   index: number;
   content: string;
   images: ImageAttachment[];
-  mode: 'actions' | 'edit';
+  mode: "actions" | "edit";
   editSeed?: string;
 }
 
@@ -41,11 +41,18 @@ export function UserMessageModal({
 }: UserMessageModalProps) {
   const [hoveredActionId, setHoveredActionId] = useState<string | null>(null);
 
-  const modalActions = modal.mode === 'actions' ? [
-    { id: "retry", label: "Retry message", onActivate: onRetry },
-    { id: "edit", label: "Edit and retry", onActivate: onOpenEdit },
-    { id: "copy", label: "Copy message text to clipboard", onActivate: onCopy }
-  ] : [];
+  const modalActions =
+    modal.mode === "actions"
+      ? [
+          { id: "retry", label: "Retry message", onActivate: onRetry },
+          { id: "edit", label: "Edit and retry", onActivate: onOpenEdit },
+          {
+            id: "copy",
+            label: "Copy message text to clipboard",
+            onActivate: onCopy,
+          },
+        ]
+      : [];
 
   return (
     <box
@@ -57,7 +64,12 @@ export function UserMessageModal({
       zIndex={20}
       onMouseDown={() => onClose()}
     >
-      <box width="100%" height="100%" justifyContent="center" alignItems="center">
+      <box
+        width="100%"
+        height="100%"
+        justifyContent="center"
+        alignItems="center"
+      >
         <box
           flexDirection="column"
           width={modalWidth}
@@ -67,18 +79,30 @@ export function UserMessageModal({
           padding={1}
           onMouseDown={(event: any) => event?.stopPropagation?.()}
         >
-          <box marginBottom={1} flexDirection="row" justifyContent="space-between" width="100%">
+          <box
+            marginBottom={1}
+            flexDirection="row"
+            justifyContent="space-between"
+            width="100%"
+          >
             <text attributes={TextAttributes.BOLD}>Message Actions</text>
             <box flexDirection="row">
               <text fg="white">esc </text>
               <text attributes={TextAttributes.DIM}>close</text>
             </box>
           </box>
-          <box flexDirection="column" width="100%" flexGrow={1} overflow="hidden">
-            {modal.mode === 'edit' ? (
+          <box
+            flexDirection="column"
+            width="100%"
+            flexGrow={1}
+            overflow="hidden"
+          >
+            {modal.mode === "edit" ? (
               <box flexDirection="column" width="100%">
                 <box marginBottom={1}>
-                  <text attributes={TextAttributes.DIM}>Edit the message and press Enter to resend.</text>
+                  <text attributes={TextAttributes.DIM}>
+                    Edit the message and press Enter to resend.
+                  </text>
                 </box>
                 <CustomInput
                   onSubmit={onEditSubmit}
@@ -94,17 +118,21 @@ export function UserMessageModal({
                   <box
                     flexDirection="row"
                     width="100%"
-                    backgroundColor={hoveredActionId === 'edit-back' ? "#2a2a2a" : "transparent"}
+                    backgroundColor={
+                      hoveredActionId === "edit-back"
+                        ? "#2a2a2a"
+                        : "transparent"
+                    }
                     paddingLeft={1}
                     paddingRight={1}
-                    onMouseOver={() => setHoveredActionId('edit-back')}
+                    onMouseOver={() => setHoveredActionId("edit-back")}
                     onMouseOut={() => setHoveredActionId(null)}
                     onMouseDown={(event: any) => {
                       event?.stopPropagation?.();
                       onCloseEdit();
                     }}
                   >
-                    <text fg="#ffca38">{'\u203A'} </text>
+                    <text fg="#D4D4D8">{"\u203A"} </text>
                     <text>Back to actions</text>
                   </box>
                 </box>
@@ -128,7 +156,7 @@ export function UserMessageModal({
                         action.onActivate();
                       }}
                     >
-                      <text fg="#ffca38">{'\u203A'} </text>
+                      <text fg="#D4D4D8">{"\u203A"} </text>
                       <text>{action.label}</text>
                     </box>
                   );
