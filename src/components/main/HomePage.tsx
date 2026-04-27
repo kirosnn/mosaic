@@ -4,7 +4,10 @@ import { VERSION } from "../../utils/version";
 import { CustomInput } from "../CustomInput";
 
 interface HomePageProps {
-  onSubmit: (value: string, meta?: import("../CustomInput").InputSubmitMeta) => void;
+  onSubmit: (
+    value: string,
+    meta?: import("../CustomInput").InputSubmitMeta,
+  ) => void;
   pasteRequestId: number;
   shortcutsOpen: boolean;
 }
@@ -57,8 +60,14 @@ const ASK_ANYTHING_HINTS = [
   "turning chaos into clean architecture",
 ];
 
-export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePageProps) {
-  const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80);
+export function HomePage({
+  onSubmit,
+  pasteRequestId,
+  shortcutsOpen,
+}: HomePageProps) {
+  const [terminalWidth, setTerminalWidth] = useState(
+    process.stdout.columns || 80,
+  );
   const [currentTipIndex, setCurrentTipIndex] = useState(0);
   const [displayedText, setDisplayedText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -66,7 +75,7 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
   const [cursorVisible, setCursorVisible] = useState(true);
 
   const [placeholderHintIndex, setPlaceholderHintIndex] = useState(() =>
-    Math.floor(Math.random() * ASK_ANYTHING_HINTS.length)
+    Math.floor(Math.random() * ASK_ANYTHING_HINTS.length),
   );
 
   useEffect(() => {
@@ -93,7 +102,8 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
       setPlaceholderHintIndex((prev) => {
         if (ASK_ANYTHING_HINTS.length <= 1) return prev;
         let next = Math.floor(Math.random() * ASK_ANYTHING_HINTS.length);
-        while (next === prev) next = Math.floor(Math.random() * ASK_ANYTHING_HINTS.length);
+        while (next === prev)
+          next = Math.floor(Math.random() * ASK_ANYTHING_HINTS.length);
         return next;
       });
     }, 6000);
@@ -144,11 +154,23 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
   const placeholder = `Ask anything... (${ASK_ANYTHING_HINTS[placeholderHintIndex]})`;
 
   return (
-    <box flexDirection="column" width="100%" height="100%" justifyContent="center" alignItems="center">
+    <box
+      flexDirection="column"
+      width="100%"
+      height="100%"
+      justifyContent="center"
+      alignItems="center"
+    >
       <box flexDirection="column" alignItems="center" marginBottom={2}>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╗   ███╗</text>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>████╗ ████║</text>
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>███╔████╔███║</text>
+        <text fg="#D4D4D8" attributes={TextAttributes.BOLD}>
+          ███╗ ███╗
+        </text>
+        <text fg="#D4D4D8" attributes={TextAttributes.BOLD}>
+          ████╗ ████║
+        </text>
+        <text fg="#D4D4D8" attributes={TextAttributes.BOLD}>
+          ███╔████╔███║
+        </text>
       </box>
 
       <box width="80%" maxWidth={80}>
@@ -170,14 +192,24 @@ export function HomePage({ onSubmit, pasteRequestId, shortcutsOpen }: HomePagePr
         </box>
       </box>
 
-      <box width="80%" maxWidth={80} marginTop={3} flexDirection="row" justifyContent="center">
-        <text fg="#ffca38" attributes={TextAttributes.BOLD}>● TIPS: </text>
+      <box
+        width="80%"
+        maxWidth={80}
+        marginTop={3}
+        flexDirection="row"
+        justifyContent="center"
+      >
+        <text fg="#D4D4D8" attributes={TextAttributes.BOLD}>
+          ● TIPS:{" "}
+        </text>
         <text fg="gray">{displayedText}</text>
-        <text fg="#ffca38">{cursorVisible ? "█" : " "}</text>
+        <text fg="#D4D4D8">{cursorVisible ? "█" : " "}</text>
       </box>
 
       <box position="absolute" bottom={1} right={2}>
-        <text fg="gray" attributes={TextAttributes.DIM}>v{VERSION}</text>
+        <text fg="gray" attributes={TextAttributes.DIM}>
+          v{VERSION}
+        </text>
       </box>
     </box>
   );
