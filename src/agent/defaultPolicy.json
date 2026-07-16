@@ -1,0 +1,56 @@
+{
+  "title": {
+    "maxLength": 50,
+    "wordBoundaryRatio": 0.6,
+    "emptyTitle": "New conversation",
+    "languageFallbacks": [
+      {
+        "pattern": "\\b(?:bonjour|salut|comment|pourquoi|peux|pourrais|fais|faire|corrige|ajoute|retire|projet|fichier)\\b",
+        "title": "Nouvelle conversation"
+      }
+    ],
+    "greetings": [
+      {
+        "pattern": "^(?:hi|hello|hey|good\\s+(?:morning|afternoon|evening))[!.?\\s]*$",
+        "title": "Greeting"
+      },
+      {
+        "pattern": "^(?:bonjour|salut|coucou|bonsoir)[!.?\\s]*$",
+        "title": "Salutation"
+      }
+    ],
+    "leadingNoisePatterns": [
+      "^\\s*(?:please|s'il te plaît|stp)\\s+"
+    ]
+  },
+  "safety": {
+    "patterns": {
+      "creationIntent": "\\b(?:write|create|build|make|implement|develop|code|generate|écris|écrire|crée|créer|développe|développer|programme|programmer)\\b",
+      "keylogger": "\\b(?:keylogger|keystroke\\s+(?:logger|capture)|enregistreur\\s+de\\s+frappes?)\\b",
+      "exfiltration": "\\b(?:send|upload|transmit|exfiltrat\\w*|remote\\s+server|serveur\\s+distant|envoyer|transmettre)\\b",
+      "credentialTheft": "\\b(?:steal|harvest|exfiltrat\\w*|voler|dérober)\\b[\\s\\S]{0,80}\\b(?:passwords?|credentials?|tokens?|cookies?|mots?\\s+de\\s+passe|identifiants?)\\b",
+      "ransomware": "\\b(?:ransomware|rançongiciel)\\b"
+    },
+    "rules": [
+      ["creationIntent", "keylogger", "exfiltration"],
+      ["creationIntent", "credentialTheft"],
+      ["creationIntent", "ransomware"]
+    ],
+    "responses": [
+      {
+        "pattern": "\\b(?:écris|crée|développe|programme|serveur|frappes|mots?\\s+de\\s+passe)\\b",
+        "message": "Je ne peux pas aider à créer un outil malveillant, à voler des identifiants ou à exfiltrer des données. Je peux toutefois aider à détecter ce comportement, à analyser un échantillon de façon défensive ou à renforcer la sécurité du système."
+      }
+    ],
+    "defaultResponse": "I can't help create malware, steal credentials, or exfiltrate data. I can help detect that behavior, analyze a sample defensively, or improve the system's security instead."
+  },
+  "deniedOperations": {
+    "ignoredArgumentKeys": ["__mcpMeta"],
+    "commandTools": {
+      "bash": "command"
+    },
+    "pathArgument": "path",
+    "blockedError": "OPERATION BLOCKED AFTER USER REJECTION: {toolName}\n\nThe user already rejected this operation during the current turn. Do not retry it or target the same path again. Wait for a new user instruction or choose a genuinely different, non-destructive approach.",
+    "blockedUserMessage": "Operation remains cancelled by user"
+  }
+}

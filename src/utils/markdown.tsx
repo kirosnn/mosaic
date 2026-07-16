@@ -163,7 +163,7 @@ export function renderMarkdownSegment(segment: MarkdownSegment, key: number) {
       );
 
     case "code":
-      return <text key={key} fg="#ffdd80">{`${segment.content}`}</text>;
+      return <text key={key} fg="white">{`${segment.content}`}</text>;
 
     case "heading":
       return (

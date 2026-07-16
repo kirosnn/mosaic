@@ -39,8 +39,8 @@ function getMcpToolDisplayName(tool: string): string {
 
 const NATIVE_TOOL_DISPLAY_NAMES: Record<string, string> = {
   nativereact_doctor: 'ReactDoctor',
-  nativereact_analyze_file: 'Analyze File',
-  nativereact_list_rules: 'List Rules',
+  nativereact_analyze_file: 'Analyze file',
+  nativereact_list_rules: 'List rules',
 };
 
 function getNativeToolDisplayName(safeId: string): string | null {

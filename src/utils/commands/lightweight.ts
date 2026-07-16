@@ -101,7 +101,7 @@ export const lightweightCommand: Command = {
       success: true,
       content: '',
       showSelectMenu: {
-        title: 'Select Lightweight Provider',
+        title: 'Select lightweight provider',
         options: buildProviderOptions(),
         onSelect: (providerId: string) => {
           if (providerId === '__default__') {

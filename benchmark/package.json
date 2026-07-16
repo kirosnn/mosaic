@@ -12,6 +12,7 @@
     "bench:protocol": "bun run src/index.ts --suite protocol",
     "bench:resilience": "bun run src/index.ts --suite resilience",
     "bench:safety": "bun run src/index.ts --suite safety",
+    "bench:multi-turn": "bun run src/index.ts --suite multi-turn",
     "visual": "bun run src/visual/generate.ts",
     "compare": "bun run src/visual/compare.ts"
   },

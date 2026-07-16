@@ -30,7 +30,7 @@ export function ShortcutsModal({ activeTab }: ShortcutsModalProps) {
   const shortcutsSetup: ShortcutItem[] = [
     { keys: "Esc", description: "Go back to the previous step" },
     { keys: "Enter", description: "Confirm / next step" },
-    { keys: "Y / N", description: "Answer Yes/No questions" },
+    { keys: "Y / N", description: "Answer yes/no questions" },
     { keys: "↑/↓ (or j/k)", description: "Navigate provider/model lists" },
     {
       keys: "Alt+V (or Ctrl+V)",

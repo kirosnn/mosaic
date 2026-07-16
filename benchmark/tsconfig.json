@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["bun"]
+    "types": ["bun"],
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"]
 }

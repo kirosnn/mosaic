@@ -9,8 +9,8 @@ import {
 } from '../utils/config';
 import { runOAuthFlow, getSupportedOAuthProviders } from './oauth';
 
-function gold(text: string): string {
-  return `\x1b[38;2;255;202;56m${text}\x1b[0m`;
+function white(text: string): string {
+  return `\x1b[97m${text}\x1b[0m`;
 }
 
 function gray(text: string): string {
@@ -25,23 +25,23 @@ function mask(key: string): string {
 function showAuthHelp(): void {
   console.log('');
   console.log(`
-${gold('Mosaic Auth')}
+${white('Mosaic auth')}
 
-${gold('Usage')}
+${white('Usage')}
   $ mosaic auth <command> [options]
 
-${gold('Commands')}
+${white('Commands')}
   list                              ${gray('List stored credentials (masked)')}
   set --provider <id> --token <key> ${gray('Add or update an API key')}
   remove --provider <id>            ${gray('Remove stored credentials')}
   login <provider>                  ${gray('OAuth login')}
   help                              ${gray('Show this help message')}
 
-${gold('Shortcuts')}
+${white('Shortcuts')}
   mosaic auth --provider <id> --token <key>  ${gray('Same as: mosaic auth set ...')}
   mosaic auth --oauth <provider>             ${gray('Same as: mosaic auth login ...')}
 
-${gold('Examples')}
+${white('Examples')}
   ${gray('mosaic auth set --provider openai --token sk-abc123')}
   ${gray('mosaic auth list')}
   ${gray('mosaic auth login openai')}
@@ -58,7 +58,7 @@ function authList(): void {
   }
 
   console.log('');
-  console.log(gold('Stored credentials:'));
+  console.log(white('Stored credentials:'));
   console.log('');
   for (const id of ids) {
     const key = getApiKeyForProvider(id);
@@ -108,7 +108,7 @@ export async function runAuthCli(args: string[]): Promise<void> {
       process.exit(1);
     }
     setApiKeyForProvider(providerId, token);
-    console.log(gold(`API key set for "${providerId}".`));
+    console.log(white(`API key set for "${providerId}".`));
     return;
   }
 
@@ -120,7 +120,7 @@ export async function runAuthCli(args: string[]): Promise<void> {
     }
     removeApiKeyForProvider(providerId);
     removeOAuthTokenForProvider(providerId);
-    console.log(gold(`Credentials removed for "${providerId}".`));
+    console.log(white(`Credentials removed for "${providerId}".`));
     return;
   }
 
@@ -141,7 +141,7 @@ export async function runAuthCli(args: string[]): Promise<void> {
     const token = parseFlag(args, '--token');
     if (providerId && token) {
       setApiKeyForProvider(providerId, token);
-      console.log(gold(`API key set for "${providerId}".`));
+      console.log(white(`API key set for "${providerId}".`));
       return;
     }
     console.error('Usage: mosaic auth --provider <id> --token <key>');

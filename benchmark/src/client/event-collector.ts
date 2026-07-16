@@ -40,7 +40,7 @@ export class EventCollector {
       this.timedOut = true;
       reader.cancel();
       try {
-        await fetch(`${CONFIG.mosaicUrl}/api/stop`, { method: "POST" });
+        await fetch(`${CONFIG.mosaicUrl}${CONFIG.apiPrefix}${CONFIG.routes.stop}`, { method: "POST" });
       } catch {}
     }, timeout);
 
@@ -120,7 +120,7 @@ export class EventCollector {
         this.approvalRequests.push(req);
         const approved = approvalPolicy === "approve-all";
         try {
-          await fetch(`${CONFIG.mosaicUrl}/api/approval/respond`, {
+          await fetch(`${CONFIG.mosaicUrl}${CONFIG.apiPrefix}${CONFIG.routes.approvalResponse}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ approved }),
@@ -133,7 +133,7 @@ export class EventCollector {
         const req = event.request as QuestionRequest;
         this.questionRequests.push(req);
         try {
-          await fetch(`${CONFIG.mosaicUrl}/api/question/answer`, {
+          await fetch(`${CONFIG.mosaicUrl}${CONFIG.apiPrefix}${CONFIG.routes.questionAnswer}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ index: 0 }),

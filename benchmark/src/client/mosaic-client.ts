@@ -1,6 +1,6 @@
 import { CONFIG } from "../config.js";
 import { RateLimitError } from "../types.js";
-import type { ApprovalPolicy, CollectorResult } from "../types.js";
+import type { ApprovalPolicy, BenchmarkMessage, CollectorResult } from "../types.js";
 import { EventCollector } from "./event-collector.js";
 
 function parseRetryAfterMs(res: Response): number | undefined {
@@ -19,14 +19,18 @@ export class MosaicClient {
     return CONFIG.mosaicUrl;
   }
 
+  private route(path: string): string {
+    return `${this.baseUrl}${CONFIG.apiPrefix}${path}`;
+  }
+
   async getConfig(): Promise<{ provider: string; model: string; requireApprovals: boolean }> {
-    const res = await fetch(`${this.baseUrl}/api/config`);
+    const res = await fetch(this.route(CONFIG.routes.config));
     if (!res.ok) throw new Error(`Mosaic config failed: ${res.status}`);
     return res.json() as Promise<{ provider: string; model: string; requireApprovals: boolean }>;
   }
 
   async setConfig(opts: { provider?: string; model?: string }): Promise<{ provider: string; model: string }> {
-    const res = await fetch(`${this.baseUrl}/api/config`, {
+    const res = await fetch(this.route(CONFIG.routes.config), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts),
@@ -36,7 +40,7 @@ export class MosaicClient {
   }
 
   async setWorkspace(path: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/workspace`, {
+    const res = await fetch(this.route(CONFIG.routes.workspace), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -45,7 +49,7 @@ export class MosaicClient {
   }
 
   async setApprovals(requireApprovals: boolean): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/approvals`, {
+    const res = await fetch(this.route(CONFIG.routes.approvals), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requireApprovals }),
@@ -57,11 +61,12 @@ export class MosaicClient {
     message: string,
     approvalPolicy: ApprovalPolicy = "auto",
     timeout: number = CONFIG.defaultTimeout,
+    history: BenchmarkMessage[] = [],
   ): Promise<CollectorResult> {
-    const res = await fetch(`${this.baseUrl}/api/message`, {
+    const res = await fetch(this.route(CONFIG.routes.message), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history: [] }),
+      body: JSON.stringify({ message, history }),
     });
 
     if (res.status === 429) {
@@ -77,7 +82,7 @@ export class MosaicClient {
 
   async stop(): Promise<void> {
     try {
-      await fetch(`${this.baseUrl}/api/stop`, { method: "POST" });
+      await fetch(this.route(CONFIG.routes.stop), { method: "POST" });
     } catch {}
   }
 }

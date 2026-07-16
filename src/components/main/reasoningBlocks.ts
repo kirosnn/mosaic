@@ -36,6 +36,7 @@ export function buildReasoningRenderBlocks(
           key: `${messageKey}-reasoning-line-${blockIndex}-${lineIndex}`,
           type: "line",
           content: stripped || " ",
+          segments: wrappedLine?.segments,
           visualLines: 1,
         });
       }

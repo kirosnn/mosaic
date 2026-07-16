@@ -1,0 +1,26 @@
+{
+  "host": "127.0.0.1",
+  "portStart": 8192,
+  "portEnd": 8200,
+  "apiPrefix": "/api",
+  "routes": {
+    "config": "/config",
+    "workspace": "/workspace",
+    "approvals": "/approvals",
+    "approvalResponse": "/approval/respond",
+    "questionAnswer": "/question/answer",
+    "stop": "/stop",
+    "message": "/message"
+  },
+  "defaultTimeout": 120000,
+  "pingInterval": 5000,
+  "benchmarkVersion": "1.0.0",
+  "resultsDir": "results",
+  "interTestDelay": 500,
+  "interSuiteDelay": 1000,
+  "interRunDelay": 2000,
+  "maxAttempts": 3,
+  "retryBaseDelay": 1500,
+  "retryMaxDelay": 30000,
+  "rateLimitMaxWait": 120000
+}

@@ -1,10 +1,11 @@
 export const SUITE_WEIGHTS: Record<string, number> = {
-  "tool-use": 20,
-  reasoning: 20,
-  "code-reading": 15,
-  resilience: 15,
-  protocol: 15,
-  safety: 15,
+  "tool-use": 18,
+  reasoning: 18,
+  "code-reading": 14,
+  resilience: 14,
+  protocol: 14,
+  safety: 14,
+  "multi-turn": 8,
 };
 
 export function computeOverall(suiteScores: Record<string, number>): number {

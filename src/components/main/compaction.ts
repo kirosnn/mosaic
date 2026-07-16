@@ -55,7 +55,7 @@ export function buildCompactionDisplay(
   const bar = buildUsageBarSegments(usedForBar, effectiveBuffer, maxContextTokens, 40);
   const reclaimedTokens = Math.max(0, usedTokens - compactedTokens);
   const overflowTokens = Math.max(0, usedTokens - maxContextTokens);
-  const title = mode === "auto" ? "Auto Compaction" : "Compaction";
+  const title = mode === "auto" ? "Auto compaction" : "Compaction";
   const lines: string[] = [];
   lines.push(`[CTX_HEADER]|${title}`);
   lines.push(`[CTX_BAR]|${bar.usedCells}|${bar.bufferCells}|${bar.freeCells}|${formatPercent(usedForBar, maxContextTokens)}`);

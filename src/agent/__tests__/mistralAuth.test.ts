@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, it, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   getMistralCodestralAuthError,
   isCodestralModel,
@@ -6,10 +6,6 @@ import {
 } from "../provider/mistralAuth";
 import * as configUtils from "../../utils/config";
 import * as ai from "ai";
-
-mock.module("../../utils/debug", () => ({
-  debugLog: () => {},
-}));
 
 describe("Mistral auth helpers", () => {
   it("detects codestral models", () => {
@@ -38,25 +34,24 @@ describe("resolveMistralBackendForKey", () => {
     };
     savedConfig = null;
 
-    mock.module("../../utils/config", () => ({
-      readConfig: () => mockConfig,
-      writeConfig: (c: any) => {
-        savedConfig = c;
-        mockConfig = c;
-      },
-    }));
+    spyOn(configUtils, "writeConfig").mockImplementation((config: any) => {
+      savedConfig = config;
+      mockConfig = config;
+    });
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   it("reuses cached resolved backend for the same key fingerprint", async () => {
     const apiKey = "test-key-1";
 
     let callCount = 0;
-    mock.module("ai", () => ({
-      generateText: async () => {
+    spyOn(ai, "generateText").mockImplementation(async () => {
         callCount++;
-        return { text: "ok" };
-      },
-    }));
+        return { text: "ok" } as any;
+    });
 
     const backend1 = await resolveMistralBackendForKey(mockConfig, apiKey);
     expect(backend1).toBe("generic-api");
@@ -69,13 +64,11 @@ describe("resolveMistralBackendForKey", () => {
 
   it("does not share backend state between different API keys", async () => {
     let callCount = 0;
-    mock.module("ai", () => ({
-      generateText: async ({ model }: any) => {
+    spyOn(ai, "generateText").mockImplementation(async ({ model }: any) => {
         callCount++;
         if (callCount === 2) throw new Error("unauthorized");
-        return { text: "ok" };
-      },
-    }));
+        return { text: "ok" } as any;
+    });
 
     const backend1 = await resolveMistralBackendForKey(mockConfig, "key-1");
     expect(backend1).toBe("generic-api");
@@ -85,9 +78,7 @@ describe("resolveMistralBackendForKey", () => {
   });
 
   it("persists 'generic-api' when generic probe succeeds", async () => {
-    mock.module("ai", () => ({
-      generateText: async () => ({ text: "ok" }),
-    }));
+    spyOn(ai, "generateText").mockImplementation(async () => ({ text: "ok" }) as any);
 
     await resolveMistralBackendForKey(mockConfig, "key-generic");
     expect(savedConfig.mistralResolvedBackendByKey).toBeDefined();
@@ -96,12 +87,10 @@ describe("resolveMistralBackendForKey", () => {
   });
 
   it("persists 'codestral-domain' when generic fails but codestral succeeds", async () => {
-    mock.module("ai", () => ({
-      generateText: async ({ model }: any) => {
+    spyOn(ai, "generateText").mockImplementation(async ({ model }: any) => {
         if (model.modelId.includes("small")) throw new Error("unauthorized");
-        return { text: "ok" };
-      },
-    }));
+        return { text: "ok" } as any;
+    });
 
     await resolveMistralBackendForKey(mockConfig, "key-codestral");
     const values = Object.values(savedConfig.mistralResolvedBackendByKey);
@@ -109,26 +98,20 @@ describe("resolveMistralBackendForKey", () => {
   });
 
   it("does not persist result on transient failures", async () => {
-    mock.module("ai", () => ({
-      generateText: async () => {
+    spyOn(ai, "generateText").mockImplementation(async () => {
         throw new Error("network error");
-      },
-    }));
+    });
 
     try {
       await resolveMistralBackendForKey(mockConfig, "key-transient");
-    } catch (e) {
-      // Expected
-    }
+    } catch (e) {}
     expect(savedConfig).toBeNull();
   });
 
   it("throws precise error when both probes fail with unauthorized", async () => {
-    mock.module("ai", () => ({
-      generateText: async () => {
+    spyOn(ai, "generateText").mockImplementation(async () => {
         throw new Error("Unauthorized access");
-      },
-    }));
+    });
 
     try {
       await resolveMistralBackendForKey(mockConfig, "key-fail");
@@ -147,13 +130,11 @@ describe("resolveMistralBackendForKey", () => {
       resolveProbe = resolve;
     });
 
-    mock.module("ai", () => ({
-      generateText: async () => {
+    spyOn(ai, "generateText").mockImplementation(async () => {
         callCount++;
         await probeStarted;
-        return { text: "ok" };
-      },
-    }));
+        return { text: "ok" } as any;
+    });
 
     const p1 = resolveMistralBackendForKey(mockConfig, "concurrent-key");
     const p2 = resolveMistralBackendForKey(mockConfig, "concurrent-key");

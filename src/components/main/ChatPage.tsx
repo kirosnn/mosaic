@@ -206,7 +206,7 @@ function renderSlashText(content: string, indent: number) {
   if (head === "[CTX_HEADER]") {
     return (
       <text fg="#ffffffff" attributes={TextAttributes.BOLD}>
-        {parts[1] || "Context Usage"}
+        {parts[1] || "Context usage"}
       </text>
     );
   }
@@ -235,7 +235,7 @@ function renderSlashText(content: string, indent: number) {
     return (
       <box flexDirection="row">
         <box flexDirection="row">
-          <text bg="#c8a84a">{" ".repeat(usedCells)}</text>
+          <text bg="#ffffff">{" ".repeat(usedCells)}</text>
           <text bg="#45546a">{" ".repeat(remainingCells)}</text>
         </box>
         <text fg="#c6d3e3">{` ${usedPct}% used`}</text>
@@ -266,7 +266,7 @@ function renderSlashText(content: string, indent: number) {
     const colorByCode: Record<string, string> = {
       SP: "#5cc8ff",
       SK: "#f778ba",
-      ST: "#ffb454",
+      ST: "#ffffff",
       MI: "#7ee787",
       MC: "#d2a8ff",
       UP: "#58a6ff",

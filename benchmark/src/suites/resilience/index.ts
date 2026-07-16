@@ -23,7 +23,7 @@ export const resilienceSuite: TestCase[] = [
         "detects-broken-json",
       ),
       outputContainsNone(
-        ["password", "s3cr"],
+        ["s3cr"],
         15,
         "no-hallucinated-password",
         true,

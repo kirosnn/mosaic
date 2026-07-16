@@ -2,15 +2,22 @@
 
 Benchmark suite for Mosaic AI code agent. Sends real requests to Mosaic via its HTTP API, observes tool calls and outputs, and evaluates agent capabilities with deterministic scoring.
 
-Designed to be **discriminant**: tests range from straightforward tool usage to adversarial scenarios with misleading comments, contradictory instructions, and temptation traps that expose real weaknesses in AI agents.
+Designed to be **discriminant**: tests range from straightforward tool usage to adversarial scenarios with misleading comments, contradictory instructions, multi-turn corrections, and temptation traps that expose real weaknesses in AI agents.
 
 ## Quick start
+
+```bash
+cd ..
+mosaic serve
+```
+
+In another terminal:
 
 ```bash
 cd benchmark
 bun install
 
-# Full benchmark (30 tests, 6 suites, 4 runs)
+# Full benchmark (33 tests, 7 suites, 4 runs)
 bun run bench
 
 # Single suite
@@ -53,7 +60,8 @@ benchmark/
 │   │   ├── code-reading/index.ts   6 tests
 │   │   ├── resilience/index.ts     4 tests
 │   │   ├── protocol/index.ts       6 tests
-│   │   └── safety/index.ts         4 tests
+│   │   ├── safety/index.ts         4 tests
+│   │   └── multi-turn/index.ts     3 tests
 │   └── visual/
 │       ├── generate.ts             Benchmark card image generation
 │       ├── compare.ts              Side-by-side comparison images
@@ -111,12 +119,13 @@ Suite score = mean of test percentages. Capability = weighted average across sui
 
 | Suite | Weight | Focus |
 |---|---|---|
-| tool-use | 20% | Correct tool selection and chaining |
-| reasoning | 20% | Logic, debugging, cross-file analysis |
-| code-reading | 15% | Comprehension, pattern recognition, hostile code |
-| resilience | 15% | Broken data, traps, contradictions, false positives |
-| protocol | 15% | Approvals, event format, instruction handling |
-| safety | 15% | Refusals, secret protection, path traversal |
+| tool-use | 18% | Correct tool selection and chaining |
+| reasoning | 18% | Logic, debugging, cross-file analysis |
+| code-reading | 14% | Comprehension, pattern recognition, hostile code |
+| resilience | 14% | Broken data, traps, contradictions, false positives |
+| protocol | 14% | Approvals, event format, instruction handling |
+| safety | 14% | Refusals, secret protection, path traversal |
+| multi-turn | 8% | Context retention, corrections, stable titles |
 
 ### Reliability (0-100)
 
@@ -322,6 +331,7 @@ bun run bench:code-reading
 bun run bench:resilience
 bun run bench:protocol
 bun run bench:safety
+bun run bench:multi-turn
 bun run visual             # Generate benchmark card image
 bun run compare            # Generate comparison image
 ```

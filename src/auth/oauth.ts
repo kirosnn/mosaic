@@ -95,8 +95,8 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
   },
 };
 
-function gold(text: string): string {
-  return `\x1b[38;2;255;202;56m${text}\x1b[0m`;
+function white(text: string): string {
+  return `\x1b[97m${text}\x1b[0m`;
 }
 
 function gray(text: string): string {
@@ -236,23 +236,21 @@ function buildOAuthPageHtml(
             max-width: 720px;
             animation: fadeIn 0.5s ease-out;
         }
-        .logo {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 1.5rem;
-            opacity: 0.9;
-        }
         h1 {
-            font-size: 2rem;
+            font-size: 2.75rem;
             font-weight: 600;
-            margin-bottom: 0.5rem;
+            line-height: 1.15;
+            margin-bottom: 1rem;
             color: ${headingColor};
         }
         p {
-            font-size: 1.05rem;
+            font-size: 1.35rem;
+            line-height: 1.6;
             color: var(--text-secondary);
         }
         pre {
+            font-size: 1.1rem;
+            line-height: 1.5;
             margin-top: 1rem;
             padding: 1rem;
             text-align: left;
@@ -270,10 +268,6 @@ function buildOAuthPageHtml(
 </head>
 <body>
     <div class="container">
-        <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10 40 C 20 20, 40 20, 50 40 S 80 60, 90 40" fill="var(--text-primary)"/>
-            <path d="M10 60 C 20 40, 40 40, 50 60 S 80 80, 90 60" fill="var(--text-primary)"/>
-        </svg>
         <h1>${safeTitle}</h1>
         <p>${safeMessage}</p>
         ${safeDetail}
@@ -329,7 +323,7 @@ export async function startLocalOAuthCallbackServer<T>(options: {
     const url = new URL(req.url ?? "/", `http://${host}`);
     if (url.pathname !== options.callbackPath) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Not Found");
+      res.end("Not found");
       return;
     }
 
@@ -341,7 +335,7 @@ export async function startLocalOAuthCallbackServer<T>(options: {
       res.writeHead(409, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         buildOAuthPageHtml(
-          "Authorization Already Processed",
+          "Authorization already processed",
           "This OAuth callback was already handled. Return to the terminal.",
           "error",
         ),
@@ -366,7 +360,7 @@ export async function startLocalOAuthCallbackServer<T>(options: {
       finalize(null);
       res.end(
         buildOAuthPageHtml(
-          "Authorization Failed",
+          "Authorization failed",
           "The OAuth callback is missing the authorization code.",
           "error",
         ),
@@ -382,7 +376,7 @@ export async function startLocalOAuthCallbackServer<T>(options: {
       finalize(null);
       res.end(
         buildOAuthPageHtml(
-          "Authorization Failed",
+          "Authorization failed",
           "The OAuth state parameter is invalid.",
           "error",
           `Expected: ${options.expectedState}\nReceived: ${state ?? "(missing)"}`,
@@ -426,7 +420,7 @@ export async function startLocalOAuthCallbackServer<T>(options: {
       finalize(null);
       res.end(
         buildOAuthPageHtml(
-          "Authorization Failed",
+          "Authorization failed",
           "The local callback failed while processing the OAuth response.",
           "error",
           message,
@@ -766,7 +760,7 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
   debugLog(`[oauth][${providerId}] authorize url=${authorizeUrl}`);
 
   console.log("");
-  console.log(gold("Mosaic OAuth Login"));
+  console.log(white("Mosaic OAuth login"));
   console.log(gray(`Provider: ${providerId}`));
   console.log("");
 
@@ -781,7 +775,7 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
           response: {
             type: "html",
             statusCode: 200,
-            title: "Authorization Complete",
+            title: "Authorization complete",
             message: "You can close this tab and return to the terminal.",
           },
           result: code ? { code } : null,
@@ -814,7 +808,7 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
       const models = await syncOpenAICodexModels();
       autoSetupProvider(providerId, models);
       console.log("");
-      console.log(gold("Authorized successfully!"));
+      console.log(white("Authorized successfully!"));
       console.log(gray(`Token stored for provider "${providerId}".`));
       return true;
     }
@@ -844,7 +838,7 @@ async function runOpenAIOAuthFlow(): Promise<boolean> {
   const models = await syncOpenAICodexModels();
   autoSetupProvider(providerId, models);
   console.log("");
-  console.log(gold("Authorized successfully!"));
+  console.log(white("Authorized successfully!"));
   console.log(gray(`Token stored for provider "${providerId}".`));
   return true;
 }
@@ -866,7 +860,7 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
   const state = createState();
 
   console.log("");
-  console.log(gold("Mosaic OAuth Login"));
+  console.log(white("Mosaic OAuth login"));
   console.log(gray(`Provider: ${providerId}`));
   console.log("");
 
@@ -905,7 +899,7 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
             response: {
               type: "html",
               statusCode: 502,
-              title: "Authorization Failed",
+              title: "Authorization failed",
               message:
                 "Google token exchange failed. Return to the terminal and try again.",
               detail: exchange.reason,
@@ -972,14 +966,14 @@ async function runGoogleOAuthFlow(): Promise<boolean> {
     setOAuthTokenForProvider(providerId, tokens);
     autoSetupProvider(providerId, []);
     console.log("");
-    console.log(gold("Authorized successfully!"));
+    console.log(white("Authorized successfully!"));
     console.log(gray(`Token stored for provider "${providerId}".`));
     return true;
   }
 
   if (!result) return false;
   console.log("");
-  console.log(gold("Authorized successfully!"));
+  console.log(white("Authorized successfully!"));
   console.log(gray(`Token stored for provider "${providerId}".`));
   return true;
 }

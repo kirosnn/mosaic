@@ -1,4 +1,5 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
+import * as config from "../../../utils/config";
 
 mock.module("../../../utils/debug", () => ({ debugLog: () => {} }));
 mock.module("../../../utils/sound", () => ({ playUiSound: () => {} }));
@@ -16,11 +17,6 @@ mock.module("../../../utils/fileChangeTracker", () => ({
 mock.module("../../../utils/approvalBridge", () => ({
   requestApproval: async () => ({ approved: false }),
 }));
-mock.module("../../../utils/config", () => ({
-  shouldRequireApprovals: () => false,
-  getPreferredSubsystem: () => "auto",
-  readConfig: () => ({}),
-}));
 mock.module("../../subsystemDiscovery", () => ({
   discoverSubsystems: async () => [],
   getEffectiveSubsystem: async () => ({ id: "pwsh", label: "PowerShell 7", available: true, priority: 10 }),
@@ -35,6 +31,16 @@ mock.module("child_process", () => ({
 }));
 
 import { executeTool } from "../executor";
+
+beforeAll(() => {
+  spyOn(config, "shouldRequireApprovals").mockReturnValue(false);
+  spyOn(config, "getPreferredSubsystem").mockReturnValue("auto");
+  spyOn(config, "readConfig").mockReturnValue({});
+});
+
+afterAll(() => {
+  mock.restore();
+});
 
 describe("read-only enforcement", () => {
   it("blocks write tool in read-only mode", async () => {

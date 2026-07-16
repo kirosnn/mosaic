@@ -1,0 +1,15 @@
+{
+  "host": "127.0.0.1",
+  "portStart": 8192,
+  "portEnd": 8200,
+  "apiPrefix": "/api",
+  "routes": {
+    "config": "/config",
+    "workspace": "/workspace",
+    "approvals": "/approvals",
+    "approvalResponse": "/approval/respond",
+    "questionAnswer": "/question/answer",
+    "stop": "/stop",
+    "message": "/message"
+  }
+}

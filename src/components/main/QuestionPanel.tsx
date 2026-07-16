@@ -178,7 +178,7 @@ export function QuestionPanel({ request, disabled = false, onAnswer, maxWidth }:
       <box flexDirection="row">
         <CustomInput
           onSubmit={handleCustomSubmit}
-          placeholder="Tell Mosaic what it should do and press Enter"
+          placeholder="Describe what Mosaic should do and press enter"
           focused={!disabled}
           disableHistory={true}
           maxWidth={maxWidth}

@@ -54,7 +54,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
       value: p.id
     })),
     {
-      name: 'Custom Provider',
+      name: 'Custom provider',
       description: 'Add your own API provider',
       value: '__custom__'
     }
@@ -70,7 +70,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
 
   if (currentProvider && !('isCustom' in currentProvider)) {
     modelOptions.push({
-      name: 'Add Custom Model',
+      name: 'Add custom model',
       description: 'Add your own model for this provider',
       value: '__add-custom-model__'
     });
@@ -299,7 +299,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
             focused={!shortcutsOpen}
             pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
             onSubmit={handleCustomNameSubmit}
-            placeholder="My Custom Provider"
+            placeholder="My custom provider"
           />
           <box marginTop={1}>
             <box flexDirection="row">
@@ -390,7 +390,7 @@ export function Setup({ onComplete, pasteRequestId = 0, shortcutsOpen = false, c
               focused={!shortcutsOpen}
               pasteRequestId={shortcutsOpen ? 0 : pasteRequestId}
               onSubmit={handleCustomModelNameSubmit}
-              placeholder="GPT-4 or Claude Opus"
+              placeholder="GPT-4 or Claude opus"
             />
             <box marginTop={1}>
               <box flexDirection="row">

@@ -928,7 +928,7 @@ async function discoverGoogleProjectId(accessToken: string): Promise<string> {
     }
   }
 
-  throw new Error("Google Code Assist onboarding timed out.");
+  throw new Error("Google code assist onboarding timed out.");
 }
 
 function safeJsonStringify(value: unknown): string {
@@ -2310,15 +2310,11 @@ export async function executeExploreTool(
     }
   }
 
-  debugLog(
-    `[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} workspaceRoot=${workspaceRoot} projectType=${projectType.label}`,
-  );
-
   const workspaceRoot = process.cwd();
   const projectType = await detectProjectType(workspaceRoot);
 
   debugLog(
-    `[explore] workspaceRoot=${workspaceRoot} projectType=${projectType.label} extensions=${projectType.extensions.join(",")} markers=${projectType.markerFiles.join(",")}`,
+    `[explore] START purpose="${purpose.slice(0, 100)}" provider=${userConfig.provider} model=${userConfig.model} knownFiles=${exploreKnowledge.readFiles.size} cachedCalls=${exploreCallCache.size} blockedDomains=${persistentExploreState.failedDomains.size} workspaceRoot=${workspaceRoot} projectType=${projectType.label} extensions=${projectType.extensions.join(",")} markers=${projectType.markerFiles.join(",")}`,
   );
 
   const abortSignal = getExploreAbortSignal();

@@ -436,7 +436,7 @@ async function discoverProjectId(accessToken: string): Promise<string> {
   }
 
   throw new Error(
-    "Google Code Assist onboarding timed out. Try running Gemini CLI first to complete setup.",
+    "Google code assist onboarding timed out. Try running the Gemini CLI first to complete setup.",
   );
 }
 

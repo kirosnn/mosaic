@@ -84,7 +84,7 @@ export function normalizeReport(raw: Record<string, unknown>): BenchmarkReport {
   if (report.performance === undefined) {
     const allTests = report.suites.flatMap((s) => s.tests);
     const perfs = allTests
-      .map((t) => (t as Record<string, unknown>).performance ?? (t as Record<string, unknown>).latency)
+      .map((t) => (t as unknown as Record<string, unknown>).performance ?? (t as unknown as Record<string, unknown>).latency)
       .filter(Boolean) as Array<Record<string, unknown>>;
 
     const avgTtft =

@@ -1,6 +1,7 @@
 import { generateDiff, formatDiffForDisplay } from './diff';
 import { debugLog } from './debug';
 import { playUiSound } from './sound';
+import { recordDeniedOperation } from '../agent/deniedOperations';
 
 export interface PendingChange {
     id: string;
@@ -214,6 +215,10 @@ export async function startReview(): Promise<boolean[]> {
 export function respondReview(approved: boolean): void {
     if (!isReviewMode || !reviewResolve) return;
 
+    const reviewedChange = pendingChanges[currentReviewIndex];
+    if (!approved && reviewedChange) {
+        recordDeniedOperation(reviewedChange.source, { path: reviewedChange.path });
+    }
     reviewResults.push(approved);
     currentReviewIndex++;
     debugLog(`[review] respondReview approved=${approved} index=${currentReviewIndex}/${pendingChanges.length}`);
@@ -268,6 +273,9 @@ export function cancelReview(): void {
     const results = reviewResults.map(() => false);
     while (results.length < pendingChanges.length) {
         results.push(false);
+    }
+    for (const change of pendingChanges) {
+        recordDeniedOperation(change.source, { path: change.path });
     }
 
     const resolve = reviewResolve;

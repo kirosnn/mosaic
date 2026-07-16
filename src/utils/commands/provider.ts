@@ -50,7 +50,7 @@ export const providerCommand: Command = {
         success: true,
         content: '',
         showSelectMenu: {
-          title: 'Select AI Provider',
+          title: 'Select AI provider',
           options,
           onSelect: (value: string) => {
             const provider = getProviderById(value);

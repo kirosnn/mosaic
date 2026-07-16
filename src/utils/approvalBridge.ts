@@ -1,5 +1,6 @@
 import { recordApprovalTriggered } from '../agent/runtimeMetrics';
 import { playUiSound } from './sound';
+import { recordDeniedOperation } from '../agent/deniedOperations';
 
 export interface ApprovalRequest {
   id: string;
@@ -125,6 +126,10 @@ export function respondApproval(approved: boolean, customResponse?: string): voi
   const resolve = pendingResolve;
   const toolName = currentRequest.toolName;
   const args = currentRequest.args;
+
+  if (!approved) {
+    recordDeniedOperation(toolName, args);
+  }
 
   pendingResolve = null;
   pendingReject = null;

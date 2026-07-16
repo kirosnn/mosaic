@@ -45,6 +45,7 @@ interface ParsedArgs {
   authArgs?: string[];
   resumeCommand?: boolean;
   resumeId?: string;
+  serveCommand?: boolean;
 }
 
 class CLI {
@@ -74,6 +75,9 @@ class CLI {
         } else {
           i++;
         }
+      } else if (arg === "serve") {
+        parsed.serveCommand = true;
+        i++;
       } else if (arg === "uninstall") {
         parsed.uninstall = true;
         if (args[i + 1] === "--force") {
@@ -102,42 +106,43 @@ class CLI {
   }
 
   showHelp(): void {
-    const gold = (text: string) => `\x1b[38;2;255;202;56m${text}\x1b[0m`;
+    const white = (text: string) => `\x1b[97m${text}\x1b[0m`;
     const gray = (text: string) => `\x1b[90m${text}\x1b[0m`;
 
     console.log("");
     console.log(`
-${gold("Mosaic")}
+${white("Mosaic")}
 
-${gold("Usage")}
+${white("Usage")}
   $ mosaic [options] [path]
   $ mosaic <command> [options]
 
-${gold("Options")}
+${white("Options")}
   -h, --help                ${gray("Show this help message")}
-  -d, --directory <path>    ${gray("Open Mosaic in a specific directory (default: current)")}
+  -d, --directory <path>    ${gray("Open a specific directory in Mosaic (default: current)")}
 
-${gold("Commands")}
-  run "<message>"           ${gray("Launch Mosaic with an initial prompt to execute immediately")}
+${white("Commands")}
+  run "<message>"           ${gray("Start Mosaic with an initial prompt to execute immediately")}
   resume [id]               ${gray("Open a menu to resume a previous conversation session (or resume directly by id)")}
+  serve                     ${gray("Start the local headless benchmark server")}
   auth <subcommand>         ${gray("Manage API keys and authentication")}
-  mcp <subcommand>          ${gray("Manage Model Context Protocol (MCP) servers")}
-  uninstall [--force]       ${gray("Uninstall Mosaic from your system")}
+  mcp <subcommand>          ${gray("Manage MCP servers")}
+  uninstall [--force]       ${gray("Remove Mosaic from your system")}
 
-${gold("Auth Subcommands")}
+${white("Auth subcommands")}
   mosaic auth list           ${gray("List stored API keys (masked)")}
   mosaic auth set            ${gray("Add or update an API key")}
   mosaic auth remove         ${gray("Remove a stored API key")}
   mosaic auth login <prov>   ${gray("OAuth login")}
   mosaic auth help           ${gray("View full list of auth commands")}
 
-${gold("MCP Subcommands")}
+${white("MCP subcommands")}
   mosaic mcp list           ${gray("List configured MCP servers")}
   mosaic mcp add [name]     ${gray("Add a new MCP server")}
   mosaic mcp doctor         ${gray("Run diagnostics")}
   mosaic mcp help           ${gray("View full list of MCP commands")}
 
-${gold("Examples")}
+${white("Examples")}
   ${gray("mosaic")}                              # Start in current directory
   ${gray("mosaic ./my-project")}                 # Start in specific directory
   ${gray('mosaic run "Fix the bug in main.ts"')} # Launch with a specific task
@@ -192,6 +197,12 @@ if (parsed.authCommand) {
   const { runAuthCli } = await import("./auth/cli");
   await runAuthCli(parsed.authArgs ?? []);
   process.exit(0);
+}
+
+if (parsed.serveCommand) {
+  const { startBenchmarkServer } = await import("./app/benchmark/server");
+  await startBenchmarkServer();
+  await new Promise(() => {});
 }
 
 if (parsed.directory) {

@@ -15,10 +15,10 @@ interface HomePageProps {
 const TIPS = [
   "Press ⌘ + P to view all available shortcuts.",
   "Use the Up and Down arrows to navigate through message history.",
-  "Press Esc to cancel the current action or close popups.",
+  "Press esc to cancel the current action or close popups.",
   "Paste text using ⌘ + V.",
   "Use /clear to reset the current chat session.",
-  "Use Tab to autocomplete commands and arguments.",
+  "Use tab to autocomplete commands and arguments.",
   "Use ⌘ + K to clear the current input line.",
   "Use ⌘ + G to edit the current input in your system editor.",
   "Use /help to display the list of available commands.",

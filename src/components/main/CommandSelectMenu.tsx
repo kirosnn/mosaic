@@ -178,7 +178,7 @@ export function CommandSelectMenu({
                   <box key={`opt-${option.value}`} flexDirection="column" width="100%">
                     {showCategory && option.category && (
                       <box paddingLeft={2} paddingTop={1} paddingBottom={0}>
-                        <text fg="#d9f755ff" attributes={TextAttributes.BOLD}>
+                        <text fg="white" attributes={TextAttributes.BOLD}>
                           {option.category}
                         </text>
                       </box>
@@ -188,7 +188,7 @@ export function CommandSelectMenu({
                       flexDirection="row"
                       width="100%"
                       backgroundColor={
-                        isSelected ? "#ff8c00" : isHovered ? "#222222" : "transparent"
+                        isSelected ? "#ffffff" : isHovered ? "#222222" : "transparent"
                       }
                       paddingLeft={2}
                       paddingRight={2}

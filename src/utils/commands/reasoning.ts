@@ -87,7 +87,7 @@ export const reasoningCommand: Command = {
         success: true,
         content: buildReasoningMessage(),
         showSelectMenu: {
-          title: `Thinking Effort for ${modelId}`,
+          title: `Thinking effort for ${modelId}`,
           options: buildOptions(providerId, modelId),
           onSelect: (value: string) => {
             if (value === 'default') {

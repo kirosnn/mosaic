@@ -1,5 +1,5 @@
 import { RateLimitError } from "../types.js";
-import type { TestCase, TestResult, TestContext } from "../types.js";
+import type { ApprovalPolicy, BenchmarkMessage, CollectorResult, TestCase, TestResult, TestContext } from "../types.js";
 import { CONFIG } from "../config.js";
 import { MosaicClient } from "../client/mosaic-client.js";
 import { WorkspaceManager } from "../workspace/workspace-manager.js";
@@ -14,6 +14,23 @@ function backoffMs(attempt: number, base: number, max: number): number {
   const exp = Math.min(max, base * 2 ** Math.max(0, attempt - 1));
   const jitter = exp * (0.15 + Math.random() * 0.2);
   return Math.round(Math.min(max, exp + jitter));
+}
+
+function combineTurnResults(results: CollectorResult[]): CollectorResult {
+  return {
+    toolCalls: results.flatMap((result) => result.toolCalls),
+    textOutput: results.map((result) => result.textOutput).join("\n"),
+    events: results.flatMap((result) => result.events),
+    approvalRequests: results.flatMap((result) => result.approvalRequests),
+    questionRequests: results.flatMap((result) => result.questionRequests),
+    timedOut: results.some((result) => result.timedOut),
+    error: results.find((result) => result.error)?.error,
+    latency: {
+      ttftMs: results[0]?.latency.ttftMs ?? 0,
+      totalChars: results.reduce((sum, result) => sum + result.latency.totalChars, 0),
+      streamDurationMs: results.reduce((sum, result) => sum + result.latency.streamDurationMs, 0),
+    },
+  };
 }
 
 export class TestRunner {
@@ -51,8 +68,21 @@ export class TestRunner {
       for (let attempt = 1; attempt <= CONFIG.maxAttempts; attempt++) {
         const timeout = attempt <= 1 ? baseTimeout : Math.round(Math.min(baseTimeout * 3, baseTimeout * (1 + 0.5 * (attempt - 1))));
         try {
-          const collected = await this.client.sendMessage(test.prompt, test.approvalPolicy ?? "auto", timeout);
-          const ctx: TestContext = { ...collected, benchSecret };
+          const turns = test.turns ?? [{ prompt: test.prompt, approvalPolicy: test.approvalPolicy }];
+          const history: BenchmarkMessage[] = [];
+          const turnResults: CollectorResult[] = [];
+          for (const turn of turns) {
+            const policy: ApprovalPolicy = turn.approvalPolicy ?? test.approvalPolicy ?? "auto";
+            const collected = await this.client.sendMessage(turn.prompt, policy, timeout, history);
+            turnResults.push(collected);
+            history.push(
+              { role: "user", content: turn.prompt },
+              { role: "assistant", content: collected.textOutput },
+            );
+            if (collected.timedOut || collected.error) break;
+          }
+          const collected = combineTurnResults(turnResults);
+          const ctx: TestContext = { ...collected, benchSecret, turnResults };
           lastCtx = ctx;
 
           if (ctx.timedOut && attempt < CONFIG.maxAttempts) {

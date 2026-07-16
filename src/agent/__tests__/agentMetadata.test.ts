@@ -1,41 +1,31 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { Agent } from "../Agent";
 import * as configUtils from "../../utils/config";
+import * as mistralAuth from "../provider/mistralAuth";
 
-mock.module("../../utils/config", () => ({
-  readConfig: () => ({
+beforeEach(() => {
+  spyOn(configUtils, "readConfig").mockReturnValue({
     provider: "mistral",
     model: "mistral-large-latest",
-  }),
-  getApiKeyForProvider: () => "test-key",
-  getAuthForProvider: () => ({ type: "api_key", apiKey: "test-key" }),
-  getLightweightRoute: () => ({
+  });
+  spyOn(configUtils, "getApiKeyForProvider").mockReturnValue("test-key");
+  spyOn(configUtils, "getAuthForProvider").mockReturnValue({
+    type: "api_key",
+    apiKey: "test-key",
+  });
+  spyOn(configUtils, "getLightweightRoute").mockReturnValue({
     providerId: "mistral",
     modelId: "mistral-small-latest",
-  }),
-  getMistralAuthMode: () => "codestral-only",
-  normalizeModelForProvider: (p: string, m: string) => m,
-  setActiveModel: () => {},
-  getModelReasoningEffort: () => undefined,
-}));
+  });
+  spyOn(configUtils, "getMistralAuthMode").mockReturnValue("codestral-only");
+  spyOn(mistralAuth, "isCodestralModel").mockImplementation(
+    (model) => model === "codestral-latest",
+  );
+});
 
-mock.module("../provider/mistralAuth", () => ({
-  resolveMistralBackendForKey: async () => "codestral-domain",
-  isCodestralModel: (m: string) => m === "codestral-latest",
-}));
-
-mock.module("../tools/definitions", () => ({
-  getTools: () => ({}),
-}));
-mock.module("../memory", () => ({
-  getGlobalMemory: () => ({
-    getStats: () => ({ files: 0, searches: 0, toolCalls: 0 }),
-    incrementTurn: () => {},
-  }),
-}));
-mock.module("../repoScan", () => ({
-  clearRepositoryScanCache: () => {},
-}));
+afterEach(() => {
+  mock.restore();
+});
 
 describe("Agent metadata", () => {
   it("should preserve routedModel while using transportModel for codestral-only auth", () => {

@@ -12,7 +12,7 @@ describe("subsystem command", () => {
     const result = await subsystemCommand.execute([]);
     expect(result.success).toBe(true);
     expect(result.showSelectMenu).toBeDefined();
-    expect(result.showSelectMenu?.title).toBe("Select Shell Subsystem");
+    expect(result.showSelectMenu?.title).toBe("Select shell subsystem");
   });
 
   it("should set preferred subsystem when valid arg provided", async () => {

@@ -112,8 +112,8 @@ export const OPENAI_CHATGPT_OAUTH_ALLOWED_MODEL_IDS = [
 const OPENAI_CHATGPT_OAUTH_MODEL_DETAILS: Record<string, AIModel> = {
   "codex-auto-review": {
     id: "codex-auto-review",
-    name: "Codex Auto Review",
-    description: "Automated Codex review model available with ChatGPT Plus",
+    name: "Codex auto review",
+    description: "Automated Codex review model available with ChatGPT plus",
   },
   "gpt-5.4": {
     id: "gpt-5.4",
@@ -163,7 +163,7 @@ function createOpenAIOAuthModel(modelId: string): AIModel {
       id: modelId,
       name: modelId,
       description:
-        "Supported Codex model for OpenAI OAuth with a ChatGPT account",
+        "Supported Codex model for OAuth with an OpenAI account",
     }
   );
 }
@@ -320,22 +320,22 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: [
       {
         id: "claude-opus-4-5",
-        name: "Claude Opus 4.5",
+        name: "Claude opus 4.5",
         description: "Most capable Claude model",
       },
       {
         id: "claude-sonnet-4-5",
-        name: "Claude Sonnet 4.5",
+        name: "Claude sonnet 4.5",
         description: "Balanced performance and speed",
       },
       {
         id: "claude-sonnet-4",
-        name: "Claude Sonnet 4",
+        name: "Claude sonnet 4",
         description: "Previous Sonnet model",
       },
       {
         id: "claude-haiku-4-5",
-        name: "Claude Haiku 4.5",
+        name: "Claude haiku 4.5",
         description: "Fastest Claude model",
       },
     ],
@@ -349,19 +349,19 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: [
       {
         id: "mistral-large-latest",
-        name: "Mistral Large 3",
+        name: "Mistral large 3",
         description:
-          "Mistral Large 3, is a state-of-the-art, open-weight, general-purpose multimodal model",
+          "Mistral large 3 is a state-of-the-art, open-weight, general-purpose multimodal model",
       },
       {
         id: "mistral-small-latest",
-        name: "Mistral Small 3",
+        name: "Mistral small 3",
         description:
-          "Mistral Small 3, is an efficient, cost-effective, and open-weight general-purpose model",
+          "Mistral small 3 is an efficient, cost-effective, and open-weight general-purpose model",
       },
       {
         id: "codestral-latest",
-        name: "Codestral Latest",
+        name: "Codestral latest",
         description:
           "Codestral-compatible coding model for code generation and editing",
       },
@@ -373,7 +373,7 @@ export const AI_PROVIDERS: AIProvider[] = [
       },
       {
         id: "mistral-medium-latest",
-        name: "Mistral Medium 3.1",
+        name: "Mistral medium 3.1",
         description: "Frontier-class multimodal model",
       },
     ],
@@ -387,18 +387,18 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: [
       {
         id: "grok-4-1-fast-reasoning",
-        name: "Grok 4.1 Fast Reasoning",
+        name: "Grok 4.1 fast reasoning",
         description:
           "A frontier multimodal model optimized specifically for high-performance agentic tool calling",
       },
       {
         id: "grok-4-fast-reasoning",
-        name: "Grok 4 Fast Reasoning",
+        name: "Grok 4 fast reasoning",
         description: "Advancement in cost-efficient reasoning models.",
       },
       {
         id: "grok-code-fast-1",
-        name: "Grok Code Fast 1",
+        name: "Grok code fast 1",
         description:
           "Optimized model for coding, programming, and software development tasks",
       },
@@ -407,18 +407,18 @@ export const AI_PROVIDERS: AIProvider[] = [
   {
     id: "google",
     name: "Google",
-    description: "Google Vertex AI / AI Studio (API Key)",
+    description: "Google vertex AI / AI studio (API key)",
     requiresApiKey: true,
     models: [
       {
         id: "gemini-3-pro-preview",
-        name: "Gemini 3 Pro Preview",
+        name: "Gemini 3 pro preview",
         description:
           "The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities",
       },
       {
         id: "gemini-3-flash-preview",
-        name: "Gemini 3 Flash Preview",
+        name: "Gemini 3 flash preview",
         description:
           "Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash",
       },
@@ -433,18 +433,18 @@ export const AI_PROVIDERS: AIProvider[] = [
   {
     id: "google-oauth",
     name: "Google (OAuth)",
-    description: "Google Gemini Code Assist (OAuth)",
+    description: "Gemini code assist by Google (OAuth)",
     requiresApiKey: false,
     models: [
       {
         id: "gemini-3-pro-preview",
-        name: "Gemini 3 Pro Preview",
+        name: "Gemini 3 pro preview",
         description:
           "The first model in the new series, is ideal for complex tasks that require extensive world knowledge and advanced reasoning in multiple modalities",
       },
       {
         id: "gemini-3-flash-preview",
-        name: "Gemini 3 Flash Preview",
+        name: "Gemini 3 flash preview",
         description:
           "Latest model in the 3 series. It offers Pro-level intelligence at the speed and price of Flash",
       },
@@ -513,14 +513,14 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: [
       {
         id: "anthropic/claude-sonnet-4.5",
-        name: "Claude Sonnet 4.5",
+        name: "Claude sonnet 4.5",
         description: "Most capable Claude model",
       },
       {
         id: "x-ai/grok-code-fast-1",
-        name: "Grok Code Fast 1",
+        name: "Grok code fast 1",
         description:
-          "Grok Code Fast 1 is a speedy and economical reasoning model that excels at agentic coding.",
+          "Grok code fast 1 is a speedy and economical reasoning model that excels at agentic coding.",
       },
       {
         id: "anthropic/claude-opus-4.5",

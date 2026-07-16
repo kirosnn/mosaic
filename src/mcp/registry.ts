@@ -33,11 +33,11 @@ export const MCP_REGISTRY: McpRegistryEntry[] = [
   },
   {
     id: 'brave-search',
-    name: 'Brave Search',
-    description: 'Web search via Brave Search API',
+    name: 'Brave search',
+    description: 'Web search via Brave search API',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-brave-search'],
-    env: { BRAVE_API_KEY: { description: 'Brave Search API key', required: true } },
+    env: { BRAVE_API_KEY: { description: 'Brave search API key', required: true } },
   },
   {
     id: 'github',
@@ -60,11 +60,11 @@ export const MCP_REGISTRY: McpRegistryEntry[] = [
   },
   {
     id: 'google-maps',
-    name: 'Google Maps',
-    description: 'Google Maps geocoding, directions, places, and elevation',
+    name: 'Google maps',
+    description: 'Google maps geocoding, directions, places, and elevation',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-google-maps'],
-    env: { GOOGLE_MAPS_API_KEY: { description: 'Google Maps API key', required: true } },
+    env: { GOOGLE_MAPS_API_KEY: { description: 'Google maps API key', required: true } },
   },
   {
     id: 'slack',
@@ -102,7 +102,7 @@ export const MCP_REGISTRY: McpRegistryEntry[] = [
   },
   {
     id: 'sequential-thinking',
-    name: 'Sequential Thinking',
+    name: 'Sequential thinking',
     description: 'Dynamic problem-solving through structured sequential thinking',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
@@ -116,11 +116,11 @@ export const MCP_REGISTRY: McpRegistryEntry[] = [
   },
   {
     id: 'browser-use',
-    name: 'Browser Use',
+    name: 'Browser use',
     description: 'AI-powered browser automation, web search, and data extraction',
     command: 'npx',
     args: ['-y', 'browser-use-mcp'],
-    env: { BROWSER_USE_API_KEY: { description: 'Browser Use API key (from cloud.browser-use.com)', required: true } },
+    env: { BROWSER_USE_API_KEY: { description: 'Browser use API key (from cloud.browser-use.com)', required: true } },
   },
   {
     id: 'sentry',

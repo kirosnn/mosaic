@@ -14,7 +14,6 @@ import { question } from './question.ts';
 import { explore } from './explore.ts';
 import { fetch } from './fetch.ts';
 import { plan } from './plan.ts';
-import { title } from './title';
 
 export const tools: Record<string, CoreTool> = {
   read,
@@ -28,7 +27,6 @@ export const tools: Record<string, CoreTool> = {
   explore,
   fetch,
   plan,
-  title,
 };
 
 function isPlausibleToolName(name: string): boolean {

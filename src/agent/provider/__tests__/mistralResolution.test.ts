@@ -99,7 +99,7 @@ describe("Mistral resolution logic", () => {
 
     const agent = new Agent();
     const initialMetadata = agent.getRunMetadata();
-    expect(initialMetadata.transportModel).toBe("mistral-large-latest");
+    expect(initialMetadata.transportModel).toBe("codestral-latest");
 
     const stream = agent.sendMessage("hi");
     await stream.next();

@@ -12,15 +12,12 @@ export function isCodestralModel(model: string): boolean {
 
 export function getMistralCodestralAuthError(
   model: string,
-  backend?: MistralBackend,
+  _backend?: MistralBackend,
 ): string | null {
   if (isCodestralModel(model)) {
     return null;
   }
-  if (backend === "codestral-domain") {
-    return `This key appears to be Codestral-only and cannot be used with ${model}. Use codestral-latest or configure a Mistral API key.`;
-  }
-  return null;
+  return `This key appears to be Codestral-only and cannot be used with ${model}. Use codestral-latest or configure a Mistral API key.`;
 }
 
 function computeKeyFingerprint(apiKey: string): string {

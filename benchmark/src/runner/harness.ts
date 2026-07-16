@@ -13,6 +13,7 @@ import { codeReadingSuite } from "../suites/code-reading/index.js";
 import { protocolSuite } from "../suites/protocol/index.js";
 import { safetySuite } from "../suites/safety/index.js";
 import { resilienceSuite } from "../suites/resilience/index.js";
+import { multiTurnSuite } from "../suites/multi-turn/index.js";
 
 const ALL_SUITES: Record<string, TestCase[]> = {
   "tool-use": toolUseSuite,
@@ -21,6 +22,7 @@ const ALL_SUITES: Record<string, TestCase[]> = {
   resilience: resilienceSuite,
   protocol: protocolSuite,
   safety: safetySuite,
+  "multi-turn": multiTurnSuite,
 };
 
 const NUM_RUNS = 4;

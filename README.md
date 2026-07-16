@@ -119,10 +119,15 @@ mosaic -d ./my-project
 mosaic run "fix failing tests in parser"
 mosaic resume
 mosaic resume <session-id>
+mosaic serve
 mosaic auth <subcommand>
 mosaic mcp <subcommand>
 mosaic uninstall --force
 ```
+
+`mosaic serve` starts the local headless runtime used by the benchmark suite on ports 8192–8200.
+
+Agent behavior can be overridden with `.mosaic/agent-policy.json` or the `MOSAIC_AGENT_POLICY` environment variable. See [Agent policy](docs/agent-policy.md).
 
 ### Desktop app
 

@@ -72,6 +72,8 @@ import {
   shouldUseRepositoryContext,
 } from "./taskMode";
 import { sanitizeHistory } from "./historySanitizer";
+import { generateLocalTitle } from "./localTitle";
+import { getDeterministicSafetyRefusal } from "./safetyPolicy";
 
 function contentToText(content: CoreMessage["content"]): string {
   if (typeof content === "string") return content;
@@ -586,6 +588,14 @@ Do NOT resume prior architecture exploration or refactoring plans unless they ar
 
     let transportModel = routedModel;
     let backend = effectiveProvider;
+    if (
+      effectiveProvider === "mistral" &&
+      authMode === "codestral-only" &&
+      !isCodestralModel(routedModel)
+    ) {
+      transportModel = "codestral-latest";
+      backend = "codestral-domain";
+    }
 
     this.config = {
       provider: effectiveProvider,
@@ -705,10 +715,22 @@ Do NOT resume prior architecture exploration or refactoring plans unless they ar
     this.memory.incrementTurn();
     resetTracker();
 
+    const isFirstUserMessage = !this.messageHistory.some(
+      (message) => message.role === "user",
+    );
     this.messageHistory.push({
       role: "user",
       content: userMessage,
     });
+    if (isFirstUserMessage) {
+      yield { type: "title", title: generateLocalTitle(userMessage) };
+    }
+    const safetyRefusal = getDeterministicSafetyRefusal(userMessage);
+    if (safetyRefusal) {
+      yield { type: "text-delta", content: safetyRefusal };
+      yield { type: "finish", finishReason: "stop" };
+      return;
+    }
     const preRoles = countRoles(this.messageHistory);
     debugLog(
       `[context] sendMessage historyLen=${this.messageHistory.length} roles={user:${preRoles.user},assistant:${preRoles.assistant},tool:${preRoles.tool},other:${preRoles.other}} estTokens=${estimateTokensForMessages(this.messageHistory)} alreadyCompacted=${options?.alreadyCompacted === true}`,
@@ -873,6 +895,24 @@ Do NOT resume prior architecture exploration or refactoring plans unless they ar
       role: msg.role,
       content: msg.content,
     })) as CoreMessage[];
+    const userMessages = this.messageHistory.filter(
+      (message) => message.role === "user",
+    );
+    const latestUserMessage = [...this.messageHistory]
+      .reverse()
+      .find((message) => message.role === "user");
+    const latestUserText = latestUserMessage
+      ? contentToText(latestUserMessage.content)
+      : "";
+    if (userMessages.length === 1 && latestUserText) {
+      yield { type: "title", title: generateLocalTitle(latestUserText) };
+    }
+    const safetyRefusal = getDeterministicSafetyRefusal(latestUserText);
+    if (safetyRefusal) {
+      yield { type: "text-delta", content: safetyRefusal };
+      yield { type: "finish", finishReason: "stop" };
+      return;
+    }
     const preRoles = countRoles(this.messageHistory);
     debugLog(
       `[context] streamMessages historyLen=${this.messageHistory.length} roles={user:${preRoles.user},assistant:${preRoles.assistant},tool:${preRoles.tool},other:${preRoles.other}} estTokens=${estimateTokensForMessages(this.messageHistory)} alreadyCompacted=${options?.alreadyCompacted === true}`,

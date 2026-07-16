@@ -19,7 +19,7 @@ export async function mcpList(): Promise<void> {
     pad('Autostart', 10),
     pad('Status', 10),
     pad('Tools', 6),
-    'Last Error',
+    'Last error',
   ].join(' | ');
 
   console.log(header);

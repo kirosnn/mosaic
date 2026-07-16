@@ -1,3 +1,5 @@
+import defaults from "../defaults.json";
+
 function envNumber(name: string, fallback: number): number {
   const v = process.env[name];
   if (!v) return fallback;
@@ -5,34 +7,44 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function envString(name: string, fallback: string): string {
+  return process.env[name]?.trim() || fallback;
+}
+
+const host = envString("MOSAIC_BENCH_HOST", defaults.host);
+const portStart = envNumber("MOSAIC_BENCH_PORT_START", defaults.portStart);
+const portEnd = envNumber("MOSAIC_BENCH_PORT_END", defaults.portEnd);
+const apiPrefix = envString("MOSAIC_BENCH_API_PREFIX", defaults.apiPrefix).replace(/\/$/, "");
+
 export const CONFIG = {
-  mosaicUrl: "http://localhost:8192",
-  defaultTimeout: envNumber("MOSAIC_BENCH_TIMEOUT_MS", 120_000),
-  pingInterval: 5_000,
-  benchmarkVersion: "1.0.0",
-  resultsDir: "results",
-  interTestDelayMs: envNumber("MOSAIC_BENCH_INTER_TEST_DELAY_MS", 500),
-  interSuiteDelayMs: envNumber("MOSAIC_BENCH_INTER_SUITE_DELAY_MS", 1000),
-  interRunDelayMs: envNumber("MOSAIC_BENCH_INTER_RUN_DELAY_MS", 2000),
-  maxAttempts: Math.max(1, Math.floor(envNumber("MOSAIC_BENCH_MAX_ATTEMPTS", 3))),
-  retryBaseDelayMs: envNumber("MOSAIC_BENCH_RETRY_BASE_DELAY_MS", 1500),
-  retryMaxDelayMs: envNumber("MOSAIC_BENCH_RETRY_MAX_DELAY_MS", 30_000),
-  rateLimitMaxWaitMs: envNumber("MOSAIC_BENCH_RATE_LIMIT_MAX_WAIT_MS", 120_000),
+  mosaicUrl: envString("MOSAIC_BENCH_URL", `http://${host}:${portStart}`),
+  defaultTimeout: envNumber("MOSAIC_BENCH_TIMEOUT_MS", defaults.defaultTimeout),
+  pingInterval: envNumber("MOSAIC_BENCH_PING_INTERVAL_MS", defaults.pingInterval),
+  benchmarkVersion: envString("MOSAIC_BENCH_VERSION", defaults.benchmarkVersion),
+  resultsDir: envString("MOSAIC_BENCH_RESULTS_DIR", defaults.resultsDir),
+  apiPrefix,
+  routes: defaults.routes,
+  portStart,
+  portEnd,
+  interTestDelayMs: envNumber("MOSAIC_BENCH_INTER_TEST_DELAY_MS", defaults.interTestDelay),
+  interSuiteDelayMs: envNumber("MOSAIC_BENCH_INTER_SUITE_DELAY_MS", defaults.interSuiteDelay),
+  interRunDelayMs: envNumber("MOSAIC_BENCH_INTER_RUN_DELAY_MS", defaults.interRunDelay),
+  maxAttempts: Math.max(1, Math.floor(envNumber("MOSAIC_BENCH_MAX_ATTEMPTS", defaults.maxAttempts))),
+  retryBaseDelayMs: envNumber("MOSAIC_BENCH_RETRY_BASE_DELAY_MS", defaults.retryBaseDelay),
+  retryMaxDelayMs: envNumber("MOSAIC_BENCH_RETRY_MAX_DELAY_MS", defaults.retryMaxDelay),
+  rateLimitMaxWaitMs: envNumber("MOSAIC_BENCH_RATE_LIMIT_MAX_WAIT_MS", defaults.rateLimitMaxWait),
 };
 
-const PORT_RANGE_START = 8192;
-const PORT_RANGE_END = 8200;
-
 export async function discoverMosaicUrl(): Promise<string> {
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-    const url = `http://localhost:${port}`;
+  for (let port = CONFIG.portStart; port <= CONFIG.portEnd; port++) {
+    const url = `http://${host}:${port}`;
     try {
-      const res = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(1000) });
+      const res = await fetch(`${url}${CONFIG.apiPrefix}${CONFIG.routes.config}`, { signal: AbortSignal.timeout(1000) });
       if (res.ok) {
         CONFIG.mosaicUrl = url;
         return url;
       }
     } catch {}
   }
-  throw new Error(`Mosaic not found on ports ${PORT_RANGE_START}-${PORT_RANGE_END}`);
+  throw new Error(`Mosaic not found on ports ${CONFIG.portStart}-${CONFIG.portEnd}`);
 }

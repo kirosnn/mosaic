@@ -47,9 +47,9 @@ const SUBSYSTEM_METADATA: Record<
 > = {
   pwsh: { label: "PowerShell 7", priority: 10 },
   powershell: { label: "Windows PowerShell", priority: 9 },
-  "git-bash": { label: "Git Bash", priority: 7 },
+  "git-bash": { label: "Git bash", priority: 7 },
   bash: { label: "Bash", priority: 6 },
-  cmd: { label: "Command Prompt", priority: 5 },
+  cmd: { label: "Command prompt", priority: 5 },
   // WSL is deprioritized: it must be explicitly selected, never auto-chosen
   wsl: { label: "WSL", priority: 1 },
 };

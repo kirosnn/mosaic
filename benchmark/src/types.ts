@@ -24,6 +24,7 @@ export interface CollectorResult {
 
 export interface TestContext extends CollectorResult {
   benchSecret: string;
+  turnResults: CollectorResult[];
 }
 
 export interface ScoringRule {
@@ -52,6 +53,17 @@ export interface TestCase {
   rules: ScoringRule[];
   approvalPolicy?: ApprovalPolicy;
   timeout?: number;
+  turns?: TestTurn[];
+}
+
+export interface TestTurn {
+  prompt: string;
+  approvalPolicy?: ApprovalPolicy;
+}
+
+export interface BenchmarkMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 export interface PerformanceMetrics {

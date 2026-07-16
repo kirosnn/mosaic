@@ -462,7 +462,7 @@ export const contextCommand: Command = {
     const erroredMcpServers = Array.from(statesByServer.values()).filter((state) => state.status === 'error').length;
 
     const lines: string[] = [];
-    lines.push('[CTX_HEADER]|Context Usage');
+    lines.push('[CTX_HEADER]|Context usage');
     lines.push(`[CTX_MODEL]|${model}|${formatCompactTokens(usedForBar)}|${formatCompactTokens(resolvedContextLimit)}|${usagePercent}`);
     lines.push(`[CTX_BAR]|${usageBar.usedCells}|${usageBar.bufferCells}|${usageBar.freeCells}|${usagePercent}`);
     lines.push('[CTX_SECTION]|Estimated usage by category');
@@ -525,7 +525,7 @@ export const contextCommand: Command = {
     lines.push(`- Smart history budget: ${formatNumber(smartHistoryBudget)}`);
 
     lines.push('');
-    lines.push('Prompt Components');
+    lines.push('Prompt components');
     lines.push(`- Raw system prompt: chars=${formatNumber(rawSystemPrompt.length)} tokens~${formatNumber(systemPromptTokensRaw)}`);
     lines.push(`- Processed system prompt (without tools): chars=${formatNumber(processedSystemPromptNoTools.length)} tokens~${formatNumber(systemPromptTokensNoTools)}`);
     lines.push(`- Active skills: persistent=${formatNumber(activeSkillsSnapshot.activeSkills.length)} oneShot=${formatNumber(oneShotSkillIds.length)} tokens~${formatNumber(skillsPromptTokens)}`);
@@ -542,7 +542,7 @@ export const contextCommand: Command = {
     }
 
     lines.push('');
-    lines.push('Tool Inventory');
+    lines.push('Tool inventory');
     lines.push(`- Internal tools: ${formatNumber(internalToolNames.length)}`);
     lines.push(`- MCP tools exposed: ${formatNumber(mcpToolNames.length)}`);
     lines.push(`- Total callable tools: ${formatNumber(internalToolNames.length + mcpToolNames.length)}`);
@@ -550,7 +550,7 @@ export const contextCommand: Command = {
     lines.push(`- MCP tool names: ${mcpToolNames.join(', ') || 'none'}`);
 
     lines.push('');
-    lines.push('Memory Snapshot');
+    lines.push('Memory snapshot');
     lines.push(`- Memory stats: files=${formatNumber(memoryStats.files)} searches=${formatNumber(memoryStats.searches)} toolCalls=${formatNumber(memoryStats.toolCalls)} turns=${formatNumber(memoryStats.turn)}`);
     lines.push(`- Memory index estimated tokens: ${formatNumber(categoryMemoryIndex)}`);
     lines.push(`- Memory known files: ${formatNumber(memoryKnownPaths.length)}`);
@@ -584,7 +584,7 @@ export const contextCommand: Command = {
     }
 
     lines.push('');
-    lines.push('Runtime Conversation');
+    lines.push('Runtime conversation');
     lines.push(`- isProcessing: ${Boolean(context?.isProcessing)}`);
     lines.push(`- messages total: ${formatNumber(runtimeMessages.length)} chars=${formatNumber(totalMessageChars)} tokens~${formatNumber(totalMessageTokens)}`);
     lines.push(`- role=user count=${formatNumber(roleStats.user.count)} chars=${formatNumber(roleStats.user.chars)} tokens~${formatNumber(roleStats.user.tokens)}`);
@@ -609,14 +609,14 @@ export const contextCommand: Command = {
     }
 
     lines.push('');
-    lines.push('Smart Conversation History (Sent to Model)');
+    lines.push('Smart conversation history (sent to model)');
     lines.push(`- messages: total=${formatNumber(smartStats.messages)} user=${formatNumber(smartStats.userMessages)} assistant=${formatNumber(smartStats.assistantMessages)}`);
     lines.push(`- payload text chars=${formatNumber(smartStats.textChars)} tokens~${formatNumber(smartStats.tokens)} imageParts=${formatNumber(smartStats.imageParts)}`);
     lines.push(`- estimated total input tokens: ${formatNumber(usedWithoutBufferWithUserPrompt)} (${formatPercent(usedWithoutBufferWithUserPrompt, resolvedContextLimit)}%)`);
     lines.push(`- estimated remaining context tokens (excluding buffer): ${formatNumber(Math.max(0, resolvedContextLimit - usedForBar))}`);
 
     lines.push('');
-    lines.push('Top Smart History Entries (first 8)');
+    lines.push('Top smart history entries (first 8)');
     const previewCount = Math.min(8, smartHistory.length);
     for (let i = 0; i < previewCount; i++) {
       const msg = smartHistory[i]!;

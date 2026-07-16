@@ -472,9 +472,9 @@ export function getTaskModeLabel(mode: TaskMode): string {
     case 'chat':
       return 'Chat';
     case 'assistant_capabilities':
-      return 'Assistant Capabilities';
+      return 'Assistant capabilities';
     case 'environment_config':
-      return 'Environment / Local Config';
+      return 'Environment / local config';
     case 'explore_readonly':
       return 'Explore / ReadOnly';
     case 'plan':
@@ -527,20 +527,16 @@ Applies to: "what's in this folder", "list files", "inspect this project", or eq
 ───────────────────────────────────────────────
 
 Step 1 — NARRATIVE FIRST (text before any tool call):
-  Output a short visible message in the user's language. This must appear BEFORE title and all tools.
+  Output a short visible message in the user's language. This must appear before all tools.
   Vary the phrasing. Examples:
   - "Je vais inspecter la structure du projet puis vérifier les manifestes importants."
   - "Je commence par regarder la racine, puis je vais confirmer les technologies présentes."
   - "Let me inspect the workspace structure."
 
-Step 2 — TITLE (first tool call):
-  Call title in the user's language. Examples:
-  - "Inspection du dossier courant" / "Structure du projet" / "Workspace overview"
+Step 2 — LIST TOP LEVEL:
+  Call list(path=".", recursive=false).
 
-Step 3 — LIST TOP LEVEL:
-  Call list(path=".", recursive=false). Can be parallel with title.
-
-Step 4 — INTER-PHASE NARRATION + PARALLEL GLOB FOR PROJECT MARKERS:
+Step 3 — INTER-PHASE NARRATION + PARALLEL GLOB FOR PROJECT MARKERS:
   After the listing result arrives, write one sentence about what you see and what you are checking next:
   - "La racine contient un .sln et plusieurs répertoires — je vais vérifier les manifestes .NET et Node."
   - "I can see .csproj files and a package.json — checking those in parallel."
@@ -553,11 +549,11 @@ Step 4 — INTER-PHASE NARRATION + PARALLEL GLOB FOR PROJECT MARKERS:
   - glob("**/pyproject.toml")       Python project
   Do NOT glob blindly for everything. Pick only markers that are plausible from the listing.
 
-Step 5 — FOCUSED READS (optional):
+Step 4 — FOCUSED READS (optional):
   Read key manifest snippets (name, description, workspace members) only when they add concrete interpretation value.
   Skip if listing + globs already give enough signal.
 
-Step 6 — TRANSITION + SYNTHESIS:
+Step 5 — TRANSITION + SYNTHESIS:
   Emit a short transition phrase naturally suited to the context, then deliver a structured final answer.
   Vary transitions — do NOT always use the same phrase.
 
@@ -583,17 +579,13 @@ Applies to: "git status", "état git", "full git report", "what changed", "donne
 
 Step 1 — NARRATIVE FIRST (text before any tool call):
   One sentence in the user's language explaining what you are about to check.
-  This MUST appear as text output BEFORE the title tool call.
+  This MUST appear as text output before any tool call.
   Examples:
   - "Je vais examiner l'état Git actuel, les derniers commits et la configuration du dépôt."
   - "Let me pull together a full Git status report."
   - "Je vais vérifier la branche, les modifications locales et les commits récents."
 
-Step 2 — TITLE (first tool call):
-  Call title in the user's language. Examples:
-  - "Rapport Git" / "État du dépôt" / "Git status report"
-
-Step 3 — GIT INVESTIGATION (read-only bash commands):
+Step 2 — GIT INVESTIGATION (read-only bash commands):
   Run a compact, targeted git batch. Prefer these commands:
   - git status --short --branch         (state + branch + divergence)
   - git log --oneline -n 5              (recent commit direction)
@@ -602,7 +594,7 @@ Step 3 — GIT INVESTIGATION (read-only bash commands):
   - git stash list                      (if relevant)
   Run commands in parallel where possible. Do NOT run redundant commands if a structured wrapper already provides the same data.
 
-Step 4 — SYNTHESIS: produce a real repository report covering:
+Step 3 — SYNTHESIS: produce a real repository report covering:
   - Overall state: clean vs dirty (explain, don't just count)
   - Current branch and divergence from remote (ahead/behind)
   - Modified files: what was changed and what it likely means

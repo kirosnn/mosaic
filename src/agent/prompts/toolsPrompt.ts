@@ -10,7 +10,7 @@ export const TOOLS_PROMPT = `
 # Available Tools
 
 IMPORTANT: When you use a tool, you MUST use the model's tool-calling mechanism.
-DO NOT write pseudo-calls in plain text like grep(...), read(...), title(...), plan(...).
+DO NOT write pseudo-calls in plain text like grep(...), read(...), or plan(...).
 If you output that as text, it will be treated as normal text, not as a tool call.
 </available_tools>
 
@@ -122,52 +122,6 @@ Track progress on multi-step tasks.
   - status: "pending" | "in_progress" | "completed"
 </tool>
 
-<tool name="title">
-### title
-Generate a brief title that would help the user find this conversation later.
-
-Follow all rules in <rules>.
-Use the <examples> so you know what a good title looks like.
-Your output must be:
-- A single line
-- <=50 characters
-- No explanations
-
-<rules>
-- you MUST use the same language as the user message you are summarizing
-- Title must be grammatically correct and read naturally - no word salad
-- Never include tool names in the title (e.g. "read tool", "bash tool", "edit tool")
-- Focus on the main topic or question the user needs to retrieve
-- Vary your phrasing - avoid repetitive patterns like always starting with "Analyzing"
-- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it
-- Keep exact: technical terms, numbers, filenames, HTTP codes
-- Remove: the, this, my, a, an
-- Never assume tech stack
-- Never use tools
-- NEVER respond to questions, just generate a title for the conversation
-- The title should NEVER include "summarizing" or "generating" when generating a title
-- DO NOT SAY YOU CANNOT GENERATE A TITLE OR COMPLAIN ABOUT THE INPUT
-- Always output something meaningful, even if the input is minimal.
-- If the user message is short or conversational (e.g. "hello", "lol", "what's up", "hey"): create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)
-</rules>
-
-<examples>
-"debug 500 errors in production" -> Debugging production 500 errors
-"refactor user service" -> Refactoring user service
-"why is app.js failing" -> app.js failure investigation
-"implement rate limiting" -> Rate limiting implementation
-"how do I connect postgres to my API" -> Postgres API connection
-"best practices for React hooks" -> React hooks best practices
-"@src/auth.ts can you add refresh token support" -> Auth refresh token support
-"@utils/parser.ts this is broken" -> Parser bug fix
-"look at @config.json" -> Config review
-"@App.tsx add dark mode toggle" -> Dark mode toggle in App
-"Hello ..." -> Greetings and quick check-in
-</examples>
-
-- title (string, required): Short title (<=50 characters, single line, in the user's language)
-</tool>
-
 Use plan for non-trivial implementation work. Skip it for read-only architecture/understanding requests unless the user explicitly asks for a plan.
 Use plan when there are 2+ actions, file changes, or unclear success criteria.
 Plan rules:
@@ -252,7 +206,6 @@ Ask user with predefined options. ONLY way to ask questions.
 | New file or full rewrite | write | Write with path="..." and content="..." |
 | Run commands/tests | bash | Bash with command="npm test" |
 | Track multi-step work | plan | Plan with plan=[...] |
-| Set conversation title | title | Title with title="Fix auth" |
 | Need user input | question | Question with prompt="..." and options=[...] |
 
 PREFER deterministic repo scan + targeted reads before explore when understanding context.
@@ -466,7 +419,7 @@ function buildNativeToolsSection(tools: Array<{ serverId: string; name: string; 
 
 function buildMcpToolsSection(tools: Array<{ serverId: string; name: string; description: string; inputSchema: Record<string, unknown>; canonicalId: string; safeId: string }>): string {
   const lines: string[] = [];
-  lines.push('## External Tools (MCP)');
+  lines.push('## External tools (MCP)');
   lines.push('');
   lines.push('These tools are provided by external MCP servers. Call them by their tool name.');
   lines.push('They may require approval before execution.');

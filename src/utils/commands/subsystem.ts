@@ -46,7 +46,7 @@ export const subsystemCommand: Command = {
         success: true,
         content: currentInfo,
         showSelectMenu: {
-          title: "Select Shell Subsystem",
+          title: "Select shell subsystem",
           options,
           onSelect: (value: string) => {
             const chosen = subsystems.find((s) => s.id === value);

@@ -17,6 +17,7 @@ export type AgentEventType =
   | "tool-result"
   | "step-start"
   | "step-finish"
+  | "title"
   | "fallback"
   | "finish"
   | "error";
@@ -91,6 +92,11 @@ export interface StepFinishEvent extends BaseEvent {
   finishReason: string;
 }
 
+export interface TitleEvent extends BaseEvent {
+  type: "title";
+  title: string;
+}
+
 export interface FinishEvent extends BaseEvent {
   type: "finish";
   finishReason: string;
@@ -142,6 +148,7 @@ export type AgentEvent =
   | ToolResultEvent
   | StepStartEvent
   | StepFinishEvent
+  | TitleEvent
   | FallbackEvent
   | FinishEvent
   | ErrorEvent;

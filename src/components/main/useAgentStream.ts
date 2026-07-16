@@ -61,6 +61,7 @@ import { applyToolResultToContinuationLedger } from "../../agent/continuationLed
 import { calculateHonestTokenBreakdown } from "../../utils/tokenAccounting";
 import { upsertAssistantMessage } from "./assistantMessageState";
 import type { RunMetadata } from "../../agent/types";
+import { beginOperationTurn } from "../../agent/deniedOperations";
 
 const MAX_CONTINUATIONS = 3;
 const MAX_CONTINUATION_LEDGER_ENTRIES = 6;
@@ -284,6 +285,7 @@ export async function runAgentStream(
   } = callbacks;
 
   const localStartTime = Date.now();
+  beginOperationTurn();
   setCurrentTokens(0);
   setTokenBreakdown({ prompt: 0, reasoning: 0, output: 0, tools: 0 });
   setChatError(null);
@@ -603,7 +605,12 @@ export async function runAgentStream(
       abortSignal: abortController.signal,
       alreadyCompacted: true,
     })) {
-      if (event.type === "reasoning-delta") {
+      if (event.type === "title") {
+        titleExtractedRef.current = true;
+        currentTitleRef.current = event.title;
+        setCurrentTitle(event.title);
+        setTerminalTitle(event.title);
+      } else if (event.type === "reasoning-delta") {
         thinkingChunk += event.content;
         totalChars += event.content.length;
         reasoningChars += event.content.length;

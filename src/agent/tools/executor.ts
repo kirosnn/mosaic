@@ -53,6 +53,10 @@ import {
   resolveToolPath,
   type ResolvedToolPath,
 } from "../toolPathScope";
+import {
+  getDeniedOperationMessages,
+  isOperationDenied,
+} from "../deniedOperations";
 
 const execAsync = promisify(exec);
 
@@ -1809,6 +1813,15 @@ export async function executeTool(
   const startTime = Date.now();
   const argsPreview = JSON.stringify(args).slice(0, 200);
   debugLog(`[tool] ${toolName} START workspace=${workspace} args=${argsPreview}`);
+
+  if (isOperationDenied(toolName, args)) {
+    const denial = getDeniedOperationMessages(toolName);
+    return {
+      success: false,
+      error: denial.error,
+      userMessage: denial.userMessage,
+    };
+  }
 
   try {
     const readOnlyMode =
